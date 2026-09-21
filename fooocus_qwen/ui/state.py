@@ -36,6 +36,56 @@ LOGGER = logging.getLogger(__name__)
 # немедленно упрётся в этот замок.
 GPU_CONCURRENCY_ID = "qwen-image-gpu"
 
+# Насколько длинную цитату из исключения показывать в строке состояния.
+# Сообщение torch о нехватке видеопамяти занимает несколько строк со сводкой
+# аллокатора — в однострочном поле статуса от него нужна только первая фраза,
+# полный текст уходит в журнал вместе со стеком.
+_MESSAGE_LIMIT = 220
+
+
+def _quote(error: BaseException) -> str:
+    text = " ".join(str(error).split())
+    return text[: _MESSAGE_LIMIT - 1] + "…" if len(text) > _MESSAGE_LIMIT else text
+
+
+def _is_out_of_memory(error: BaseException) -> bool:
+    """Нехватка видеопамяти — по типу исключения, а не по тексту сообщения.
+
+    ``torch`` импортируется лениво и только здесь: ``ui/`` не тянет его при
+    сборке интерфейса, иначе открыть вкладку настроек стоило бы загрузки
+    библиотеки (см. ``test_studio_lazy.py``). К моменту, когда сюда попадает
+    сбой генерации, ``torch`` давно импортирован движком, и это обращение
+    ничего не стоит.
+    """
+    try:
+        import torch
+    except ImportError:  # pragma: no cover — движок без torch не запустится
+        return False
+    out_of_memory = getattr(torch, "OutOfMemoryError", None)
+    return out_of_memory is not None and isinstance(error, out_of_memory)
+
+
+def describe_failure(error: BaseException) -> str:
+    """Читаемая строка состояния вместо сырого traceback в тосте.
+
+    Отсутствующие веса, испорченный ``model_index.json`` и нехватка
+    видеопамяти в цикле денойзинга — это то, с чем пользователь способен
+    что-то сделать, если ему сказать, что случилось. Стек вызовов в тосте не
+    говорит ничего и выглядит как падение приложения. Установщик считает, что
+    «установилось» значит «запустится»; работающему приложению разумно
+    держаться того же стандарта.
+    """
+    if _is_out_of_memory(error):
+        return (
+            "Не хватило видеопамяти. Попробуйте пресет качества пониже, меньше "
+            f"изображений за раз или меньше референсов. {_quote(error)}"
+        )
+    if isinstance(error, FileNotFoundError):
+        return f"Файл не найден: {_quote(error)}. Проверьте, что веса модели на месте."
+    if isinstance(error, OSError):
+        return f"Ошибка ввода-вывода: {_quote(error)}"
+    return f"Сбой: {type(error).__name__}: {_quote(error)}"
+
 
 class Studio:
     """Единственный владелец тяжёлых ресурсов."""
@@ -79,6 +129,40 @@ class Studio:
             f"перестановок энкодера: {int(stats['swaps'])}; "
             f"кэш промтов: {self._cache.hits} попаданий / {self._cache.misses} промахов"
         )
+
+    def run_generation(self, request: Any, progress: Any = None) -> tuple[list[Any], str | None]:
+        """Генерация, у которой сбой — это строка состояния, а не traceback.
+
+        Возвращает пару (результаты, сообщение об ошибке или ``None``). Второй
+        элемент непуст ровно тогда, когда генерация не состоялась, поэтому
+        вызывающая вкладка не обязана отличать «прервали» от «упало» по
+        пустому списку.
+
+        После любого сбоя размещение весов приводится в порядок: сбой мог
+        оборвать перестановку моделей где угодно, в том числе внутри цикла
+        денойзинга по нехватке памяти.
+        """
+        try:
+            return self.generator.generate(request, progress=progress), None
+        except Exception as error:  # noqa: BLE001 — тост с traceback хуже строки статуса
+            LOGGER.exception("Генерация не выполнена")
+            self.recover_residency()
+            return [], describe_failure(error)
+
+    def recover_residency(self) -> None:
+        """Возвращает веса на штатные места после сбоя.
+
+        Без этого трансформер может остаться на хосте, а следующий запрос с
+        тем же промтом попадёт в кэш эмбеддингов, не зайдёт в
+        ``text_encoder_resident()`` — и цикл денойзинга пойдёт по весам,
+        которых на видеокарте нет. Только перезапуск помогал бы.
+        """
+        if self._residency is None:
+            return
+        try:
+            self._residency.restore()
+        except Exception:  # noqa: BLE001
+            LOGGER.exception("Не удалось вернуть веса на штатные места")
 
     def llm_client(self) -> LlmClient:
         """Создаёт клиента заново: файл адреса правится без перезапуска."""

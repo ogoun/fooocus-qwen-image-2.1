@@ -30,7 +30,7 @@ from ..imaging import masking, metadata, outpaint
 from ..prompting import boost as boost_module
 from ..storage import gallery
 from .i18n import Localizer, pick
-from .state import GPU_CONCURRENCY_ID
+from .state import GPU_CONCURRENCY_ID, describe_failure
 
 LOGGER = logging.getLogger(__name__)
 
@@ -244,6 +244,21 @@ def build(studio, localizer: Localizer) -> dict:
         grow_value, feather_value, keep_value, seed_value,
         progress=gr.Progress(),
     ):
+        # Обработчик целиком под try по тем же причинам, что и на вкладке
+        # генерации: сбой модели обязан стать строкой состояния.
+        try:
+            return _apply(
+                value, prompt_text, use_boost, mode_value, quality_name,
+                grow_value, feather_value, keep_value, seed_value, progress,
+            )
+        except Exception as error:  # noqa: BLE001
+            LOGGER.exception("Обработчик правки не выполнен")
+            return [], describe_failure(error)
+
+    def _apply(
+        value, prompt_text, use_boost, mode_value, quality_name,
+        grow_value, feather_value, keep_value, seed_value, progress,
+    ):
         source, mask = collect(value, mode_value)
         if source is None:
             return [], "Сначала загрузите изображение"
@@ -279,7 +294,9 @@ def build(studio, localizer: Localizer) -> dict:
         def report(index: int, step: int, total: int) -> None:
             progress((step, total), desc="правка")
 
-        produced = studio.generator.generate(request, progress=report)
+        produced, failure = studio.run_generation(request, progress=report)
+        if failure is not None:
+            return [], f"{message} {failure}".strip()
         if not produced:
             return [], f"{message} Правка прервана".strip()
 

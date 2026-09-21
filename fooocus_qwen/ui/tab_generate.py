@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+import logging
+
 import gradio as gr
 
 from .. import config
@@ -18,7 +20,9 @@ from ..prompting import boost as boost_module
 from ..prompting import library
 from ..storage import gallery
 from .i18n import Localizer, pick
-from .state import GPU_CONCURRENCY_ID
+from .state import GPU_CONCURRENCY_ID, describe_failure
+
+LOGGER = logging.getLogger(__name__)
 
 MAX_REFERENCES = 10
 
@@ -243,46 +247,55 @@ def build(studio, localizer: Localizer) -> dict:
         count, style_names, negative_text, cfg_value, seed_value, kv_value,
         progress=gr.Progress(),
     ):
-        effective = (boosted_text or "").strip() if use_boost else ""
-        message = ""
-        if use_boost and not effective:
-            mode = boost_module.MODE_EDIT if current_references else boost_module.MODE_T2I
-            effective, wh_ratio, message = studio.boost_prompt(
-                prompt_text, mode, current_references or None
+        # Обработчик целиком под try: отсутствующие веса, испорченный
+        # model_index.json, нехватка видеопамяти и отказ записи PNG — всё это
+        # обязано становиться строкой состояния, а не сырым трейсбеком в тосте.
+        try:
+            effective = (boosted_text or "").strip() if use_boost else ""
+            message = ""
+            if use_boost and not effective:
+                mode = boost_module.MODE_EDIT if current_references else boost_module.MODE_T2I
+                effective, wh_ratio, message = studio.boost_prompt(
+                    prompt_text, mode, current_references or None
+                )
+                if wh_ratio in aspect.ASPECT_RATIOS:
+                    ratio_value = wh_ratio
+
+            request = GenerationRequest(
+                prompt=effective or prompt_text,
+                prompt_original=prompt_text,
+                preset=presets.get(quality_name),
+                negative_prompt=negative_text or "",
+                styles=tuple(style_names or ()),
+                references=tuple(current_references or ()),
+                aspect=ratio_value,
+                seed=int(seed_value),
+                image_number=int(count),
+                true_cfg_scale=float(cfg_value),
+                use_kv_cache=bool(kv_value),
             )
-            if wh_ratio in aspect.ASPECT_RATIOS:
-                ratio_value = wh_ratio
 
-        request = GenerationRequest(
-            prompt=effective or prompt_text,
-            prompt_original=prompt_text,
-            preset=presets.get(quality_name),
-            negative_prompt=negative_text or "",
-            styles=tuple(style_names or ()),
-            references=tuple(current_references or ()),
-            aspect=ratio_value,
-            seed=int(seed_value),
-            image_number=int(count),
-            true_cfg_scale=float(cfg_value),
-            use_kv_cache=bool(kv_value),
-        )
+            def report(index: int, step: int, total: int) -> None:
+                progress((step, total), desc=f"изображение {index + 1}/{int(count)}")
 
-        def report(index: int, step: int, total: int) -> None:
-            progress((step, total), desc=f"изображение {index + 1}/{int(count)}")
+            produced, failure = studio.run_generation(request, progress=report)
+            if failure is not None:
+                return [], f"{message} {failure}".strip()
+            if not produced:
+                return [], f"{message} Генерация прервана".strip()
 
-        produced = studio.generator.generate(request, progress=report)
-        if not produced:
-            return [], f"{message} Генерация прервана".strip()
+            paths = []
+            for item in produced:
+                destination = gallery.next_path(config.OUTPUT_DIR)
+                metadata.save_png(item.image, destination, item.parameters)
+                paths.append(str(destination))
 
-        paths = []
-        for item in produced:
-            destination = gallery.next_path(config.OUTPUT_DIR)
-            metadata.save_png(item.image, destination, item.parameters)
-            paths.append(str(destination))
-
-        seeds = ", ".join(str(item.seed) for item in produced)
-        report_line = f"Готово. Сиды: {seeds}. {studio.memory_report()}"
-        return paths, f"{message} {report_line}".strip()
+            seeds = ", ".join(str(item.seed) for item in produced)
+            report_line = f"Готово. Сиды: {seeds}. {studio.memory_report()}"
+            return paths, f"{message} {report_line}".strip()
+        except Exception as error:  # noqa: BLE001
+            LOGGER.exception("Обработчик генерации не выполнен")
+            return [], describe_failure(error)
 
     def stop():
         if studio.model_loaded:
@@ -310,7 +323,16 @@ def build(studio, localizer: Localizer) -> dict:
     def load(name):
         if not name:
             return (gr.update(),) * 7 + ("Пресет не выбран",)
-        payload = library.load_prompt(name, config.PROMPT_DIR)
+        # Пресет мог быть удалён или испорчен мимо приложения: файлы лежат в
+        # user/prompts/ и правятся чем угодно. load_prompt() сообщает об этом
+        # исключением (FileNotFoundError либо ValueError), и выбор строки в
+        # выпадающем списке не должен превращаться в тост с трейсбеком. То же
+        # снисхождение, что и у tab_gallery.restore_fields к чужому PNG.
+        try:
+            payload = library.load_prompt(name, config.PROMPT_DIR)
+        except (FileNotFoundError, ValueError, OSError) as error:
+            LOGGER.warning("Пресет «%s» не загружен: %s", name, error)
+            return (gr.update(),) * 7 + (f"Пресет «{name}» не загружен: {error}",)
         return (
             payload.get("prompt", ""),
             payload.get("negative_prompt", ""),
@@ -323,7 +345,13 @@ def build(studio, localizer: Localizer) -> dict:
         )
 
     def delete(name):
-        removed = library.delete_prompt(name, config.PROMPT_DIR)
+        try:
+            removed = library.delete_prompt(name, config.PROMPT_DIR)
+        except OSError as error:
+            # Файл может быть открыт другой программой или лежать на томе,
+            # доступном только на чтение: сказать об этом строкой состояния.
+            LOGGER.warning("Пресет «%s» не удалён: %s", name, error)
+            return gr.update(), f"Пресет «{name}» не удалён: {error}"
         message = f"Пресет «{name}» удалён" if removed else "Пресет не найден"
         return gr.update(choices=library.list_prompts(config.PROMPT_DIR), value=None), message
 
