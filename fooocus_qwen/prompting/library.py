@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +18,7 @@ LOGGER = logging.getLogger(__name__)
 
 _UNSAFE = re.compile(r'[<>:"/\\|?*\x00-\x1f]')
 _NAME_KEY = "__name__"
+_MAX_COLLISIONS = 100
 
 
 def safe_filename(name: str) -> str:
@@ -27,57 +29,68 @@ def safe_filename(name: str) -> str:
     return cleaned or "preset"
 
 
-def _resolve_candidate_file(name: str, directory: Path) -> tuple[Path | None, dict[str, Any] | None, str | None]:
-    """Ищет файл пресета по дисплей-имени среди возможных коллизий.
+@dataclass(frozen=True)
+class _CandidateResolution:
+    """Результат поиска кандидатов для пресета по дисплей-имени."""
+    # (path, payload) если найден пресет с правильным display-имнем
+    match: tuple[Path, dict[str, Any]] | None
+    # path первого свободного слота (не существующего на диске)
+    free: Path | None
+    # (path, error_msg) первого повреждённого слота
+    damaged: tuple[Path, str] | None
 
-    Returns:
-        (path, payload, error):
-        - (path, payload, None): файл найден и валиден
-        - (path, None, error_msg): файл найден но повреждён
-        - (None, None, None): файл не найден
+
+def _resolve_candidates(name: str, directory: Path) -> _CandidateResolution:
+    """Ищет пресет по дисплей-имени среди возможных коллизий.
+
+    Возвращает:
+    - match: (path, payload) если display-имя совпадает
+    - free: первый свободный слот на диске
+    - damaged: первый повреждённый слот (путь и сообщение об ошибке)
+
+    Все три функции (save_prompt, load_prompt, delete_prompt) используют
+    этот результат согласно своей логике.
     """
     clean_name = safe_filename(name)
     name_clean = name.strip()
 
-    # Ищем файл с соответствующим дисплей-имнем среди возможных коллизий
+    # Строим список кандидатов
     candidates = [directory / f"{clean_name}.json"]
-    for attempt in range(1, 100):
+    for attempt in range(1, _MAX_COLLISIONS):
         candidates.append(directory / f"{clean_name}_{attempt + 1}.json")
 
-    first_error_path = None
-    first_error_msg = None
+    match = None
+    free = None
+    damaged = None
 
     for path in candidates:
         if not path.is_file():
+            # Первый свободный слот
+            if free is None:
+                free = path
             continue
 
         # Файл существует, пробуем его прочитать
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
-            # Файл найден, но JSON повреждён - запоминаем первую ошибку
-            if first_error_path is None:
-                first_error_path = path
-                first_error_msg = f"Пресет {path.name} повреждён: {error}"
+            # Файл существует но JSON повреждён
+            if damaged is None:
+                damaged = (path, f"Пресет {path.name} повреждён: {error}")
             continue
 
         if not isinstance(payload, dict):
-            # Файл найден и JSON валиден, но не словарь
-            if first_error_path is None:
-                first_error_path = path
-                first_error_msg = f"Пресет {path.name} повреждён: ожидалась словарь, получена {type(payload).__name__}"
+            # Файл существует, JSON валиден, но не словарь
+            if damaged is None:
+                damaged = (path, f"Пресет {path.name} повреждён: ожидалась словарь, получена {type(payload).__name__}")
             continue
 
         if payload.get(_NAME_KEY) == name_clean:
-            # Найден нужный файл и он валиден
-            return (path, payload, None)
+            # Найден правильный пресет
+            match = (path, payload)
+            # Продолжаем поиск, чтобы найти free и damaged если нужны
 
-    # Если мы нашли повреждённый файл с нужным clean_name, сообщим об этом
-    if first_error_path is not None:
-        return (first_error_path, None, first_error_msg)
-
-    # Ничего не найдено
-    return (None, None, None)
+    return _CandidateResolution(match=match, free=free, damaged=damaged)
 
 
 def save_prompt(name: str, payload: dict[str, Any], directory: Path) -> Path:
@@ -85,30 +98,18 @@ def save_prompt(name: str, payload: dict[str, Any], directory: Path) -> Path:
         raise ValueError("Имя пресета не может быть пустым")
 
     directory.mkdir(parents=True, exist_ok=True)
-    clean_name = safe_filename(name)
     name_clean = name.strip()
 
-    # Проверяем коллизии имён: если файл уже существует, но содержит другой дисплей-имя,
-    # ищем свободный номер
-    path = directory / f"{clean_name}.json"
-    attempt = 1
-    max_attempts = 100
+    resolution = _resolve_candidates(name, directory)
 
-    while path.is_file() and attempt <= max_attempts:
-        try:
-            existing = json.loads(path.read_text(encoding="utf-8"))
-            if isinstance(existing, dict) and existing.get(_NAME_KEY) == name_clean:
-                # Совпадает дисплей-имя, перезаписываем
-                break
-        except (OSError, json.JSONDecodeError):
-            # Файл повреждён или нечитаем, перезаписываем
-            break
-
-        # Имена различаются, ищем свободный номер
-        path = directory / f"{clean_name}_{attempt + 1}.json"
-        attempt += 1
-
-    if attempt > max_attempts:
+    if resolution.match:
+        # Пресет с таким display-имнем уже существует, перезаписываем его
+        path, _ = resolution.match
+    elif resolution.free:
+        # Нет matching display-имени, используем первый свободный слот
+        path = resolution.free
+    else:
+        # Все слоты заняты
         raise RuntimeError(f"Не удалось найти свободное место для пресета {name_clean}: столкновение имён исчерпано")
 
     stored = dict(payload)
@@ -119,18 +120,21 @@ def save_prompt(name: str, payload: dict[str, Any], directory: Path) -> Path:
 
 def load_prompt(name: str, directory: Path) -> dict[str, Any]:
     """Загружает пресет по дисплей-имени, ища среди файлов с коллизиями имён."""
-    path, payload, error = _resolve_candidate_file(name, directory)
+    resolution = _resolve_candidates(name, directory)
 
-    if error:
-        # Файл найден, но повреждён
-        raise ValueError(error)
+    if resolution.match:
+        # Найден пресет с правильным display-имнем
+        _, payload = resolution.match
+        payload.pop(_NAME_KEY, None)
+        return payload
 
-    if payload is None:
-        # Файл не найден
-        raise FileNotFoundError(f"Пресет промта не найден: {name.strip()}")
+    if resolution.damaged:
+        # Файл найден но повреждён
+        _, error_msg = resolution.damaged
+        raise ValueError(error_msg)
 
-    payload.pop(_NAME_KEY, None)
-    return payload
+    # Файл не найден
+    raise FileNotFoundError(f"Пресет промта не найден: {name.strip()}")
 
 
 def list_prompts(directory: Path) -> list[str]:
@@ -153,12 +157,13 @@ def list_prompts(directory: Path) -> list[str]:
 
 def delete_prompt(name: str, directory: Path) -> bool:
     """Удаляет пресет, найдя его по дисплей-имени среди коллизий."""
-    path, payload, error = _resolve_candidate_file(name, directory)
+    resolution = _resolve_candidates(name, directory)
 
-    if error or payload is None:
-        # Файл не найден или повреждён
-        return False
+    if resolution.match:
+        # Найден пресет с правильным display-имнем, удаляем его
+        path, _ = resolution.match
+        path.unlink()
+        return True
 
-    # Найден валидный файл с правильным дисплей-имнем
-    path.unlink()
-    return True
+    # Пресет не найден
+    return False

@@ -1,5 +1,7 @@
 """Именованные пресеты промтов на диске."""
 
+import json
+
 import pytest
 
 from fooocus_qwen.prompting import library
@@ -51,96 +53,64 @@ def test_empty_name_is_rejected(tmp_path):
 def test_list_prompts_skips_corrupt_json_file(tmp_path):
     """list_prompts должна пропустить повреждённый JSON и продолжить со следующего файла."""
     library.save_prompt("хороший", PAYLOAD, tmp_path)
-    # Создаём файл с невалидным JSON
     (tmp_path / "плохой.json").write_text("{это не json", encoding="utf-8")
-
-    # list_prompts должна вернуть только хороший пресет
     assert library.list_prompts(tmp_path) == ["хороший"]
 
 
 def test_list_prompts_skips_non_dict_json_file(tmp_path):
     """list_prompts должна пропустить JSON, который не является словарём, и продолжить."""
     library.save_prompt("хороший", PAYLOAD, tmp_path)
-    # Создаём файл с валидным JSON, но это список, не словарь
     (tmp_path / "массив.json").write_text("[1, 2, 3]", encoding="utf-8")
-
-    # list_prompts должна вернуть только хороший пресет
     assert library.list_prompts(tmp_path) == ["хороший"]
 
 
 def test_load_prompt_raises_on_non_dict_file(tmp_path):
     """load_prompt должна вызвать ошибку с понятным сообщением о повреждённом пресете."""
-    # Создаём файл с валидным JSON, но это строка, не словарь
     (tmp_path / "bad.json").write_text('"просто строка"', encoding="utf-8")
-
     with pytest.raises(ValueError) as exc_info:
         library.load_prompt("bad", tmp_path)
-
-    # Сообщение должно содержать путь файла
     assert "bad.json" in str(exc_info.value)
 
 
 def test_collision_different_display_names_stored_separately(tmp_path):
     """Два пресета с разными дисплей-именами, но одинаковым sanitised именем, сохраняются отдельно."""
-    # '.' и '..' обе обезвреживаются в 'preset'
     library.save_prompt(".", PAYLOAD, tmp_path)
     library.save_prompt("..", dict(PAYLOAD, seed=99), tmp_path)
-
-    # Оба должны быть в списке с их оригинальными дисплей-imenами
     names = library.list_prompts(tmp_path)
     assert "." in names
     assert ".." in names
     assert len(names) == 2
-
-    # Оба должны загружаться и иметь правильные параметры
     assert library.load_prompt(".", tmp_path)["seed"] == 7
     assert library.load_prompt("..", tmp_path)["seed"] == 99
 
 
 def test_delete_removes_correct_preset_in_collision(tmp_path):
     """delete_prompt должна удалить ровно тот пресет, который попросили, несмотря на коллизию."""
-    # Точно воспроизводим сценарий из найденного бага
     library.save_prompt("Портрет/студия", {"prompt": "первый"}, tmp_path)
     library.save_prompt("Портрет:студия", {"prompt": "второй"}, tmp_path)
-
-    # Удаляем второй пресет
     assert library.delete_prompt("Портрет:студия", tmp_path) is True
-
-    # Проверяем, что первый остался, а второй удалён
     remaining = library.list_prompts(tmp_path)
     assert remaining == ["Портрет/студия"]
-
-    # Проверяем, что первый пресет всё ещё загружается с правильным содержимым
     loaded = library.load_prompt("Портрет/студия", tmp_path)
     assert loaded["prompt"] == "первый"
-
-    # Проверяем, что второй не загружается
     with pytest.raises(FileNotFoundError):
         library.load_prompt("Портрет:студия", tmp_path)
 
 
 def test_load_prompt_corrupted_json_raises_damaged_not_notfound(tmp_path):
     """load_prompt должна сообщить 'повреждён', а не 'не найден', для испорченного JSON."""
-    # Создаём файл с невалидным JSON под нужным clean_name (для "test" это будет test.json)
     (tmp_path / "test.json").write_text('{"__name__": "test", "data": {это не json', encoding="utf-8")
-
     with pytest.raises(ValueError) as exc_info:
         library.load_prompt("test", tmp_path)
-
-    # Сообщение об ошибке должно говорить о повреждении
     error_msg = str(exc_info.value).lower()
     assert "повреждён" in error_msg or "повреж" in error_msg
 
 
 def test_load_prompt_non_dict_json_raises_damaged_not_notfound(tmp_path):
     """load_prompt должна сообщить 'повреждён', а не 'не найден', для не-словаря в JSON."""
-    # Создаём файл с валидным JSON, который не словарь, под нужным clean_name
     (tmp_path / "test.json").write_text('["не", "словарь"]', encoding="utf-8")
-
     with pytest.raises(ValueError) as exc_info:
         library.load_prompt("test", tmp_path)
-
-    # Сообщение об ошибке должно говорить о повреждении
     error_msg = str(exc_info.value).lower()
     assert "повреждён" in error_msg or "повреж" in error_msg
 
@@ -149,6 +119,68 @@ def test_load_prompt_genuinely_missing_raises_notfound(tmp_path):
     """load_prompt должна сообщить 'не найден' для полностью отсутствующего пресета."""
     with pytest.raises(FileNotFoundError) as exc_info:
         library.load_prompt("совсем_нет", tmp_path)
-
-    # Сообщение должно говорить о "не найден"
     assert "не найден" in str(exc_info.value).lower()
+
+
+def test_save_prompt_does_not_duplicate_when_corrupted_file_exists(tmp_path):
+    """save_prompt должна обновить существующий пресет, а не создать дубликат.
+
+    Сценарий: preset.json повреждён, preset_2.json содержит ".".
+    Вызываем save_prompt(".", {...}), должна перезаписать preset_2.json.
+    """
+    # Создаём повреждённый preset.json
+    (tmp_path / "preset.json").write_text("{corrupted", encoding="utf-8")
+
+    # Создаём валидный preset_2.json с display-имнем "."
+    preset_2_content = {"__name__": ".", "prompt": "старая версия"}
+    (tmp_path / "preset_2.json").write_text(json.dumps(preset_2_content), encoding="utf-8")
+
+    # Сохраняем новый пресет с именем "."
+    new_payload = {"prompt": "новая версия", "seed": 42}
+    result_path = library.save_prompt(".", new_payload, tmp_path)
+
+    # Должна перезаписать preset_2.json
+    assert result_path == tmp_path / "preset_2.json"
+
+    # list_prompts должна вернуть ровно один "."
+    names = library.list_prompts(tmp_path)
+    assert names == ["."]
+
+    # load_prompt должна вернуть новое содержимое
+    loaded = library.load_prompt(".", tmp_path)
+    assert loaded["prompt"] == "новая версия"
+    assert loaded["seed"] == 42
+
+    # Повреждённый файл должен остаться нетронутым
+    assert (tmp_path / "preset.json").read_text(encoding="utf-8") == "{corrupted"
+
+
+def test_save_prompt_avoids_corrupted_slot(tmp_path):
+    """save_prompt должна пропустить повреждённый слот и использовать первый свободный.
+
+    Сценарий: preset.json повреждён, preset_2.json имеет другое display-имя.
+    Сохраняем новый пресет ".", должна использовать первый свободный слот (preset_3.json).
+    """
+    # Создаём повреждённый preset.json
+    corrupted_content = "{bad json"
+    (tmp_path / "preset.json").write_text(corrupted_content, encoding="utf-8")
+
+    # Создаём валидный файл с другим display-имнем
+    (tmp_path / "preset_2.json").write_text(
+        json.dumps({"__name__": "что-то", "prompt": "первое"}),
+        encoding="utf-8"
+    )
+
+    # Сохраняем новый пресет "." (которая обезвреживается в "preset")
+    new_payload = {"prompt": "новый пресет"}
+    result_path = library.save_prompt(".", new_payload, tmp_path)
+
+    # Должна использовать первый свободный слот preset_3.json
+    assert result_path == tmp_path / "preset_3.json"
+
+    # Повреждённый файл должен остаться нетронутым
+    assert (tmp_path / "preset.json").read_text(encoding="utf-8") == corrupted_content
+
+    # Загружаем новый пресет - должен работать
+    loaded = library.load_prompt(".", tmp_path)
+    assert loaded["prompt"] == "новый пресет"
