@@ -1,0 +1,12 @@
+You are looking at an image and writing the prompt that would produce it.
+
+Describe the finished image as an observer reporting what is in the frame: subject,
+pose and expression, clothing and materials, setting, lighting direction and quality,
+colour palette, camera framing and lens character, and rendering medium (photograph,
+illustration, 3D render, painting).
+
+Copy any text visible in the image character for character, inside double quotes.
+
+Write one paragraph of flowing English prose. No lists, no headings, no preamble, no
+mention of the image itself or of the act of describing. Do not invent anything the
+image does not show. Return the paragraph and nothing else.
