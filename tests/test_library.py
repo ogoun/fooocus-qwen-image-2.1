@@ -155,6 +155,43 @@ def test_save_prompt_does_not_duplicate_when_corrupted_file_exists(tmp_path):
     assert (tmp_path / "preset.json").read_text(encoding="utf-8") == "{corrupted"
 
 
+def _write_duplicate_display_name(tmp_path):
+    """Два файла на диске с одинаковым __name__ — состояние, которое больше не
+    может возникнуть через публичный API, но могло появиться до раунда 4
+    (например, было создано вручную или осталось от старой версии кода).
+    """
+    (tmp_path / "preset.json").write_text(
+        json.dumps({"__name__": ".", "v": "ПЕРВЫЙ"}), encoding="utf-8"
+    )
+    (tmp_path / "preset_2.json").write_text(
+        json.dumps({"__name__": ".", "v": "ВТОРОЙ"}), encoding="utf-8"
+    )
+
+
+def test_load_prompt_returns_first_slot_on_duplicate_display_name(tmp_path):
+    """При двух файлах с одинаковым display-именем побеждает первый слот по порядку кандидатов."""
+    _write_duplicate_display_name(tmp_path)
+    assert library.load_prompt(".", tmp_path)["v"] == "ПЕРВЫЙ"
+
+
+def test_delete_prompt_removes_first_slot_on_duplicate_display_name(tmp_path):
+    """delete_prompt должна удалить первый слот, а не последний, при коллизии display-имён."""
+    _write_duplicate_display_name(tmp_path)
+    assert library.delete_prompt(".", tmp_path) is True
+    assert not (tmp_path / "preset.json").exists()
+    assert (tmp_path / "preset_2.json").exists()
+
+
+def test_save_prompt_overwrites_first_slot_on_duplicate_display_name(tmp_path):
+    """save_prompt должна перезаписать первый слот и не создавать новый файл."""
+    _write_duplicate_display_name(tmp_path)
+    library.save_prompt(".", {"v": "НОВЫЙ"}, tmp_path)
+
+    assert json.loads((tmp_path / "preset.json").read_text(encoding="utf-8"))["v"] == "НОВЫЙ"
+    assert json.loads((tmp_path / "preset_2.json").read_text(encoding="utf-8"))["v"] == "ВТОРОЙ"
+    assert not (tmp_path / "preset_3.json").exists()
+
+
 def test_save_prompt_avoids_corrupted_slot(tmp_path):
     """save_prompt должна пропустить повреждённый слот и использовать первый свободный.
 

@@ -29,6 +29,27 @@ def safe_filename(name: str) -> str:
     return cleaned or "preset"
 
 
+def _load_payload(path: Path) -> tuple[dict[str, Any] | None, str | None]:
+    """Читает JSON-файл пресета и решает, повреждён ли он.
+
+    Возвращает (payload, None) при успехе или (None, сообщение) иначе. Что
+    именно считать «повреждённым файлом» — правило одно на весь модуль:
+    им пользуются и _resolve_candidates, и list_prompts, чтобы решение не
+    могло разойтись между функцией, ищущей один пресет, и функцией,
+    перечисляющей их все (та же болезнь, что и раунды 1-3, только между
+    list_prompts и остальными, а не между save/load/delete).
+    """
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        return None, f"Пресет {path.name} повреждён: {error}"
+
+    if not isinstance(payload, dict):
+        return None, f"Пресет {path.name} повреждён: ожидался словарь, получен {type(payload).__name__}"
+
+    return payload, None
+
+
 @dataclass(frozen=True)
 class _CandidateResolution:
     """Результат поиска кандидатов для пресета по дисплей-имени."""
@@ -71,23 +92,20 @@ def _resolve_candidates(name: str, directory: Path) -> _CandidateResolution:
             continue
 
         # Файл существует, пробуем его прочитать
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            # Файл существует но JSON повреждён
+        payload, error_msg = _load_payload(path)
+        if error_msg is not None:
+            # Файл существует, но повреждён либо содержит не словарь
             if damaged is None:
-                damaged = (path, f"Пресет {path.name} повреждён: {error}")
-            continue
-
-        if not isinstance(payload, dict):
-            # Файл существует, JSON валиден, но не словарь
-            if damaged is None:
-                damaged = (path, f"Пресет {path.name} повреждён: ожидалась словарь, получена {type(payload).__name__}")
+                damaged = (path, error_msg)
             continue
 
         if payload.get(_NAME_KEY) == name_clean:
-            # Найден правильный пресет
-            match = (path, payload)
+            # Первый слот с нужным display-именем побеждает — то же правило
+            # "первый в порядке кандидатов", что уже действует для free и
+            # damaged. Без guard'а последний найденный слот тихо подменял бы
+            # собой первый при коллизии (было исправлено в раунде 4).
+            if match is None:
+                match = (path, payload)
             # Продолжаем поиск, чтобы найти free и damaged если нужны
 
     return _CandidateResolution(match=match, free=free, damaged=damaged)
@@ -143,13 +161,9 @@ def list_prompts(directory: Path) -> list[str]:
 
     names: list[str] = []
     for path in directory.glob("*.json"):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError) as error:
-            LOGGER.warning("Пресет %s пропущен: %s", path.name, error)
-            continue
-        if not isinstance(payload, dict):
-            LOGGER.warning("Пресет %s пропущен: не словарь, а %s", path.name, type(payload).__name__)
+        payload, error_msg = _load_payload(path)
+        if error_msg is not None:
+            LOGGER.warning("%s — пропущен в списке пресетов", error_msg)
             continue
         names.append(payload.get(_NAME_KEY, path.stem))
     return sorted(names)
