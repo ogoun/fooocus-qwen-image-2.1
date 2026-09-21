@@ -55,6 +55,27 @@ def _check_header_safe(value: str, description: str) -> None:
         ) from error
 
 
+def _vision_hint(images: list[Image.Image] | None, error: Exception) -> str:
+    """Подсказка для случая, когда сервер подавился именно изображением.
+
+    Текстовая модель на llama.cpp отвечает на запрос с картинкой пятисотой
+    ошибкой, и по одному её номеру человеку не догадаться, что дело не в сети
+    и не в токене, а в отсутствии у модели зрения. Проверено на живом сервере:
+    тот же запрос без изображения проходит, с изображением — нет.
+
+    Подсказка добавляется только к ошибкам сервера, а не к обрывам связи:
+    при недоступном хосте картинка ни при чём.
+    """
+    if not images:
+        return ""
+    if not isinstance(error, urllib.error.HTTPError) or error.code < 500:
+        return ""
+    return (
+        ". Запрос содержал изображение — возможно, выбранная модель не умеет их"
+        " читать. Для кнопки «Описать изображение» нужна модель со зрением."
+    )
+
+
 class LlmClient:
     """Один запрос — один ответ. Историю диалога оболочка не ведёт."""
 
@@ -127,7 +148,7 @@ class LlmClient:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, OSError, json.JSONDecodeError, UnicodeError) as error:
-            raise LlmError(f"Ошибка обращения к языковой модели: {error}") from error
+            raise LlmError(f"Ошибка обращения к языковой модели: {error}{_vision_hint(images, error)}") from error
 
         choices = payload.get("choices") or []
         if not choices:

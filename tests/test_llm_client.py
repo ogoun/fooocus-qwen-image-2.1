@@ -111,3 +111,61 @@ def test_non_latin1_token_raises_llm_error_from_complete_the_same_way():
     client = LlmClient(LlmEndpoint(base_url="http://127.0.0.1:1", token="ЗАМЕНИТЕ_НА_СВОЙ_ТОКЕН"))
     with pytest.raises(LlmError, match="[Тт]окен"):
         client.complete("системный", "пользовательский")
+
+
+# --- текстовая модель отвечает на картинку пятисотой ошибкой: по одному её
+# номеру человеку не догадаться, что дело в отсутствии зрения у модели.
+# Обнаружено на живом сервере во время дымового прогона ---
+
+
+def _raising_urlopen(error):
+    def fake(*_args, **_kwargs):
+        raise error
+
+    return fake
+
+
+def test_server_error_on_a_request_with_an_image_hints_at_missing_vision(monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    from PIL import Image
+
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        _raising_urlopen(urllib.error.HTTPError("u", 500, "Internal Server Error", {}, None)),
+    )
+    client = LlmClient(LlmEndpoint(base_url="http://example.invalid"))
+    with pytest.raises(LlmError, match="зрени"):
+        client.complete("s", "u", images=[Image.new("RGB", (8, 8), "red")])
+
+
+def test_the_same_server_error_without_an_image_does_not_mention_vision(monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        _raising_urlopen(urllib.error.HTTPError("u", 500, "Internal Server Error", {}, None)),
+    )
+    client = LlmClient(LlmEndpoint(base_url="http://example.invalid"))
+    with pytest.raises(LlmError) as info:
+        client.complete("s", "u")
+    assert "зрени" not in str(info.value)
+
+
+def test_a_network_failure_with_an_image_does_not_blame_vision(monkeypatch):
+    # Недоступный хост — не повод рассуждать о зрении модели: подсказка
+    # обязана относиться только к ответам самого сервера.
+    import urllib.error
+    import urllib.request
+
+    from PIL import Image
+
+    monkeypatch.setattr(urllib.request, "urlopen", _raising_urlopen(urllib.error.URLError("down")))
+    client = LlmClient(LlmEndpoint(base_url="http://example.invalid"))
+    with pytest.raises(LlmError) as info:
+        client.complete("s", "u", images=[Image.new("RGB", (8, 8), "red")])
+    assert "зрени" not in str(info.value)
