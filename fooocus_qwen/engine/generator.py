@@ -354,6 +354,12 @@ class Generator:
             "seed": seed,
             "steps": prepared.preset.num_inference_steps,
             "preset": prepared.preset.name,
+            # Соотношение сторон пишется рядом с выведенными из него
+            # размерами, а не вместо них: при правке width/height равны None
+            # (размер наследуется от источника), и без этого поля метаданные
+            # не помнили бы выбор пользователя вовсе — восстанавливать из
+            # PNG было бы нечего.
+            "aspect": prepared.aspect,
             "width": width,
             "height": height,
             "output_resolution": prepared.preset.output_resolution,

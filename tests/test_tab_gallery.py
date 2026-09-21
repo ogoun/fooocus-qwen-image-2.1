@@ -82,7 +82,7 @@ def test_restore_reports_missing_parameters_for_a_foreign_png_without_raising(mo
     Image.new("RGB", (8, 8), "blue").save(foreign)
 
     *fields, details = handlers["restore"](str(foreign), None)
-    assert tuple(fields) == ("", "", "", [], "MiddleQuality", -1, 1.0)
+    assert tuple(fields) == ("", "", "", [], "MiddleQuality", -1, 1.0, "1:1")
     assert isinstance(details, dict)
     assert "не найдены" in next(iter(details.values()))
 

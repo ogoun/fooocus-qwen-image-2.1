@@ -1,11 +1,17 @@
 """Восстановление параметров генерации из метаданных PNG.
 
-Главное обещание задачи: семь восстановленных значений совпадают позиционно
-с семью полями вкладки генерации, в объявленном порядке. Ничего в сигнатурах
-не бросит исключение, если это когда-нибудь разойдётся — сид молча окажется
-в поле стилей, а guidance — в поле сида. Поэтому порядок проверяется отдельным
+Главное обещание: восстановленные значения совпадают позиционно с полями
+вкладки генерации, в объявленном порядке. Ничего в сигнатурах не бросит
+исключение, если это когда-нибудь разойдётся — сид молча окажется в поле
+стилей, а guidance — в поле сида. Поэтому порядок проверяется отдельным
 тестом, построенным на реально собранном интерфейсе, а не на переписанном
 вручную списке ожиданий.
+
+Второй контракт, проверяемый в конце файла, — имена ключей. Генератор пишет
+словарь, галерея читает его по строковым литералам, общего типа между ними
+нет: переименование ключа в генераторе сломало бы восстановление, а все
+тесты остались бы зелёными, потому что каждая сторона согласована сама с
+собой.
 """
 
 from __future__ import annotations
@@ -16,6 +22,7 @@ from PIL import Image
 gr = pytest.importorskip("gradio")
 
 from fooocus_qwen import config
+from fooocus_qwen.imaging import aspect as aspect_module
 from fooocus_qwen.imaging import metadata
 from fooocus_qwen.ui import tab_gallery, tab_generate
 from fooocus_qwen.ui.i18n import Localizer
@@ -29,13 +36,14 @@ PARAMS = {
     "preset": "MaxQuality",
     "seed": 4242,
     "true_cfg_scale": 2.5,
-    "width": 2048,
-    "height": 2048,
+    "aspect": "16:9",
+    "width": 2752,
+    "height": 1536,
 }
 
 
 def test_fields_come_back_in_the_declared_order():
-    prompt, boosted, negative, styles, preset, seed, cfg = tab_gallery.restore_fields(PARAMS)
+    prompt, boosted, negative, styles, preset, seed, cfg, ratio = tab_gallery.restore_fields(PARAMS)
     assert prompt == "кот в шляпе"
     assert boosted == "a cat wearing a hat"
     assert negative == "blurry"
@@ -43,15 +51,32 @@ def test_fields_come_back_in_the_declared_order():
     assert preset == "MaxQuality"
     assert seed == 4242
     assert cfg == 2.5
+    assert ratio == "16:9"
 
 
 def test_missing_parameters_fall_back_to_defaults():
-    prompt, boosted, negative, styles, preset, seed, cfg = tab_gallery.restore_fields({})
+    prompt, boosted, negative, styles, preset, seed, cfg, ratio = tab_gallery.restore_fields({})
     assert prompt == "" and boosted == "" and negative == ""
     assert styles == []
     assert preset == "MiddleQuality"
     assert seed == -1
     assert cfg == 1.0
+    assert ratio == "1:1"
+
+
+def test_an_edit_restores_the_follow_reference_sentinel():
+    # При правке width/height равны None — размер наследуется от источника, —
+    # поэтому единственное, что помнит о выборе пользователя, это aspect.
+    assert tab_gallery.restore_fields(
+        {"aspect": aspect_module.FOLLOW_REFERENCE, "width": None, "height": None}
+    )[7] == aspect_module.FOLLOW_REFERENCE
+
+
+def test_an_unknown_aspect_falls_back():
+    # PNG из старой сборки ключа aspect не содержит вовсе, а руками правленный
+    # может содержать что угодно: подставить это в gr.Dropdown нельзя.
+    assert tab_gallery.restore_fields({"aspect": "21:9"})[7] == "1:1"
+    assert tab_gallery.restore_fields({})[7] == "1:1"
 
 
 def test_none_yields_defaults_too():
@@ -72,11 +97,12 @@ def test_non_numeric_seed_and_cfg_fall_back_to_defaults_instead_of_raising():
     # PNG с нашим ключом чанка, но нечисловым значением — правленный руками
     # файл или чужой инструмент, переиспользовавший ключ, — не должен ронять
     # обработчик кнопки «Восстановить» внутри int()/float().
-    prompt, boosted, negative, styles, preset, seed, cfg = tab_gallery.restore_fields(
+    prompt, boosted, negative, styles, preset, seed, cfg, ratio = tab_gallery.restore_fields(
         {"seed": "не число", "true_cfg_scale": "тоже не число"}
     )
     assert seed == -1
     assert cfg == 1.0
+    assert ratio == "1:1"
 
 
 def test_foreign_png_yields_full_defaults_without_raising(tmp_path):
@@ -94,8 +120,8 @@ def test_foreign_png_yields_full_defaults_without_raising(tmp_path):
     parameters = metadata.read_png(path)
     assert parameters is None
 
-    prompt, boosted, negative, styles, preset, seed, cfg = tab_gallery.restore_fields(parameters)
-    assert (prompt, boosted, negative, styles, preset, seed, cfg) == ("", "", "", [], "MiddleQuality", -1, 1.0)
+    restored = tab_gallery.restore_fields(parameters)
+    assert restored == ("", "", "", [], "MiddleQuality", -1, 1.0, "1:1")
 
 
 def test_restore_output_order_matches_generate_components(monkeypatch, tmp_path):
@@ -139,6 +165,7 @@ def test_restore_output_order_matches_generate_components(monkeypatch, tmp_path)
         generate_components["quality"],
         generate_components["seed"],
         generate_components["cfg"],
+        generate_components["ratio"],
     ]
     assert generation_outputs == expected_components
 
@@ -160,3 +187,63 @@ def test_restore_output_order_matches_generate_components(monkeypatch, tmp_path)
         assert isinstance(value, expected_type), (
             f"{component.label!r} ожидает {expected_type}, получено {type(value)} ({value!r})"
         )
+
+
+# ---------------------------------------------------------------------------
+# Контракт ключей метаданных.
+#
+# `Generator._parameters()` пишет словарь, `restore_fields()` читает его по
+# строковым ключам. Между ними нет ни общего типа, ни общей константы:
+# переименование ключа в генераторе ломало бы восстановление параметров из
+# галереи, а все тесты при этом оставались бы зелёными — каждая сторона
+# по-прежнему согласована сама с собой.
+# ---------------------------------------------------------------------------
+
+
+def _keys_written_by_the_generator() -> set[str]:
+    """Ключи, которые генератор реально кладёт в метаданные.
+
+    Берутся из настоящего прогона `Generator.generate()` на поддельном
+    пайплайне, а не из переписанного вручную списка: список разошёлся бы с
+    кодом ровно так же, как разошлись бы сами ключи.
+    """
+    from tests.test_generator import FakePipeline, make_generator
+    from tests.test_generator import request as generation_request
+
+    engine = make_generator(FakePipeline())
+    produced = engine.generate(generation_request(seed=1))
+    return set(produced[0].parameters)
+
+
+def _keys_read_by_restore() -> set[str]:
+    """Ключи, которые читает `restore_fields()`, — из её собственного исходника.
+
+    Разбор текста функции уместнее вызова со словарём-шпионом: `dict.get`
+    подменить нечем, не подменив сам тип словаря, а проверять надо именно то,
+    какие литералы написаны в коде.
+    """
+    import inspect
+    import re
+
+    source = inspect.getsource(tab_gallery.restore_fields)
+    return set(re.findall(r'data\.get\(\s*"([^"]+)"', source))
+
+
+def test_every_key_restore_reads_is_a_key_the_generator_writes():
+    written = _keys_written_by_the_generator()
+    read = _keys_read_by_restore()
+
+    assert read, "разбор исходника restore_fields() ничего не нашёл — проверка вырождена"
+    missing = read - written
+    assert not missing, (
+        "restore_fields() читает ключи, которых Generator._parameters() не пишет: "
+        f"{sorted(missing)}. Восстановление параметров из галереи молча вернёт дефолты."
+    )
+
+
+def test_the_contract_covers_the_fields_the_generation_tab_owns():
+    # Страховка от вырожденной проверки выше: убеждаемся, что в контракт
+    # входят именно те ключи, ради которых он заведён.
+    read = _keys_read_by_restore()
+    assert {"prompt", "prompt_boosted", "negative_prompt", "styles", "preset", "seed",
+            "true_cfg_scale", "aspect"} <= read

@@ -17,13 +17,14 @@ import gradio as gr
 
 from .. import config
 from ..engine import presets
+from ..imaging import aspect as aspect_module
 from ..imaging import metadata
 from ..storage import gallery
 from .i18n import Localizer, pick
 
 # Порядок обязан совпадать с порядком выходов кнопки «Восстановить» в build():
 # восстановление читает по этому же порядку значения из словаря параметров, а
-# build() раскладывает их по тем же семи полям вкладки генерации. Оба места
+# build() раскладывает их по тем же RESTORED_FIELDS полям вкладки генерации. Оба места
 # проверяет test_restore.test_restore_output_order_matches_generate_components,
 # построенный на реально собранном графе Gradio, а не на переписанном вручную
 # списке ожиданий — так что рассинхронизация здесь не пройдёт тесты молча.
@@ -45,21 +46,36 @@ def _safe_float(value: object, default: float) -> float:
         return default
 
 
+DEFAULT_ASPECT = "1:1"
+
+# Сколько полей вкладки генерации восстанавливает restore_fields(). Держится
+# рядом с самой функцией, чтобы «сколько gr.update() вернуть, когда
+# восстанавливать нечего» не приходилось пересчитывать руками в двух местах.
+RESTORED_FIELDS = 8
+
+
 def restore_fields(parameters: dict | None) -> tuple:
     """Значения полей вкладки генерации в фиксированном порядке.
 
-    Порядок: промт, переписанный промт, негатив, стили, пресет, сид, guidance.
-    Отсутствующий или незнакомый пресет (например, из старой сборки) тихо
-    заменяется дефолтным — таблица пресетов меняется быстрее, чем метаданные
-    в уже сохранённых PNG. Сид и guidance читаются со снисхождением по той же
-    причине: PNG с нашим ключом чанка, но нечисловым значением (правленный
-    руками файл или чужой инструмент, переиспользовавший ключ) не должен
-    ронять обработчик кнопки — он просто получит дефолт вместо этого поля.
+    Порядок: промт, переписанный промт, негатив, стили, пресет, сид, guidance,
+    соотношение сторон. Отсутствующий или незнакомый пресет (например, из
+    старой сборки) тихо заменяется дефолтным — таблица пресетов меняется
+    быстрее, чем метаданные в уже сохранённых PNG; с соотношением сторон
+    поступаем так же, и по той же причине к нему добавляется ещё одна: PNG,
+    сохранённые до появления ключа ``aspect``, его просто не содержат. Сид и
+    guidance читаются со снисхождением: PNG с нашим ключом чанка, но
+    нечисловым значением (правленный руками файл или чужой инструмент,
+    переиспользовавший ключ) не должен ронять обработчик кнопки — он просто
+    получит дефолт вместо этого поля.
     """
     data = parameters or {}
     preset = data.get("preset", presets.DEFAULT)
     if preset not in presets.PRESETS:
         preset = presets.DEFAULT
+
+    ratio = data.get("aspect", DEFAULT_ASPECT)
+    if ratio not in aspect_module.ASPECT_RATIOS:
+        ratio = DEFAULT_ASPECT
 
     return (
         data.get("prompt", ""),
@@ -69,6 +85,7 @@ def restore_fields(parameters: dict | None) -> tuple:
         preset,
         _safe_int(data.get("seed", -1), -1),
         _safe_float(data.get("true_cfg_scale", 1.0), 1.0),
+        ratio,
     )
 
 
@@ -137,7 +154,9 @@ def build(studio, localizer: Localizer, generate_components: dict) -> dict:
         # новый PNG, значит, речь уже не о том, что было выбрано раньше.
         source = Path(uploaded) if uploaded else (Path(path) if path else None)
         if source is None:
-            return (gr.update(),) * 7 + ({"сообщение": "выберите изображение в галерее или перетащите PNG"},)
+            return (gr.update(),) * RESTORED_FIELDS + (
+                {"сообщение": "выберите изображение в галерее или перетащите PNG"},
+            )
 
         parameters = metadata.read_png(source)
         return restore_fields(parameters) + (parameters or {"сообщение": "параметры не найдены"},)
@@ -156,6 +175,7 @@ def build(studio, localizer: Localizer, generate_components: dict) -> dict:
             generate_components["quality"],
             generate_components["seed"],
             generate_components["cfg"],
+            generate_components["ratio"],
             details,
         ],
     )
