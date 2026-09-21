@@ -1,0 +1,84 @@
+"""Пути приложения, значения по умолчанию и разбор аргументов командной строки.
+
+Корень проекта вычисляется от расположения файла, а не от текущего каталога:
+оболочку запускают и из проводника, и из планировщика, где рабочий каталог
+произвольный.
+"""
+
+from __future__ import annotations
+
+import argparse
+from dataclasses import dataclass
+from pathlib import Path
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+
+MODEL_DIR = PROJECT_ROOT / "Qwen-Image-2.1"
+RESOURCES_DIR = PROJECT_ROOT / "resources"
+STYLES_DIR = RESOURCES_DIR / "styles"
+SYSTEM_PROMPT_DIR = RESOURCES_DIR / "prompts"
+
+USER_DIR = PROJECT_ROOT / "user"
+OUTPUT_DIR = USER_DIR / "outputs"
+PROMPT_DIR = USER_DIR / "prompts"
+
+LOG_DIR = PROJECT_ROOT / "logs"
+ENDPOINT_FILE = PROJECT_ROOT / "llm_endpoint.txt"
+
+PRESET_NAMES = ("LowQuality", "MiddleQuality", "MaxQuality")
+
+DEFAULT_HOST = "0.0.0.0"
+DEFAULT_PORT = 7865
+
+
+@dataclass(frozen=True)
+class AppConfig:
+    """Параметры запуска оболочки."""
+
+    host: str = DEFAULT_HOST
+    port: int = DEFAULT_PORT
+    lang: str = "ru"
+    pin_memory: bool = True
+    preset: str = "MiddleQuality"
+    verbose: bool = False
+    model_dir: Path = MODEL_DIR
+
+
+def ensure_directories() -> None:
+    """Создаёт каталоги пользовательских данных. Вызывается при старте."""
+    for path in (OUTPUT_DIR, PROMPT_DIR, LOG_DIR):
+        path.mkdir(parents=True, exist_ok=True)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="fooocus_qwen", description="Оболочка Qwen-Image-2.1")
+    parser.add_argument("--host", default=DEFAULT_HOST, help="адрес прослушивания")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="порт прослушивания")
+    parser.add_argument("--lang", choices=("ru", "en"), default="ru", help="язык интерфейса")
+    parser.add_argument("--preset", choices=PRESET_NAMES, default="MiddleQuality", help="пресет качества")
+    parser.add_argument("--verbose", action="store_true", help="подробный журнал")
+    # Закрепление памяти ускоряет переброску весов, но занимает десятки гигабайт
+    # неперемещаемой оперативной памяти — на чужой машине это может не подойти.
+    parser.add_argument(
+        "--no-pin-memory",
+        dest="pin_memory",
+        action="store_false",
+        help="не закреплять копии весов в оперативной памяти",
+    )
+    parser.set_defaults(pin_memory=True)
+    parser.add_argument("--prompt", help="сгенерировать одно изображение без интерфейса и выйти")
+    parser.add_argument("--out", help="куда сохранить результат режима --prompt")
+    parser.add_argument("--selftest", action="store_true", help="проверить готовность окружения и выйти")
+    return parser
+
+
+def parse_args(argv: list[str] | None = None) -> AppConfig:
+    args = build_parser().parse_args(argv)
+    return AppConfig(
+        host=args.host,
+        port=args.port,
+        lang=args.lang,
+        pin_memory=args.pin_memory,
+        preset=args.preset,
+        verbose=args.verbose,
+    )

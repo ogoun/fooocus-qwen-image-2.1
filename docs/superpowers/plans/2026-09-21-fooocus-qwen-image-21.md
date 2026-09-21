@@ -37,7 +37,7 @@
 
 **Interfaces:**
 - Consumes: ничего.
-- Produces: `config.AppConfig` (поля `host: str`, `port: int`, `lang: str`, `pin_memory: bool`, `preset: str`, `model_dir: Path`, `listen: bool`); `config.parse_args(argv: list[str] | None) -> AppConfig`; константы `config.PROJECT_ROOT`, `MODEL_DIR`, `RESOURCES_DIR`, `USER_DIR`, `OUTPUT_DIR`, `PROMPT_DIR`, `LOG_DIR`, `STYLES_DIR`, `SYSTEM_PROMPT_DIR`; `logging_setup.setup_logging(verbose: bool) -> None`; `__main__.selftest() -> int`.
+- Produces: `config.AppConfig` (поля `host: str`, `port: int`, `lang: str`, `pin_memory: bool`, `preset: str`, `model_dir: Path`, `verbose: bool`); `config.parse_args(argv: list[str] | None) -> AppConfig`; константы `config.PROJECT_ROOT`, `MODEL_DIR`, `RESOURCES_DIR`, `USER_DIR`, `OUTPUT_DIR`, `PROMPT_DIR`, `LOG_DIR`, `STYLES_DIR`, `SYSTEM_PROMPT_DIR`; `logging_setup.setup_logging(verbose: bool) -> None`; `__main__.selftest() -> int`.
 
 - [ ] **Step 1: Создать ветку**
 
@@ -2893,7 +2893,13 @@ def test_host_copy_is_canonical_and_reused():
     host_tensor = staged.module.weight.data
     staged.to_device()
     staged.to_host()
-    assert staged.module.weight.data is host_tensor
+    # Тождество объектов проверять нельзя: геттер Tensor.data каждый раз строит
+    # новую обёртку, и `t.data is t.data` ложно само по себе. Проверяем то, что
+    # на самом деле требуется — что хранилище не подменилось и правка хостовой
+    # копии видна через модуль, то есть возврата с устройства не было.
+    assert staged.module.weight.data.data_ptr() == host_tensor.data_ptr()
+    host_tensor[0, 0] = 42.0
+    assert float(staged.module.weight.data[0, 0]) == 42.0
 
 
 def test_repeated_calls_are_idempotent():
@@ -3619,10 +3625,20 @@ def test_follow_reference_leaves_size_to_the_pipeline():
     assert gen.resolve_size(request(aspect=aspect.FOLLOW_REFERENCE)) == (None, None)
 
 
-def test_editing_follows_the_source_size_by_default():
-    # При правке кадр не должен менять пропорции без явной просьбы.
-    width, height = gen.resolve_size(request(source=image((100, 50)), mask_mode=gen.MASK_NONE))
-    assert width is None and height is None
+def test_editing_follows_the_source_size_with_the_explicit_sentinel():
+    # Наследование размеров задаётся явным признаком, а не значением "1:1":
+    # иначе осознанный выбор квадрата при правке молча игнорировался бы.
+    resolved = gen.resolve_size(
+        request(source=image((100, 50)), mask_mode=gen.MASK_NONE, aspect=aspect.FOLLOW_REFERENCE)
+    )
+    assert resolved == (None, None)
+
+
+def test_explicit_square_during_editing_is_honoured():
+    width, height = gen.resolve_size(
+        request(source=image((100, 50)), mask_mode=gen.MASK_NONE, aspect="1:1")
+    )
+    assert width == height and width is not None
 
 
 def test_seed_minus_one_is_replaced_by_a_random_one():
@@ -4921,7 +4937,9 @@ def build(cfg: config.AppConfig) -> gr.Blocks:
     localizer = Localizer(cfg.lang)
     css = (Path(__file__).parent / "style.css").read_text(encoding="utf-8")
 
-    with gr.Blocks(title=pick("app_title", cfg.lang), css=css, analytics_enabled=False) as demo:
+    # css переехал из конструктора Blocks в launch() начиная с Gradio 6.0:
+    # в конструкторе он теперь только предупреждение в выводе тестов.
+    with gr.Blocks(title=pick("app_title", cfg.lang), analytics_enabled=False) as demo:
         with gr.Row():
             title = localizer.bind(
                 gr.Markdown(f"## {pick('app_title', cfg.lang)}"),
@@ -4946,7 +4964,9 @@ def launch(cfg: config.AppConfig) -> None:
     demo = build(cfg)
     demo.queue(default_concurrency_limit=1)
     LOGGER.info("Интерфейс на http://%s:%s", cfg.host, cfg.port)
-    demo.launch(server_name=cfg.host, server_port=cfg.port, show_api=False, inbrowser=False)
+    # show_api в Gradio 6.5.1 не существует ни у Blocks, ни у launch — его передача
+    # роняет запуск с TypeError. Ссылка на API и без того скрыта правилом в style.css.
+    demo.launch(server_name=cfg.host, server_port=cfg.port, css=css, inbrowser=False)
 ```
 
 - [ ] **Step 8: Запустить интерфейс и проверить генерацию**
@@ -5090,6 +5110,7 @@ from ..engine.generator import (
     MASK_REGION,
     GenerationRequest,
 )
+from ..imaging import aspect as aspect_module
 from ..imaging import masking, metadata, outpaint
 from ..prompting import boost as boost_module
 from ..storage import gallery
@@ -5297,7 +5318,10 @@ def build(studio, localizer: Localizer, generate_components: dict) -> dict:
             prompt=effective or prompt_text,
             prompt_original=prompt_text,
             preset=presets.get(quality_name),
-            aspect="1:1",  # при правке размеры наследуются от исходного изображения
+            # Явный признак «наследовать размеры от исходного изображения». Раньше эту
+            # роль играло значение "1:1", из-за чего осознанный выбор квадрата при правке
+            # был неотличим от отсутствия выбора и молча игнорировался.
+            aspect=aspect_module.FOLLOW_REFERENCE,
             seed=int(seed_value),
             source=source,
             mask=mask,

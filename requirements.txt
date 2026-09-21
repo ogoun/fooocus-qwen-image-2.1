@@ -1,0 +1,28 @@
+# torch и torchvision ставятся отдельно, с индекса CUDA — см. install.ps1 / install.sh.
+
+# Пайплайна QwenImage21Pipeline нет ни в одном релизе PyPI, только в main.
+# Коммит зафиксирован: без этого сборка невоспроизводима.
+diffusers @ git+https://github.com/huggingface/diffusers@cc8644b447d8f11074d3df06d0ee0e3e7c91bf75
+
+# Qwen3-VL как текстовый энкодер требует пятую ветку transformers.
+transformers>=5.17
+accelerate>=1.0
+safetensors>=0.4
+huggingface-hub>=0.30
+tokenizers>=0.21
+protobuf>=4.25
+sentencepiece>=0.2
+
+Pillow>=10.3
+numpy>=1.26,<3
+opencv-python-headless>=4.10
+
+gradio==6.5.1
+
+einops>=0.8
+ftfy>=6.2
+tqdm>=4.66
+psutil>=6.0
+nvidia-ml-py>=12.560
+
+pytest>=8.0
