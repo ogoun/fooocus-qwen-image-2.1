@@ -67,6 +67,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="не закреплять копии весов в оперативной памяти",
     )
     parser.set_defaults(pin_memory=True)
+    parser.add_argument("--prompt", help="сгенерировать одно изображение без интерфейса и выйти")
+    parser.add_argument("--out", help="куда сохранить результат режима --prompt")
     parser.add_argument("--selftest", action="store_true", help="проверить готовность окружения и выйти")
     return parser
 

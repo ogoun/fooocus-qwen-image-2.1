@@ -56,6 +56,39 @@ def selftest() -> int:
     return 0
 
 
+def generate_once(args) -> int:
+    """Одна генерация без интерфейса: для проверки и для скриптов."""
+    from pathlib import Path
+
+    from .engine import loader, presets
+    from .engine.generator import GenerationRequest, Generator
+    from .imaging import metadata
+    from .prompting.styles import load_styles
+    from .storage import gallery
+
+    pipe, residency, cache = loader.load(config.MODEL_DIR, pin_memory=args.pin_memory)
+    engine = Generator(pipe, residency, cache, load_styles(config.STYLES_DIR))
+
+    def show(index: int, step: int, total: int) -> None:
+        print(f"\rкартинка {index + 1}: шаг {step}/{total}", end="", flush=True)
+
+    results = engine.generate(
+        GenerationRequest(prompt=args.prompt, preset=presets.get(args.preset)), progress=show
+    )
+    print()
+
+    if not results:
+        print("Ничего не сгенерировано")
+        return 1
+
+    destination = Path(args.out) if args.out else gallery.next_path(config.OUTPUT_DIR)
+    metadata.save_png(results[0].image, destination, results[0].parameters)
+    print(f"Сохранено: {destination}")
+    print(f"Сид: {results[0].seed}, время: {results[0].parameters['seconds']} с")
+    print(f"Память: {residency.stats()}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = config.build_parser().parse_args(argv)
     logging_setup.setup_logging(args.verbose)
@@ -63,6 +96,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.selftest:
         return selftest()
+
+    if args.prompt:
+        return generate_once(args)
 
     # Модуль ui.app появляется в задаче 12; до неё запуск без --selftest и без
     # --prompt упадёт на этом импорте, и это правильное поведение: интерфейса ещё нет.
