@@ -19,7 +19,7 @@ fi
 
 step 1 "Создаю окружение и ставлю torch с поддержкой CUDA"
 if [ ! -x "$python" ]; then
-    python3.12 -m venv "$venv" 2>/dev/null || python3 -m venv "$venv"
+    python3.12 -m venv "$venv" 2>/dev/null || python3.13 -m venv "$venv" 2>/dev/null || python3 -m venv "$venv"
 fi
 "$python" -m pip install --upgrade pip setuptools wheel
 "$python" -m pip install torch torchvision --index-url "$torch_index"

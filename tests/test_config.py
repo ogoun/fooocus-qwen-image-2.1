@@ -1,7 +1,5 @@
 """Проверки разбора аргументов и путей приложения."""
 
-from pathlib import Path
-
 from fooocus_qwen import config
 
 

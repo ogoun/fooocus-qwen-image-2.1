@@ -2,12 +2,9 @@
 
 from __future__ import annotations
 
-import logging
 import sys
 
 from . import config, logging_setup
-
-LOGGER = logging.getLogger(__name__)
 
 
 def selftest() -> int:
