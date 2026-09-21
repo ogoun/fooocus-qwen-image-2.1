@@ -4937,7 +4937,9 @@ def build(cfg: config.AppConfig) -> gr.Blocks:
     localizer = Localizer(cfg.lang)
     css = (Path(__file__).parent / "style.css").read_text(encoding="utf-8")
 
-    with gr.Blocks(title=pick("app_title", cfg.lang), css=css, analytics_enabled=False) as demo:
+    # css переехал из конструктора Blocks в launch() начиная с Gradio 6.0:
+    # в конструкторе он теперь только предупреждение в выводе тестов.
+    with gr.Blocks(title=pick("app_title", cfg.lang), analytics_enabled=False) as demo:
         with gr.Row():
             title = localizer.bind(
                 gr.Markdown(f"## {pick('app_title', cfg.lang)}"),
@@ -4962,7 +4964,9 @@ def launch(cfg: config.AppConfig) -> None:
     demo = build(cfg)
     demo.queue(default_concurrency_limit=1)
     LOGGER.info("Интерфейс на http://%s:%s", cfg.host, cfg.port)
-    demo.launch(server_name=cfg.host, server_port=cfg.port, show_api=False, inbrowser=False)
+    # show_api в Gradio 6.5.1 не существует ни у Blocks, ни у launch — его передача
+    # роняет запуск с TypeError. Ссылка на API и без того скрыта правилом в style.css.
+    demo.launch(server_name=cfg.host, server_port=cfg.port, css=css, inbrowser=False)
 ```
 
 - [ ] **Step 8: Запустить интерфейс и проверить генерацию**
