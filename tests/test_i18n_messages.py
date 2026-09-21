@@ -105,6 +105,11 @@ def _english_handlers(monkeypatch, tmp_path):
     monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(config, "ENDPOINT_FILE", tmp_path / "llm_endpoint.txt")
     monkeypatch.setattr(config, "SYSTEM_PROMPT_DIR", tmp_path)
+    # Обработчик «открыть папку» вызывает файловый менеджер системы. Без подмены
+    # каждый прогон набора распахивает пользователю окно проводника на временном
+    # каталоге pytest — тест обязан проверять текст сообщения, а не дёргать
+    # рабочий стол.
+    monkeypatch.setattr(tab_gallery, "_open_folder", lambda path: None)
     cfg = config.AppConfig(lang="en")
     studio = Studio(cfg)
 
