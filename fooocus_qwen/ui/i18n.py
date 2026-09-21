@@ -50,10 +50,6 @@ T: dict[str, tuple[str, str]] = {
         "Speeds generation up. Toggling it changes the result for the same seed.",
     ),
     "references": ("Референсы", "References"),
-    "references_info": (
-        "До 10 изображений. Ссылайтесь на них в промте подписями под миниатюрами.",
-        "Up to 10 images. Refer to them in the prompt by the caption under each thumbnail.",
-    ),
     "reference_add": ("Добавить референсы", "Add references"),
     "reference_clear": ("Очистить референсы", "Clear references"),
     "boost": ("AI буст", "AI boost"),
@@ -91,7 +87,6 @@ T: dict[str, tuple[str, str]] = {
     "send_to_edit": ("Отправить в редактор", "Send to editor"),
     "llm_endpoint": ("Адрес языковой модели", "Language model endpoint"),
     "llm_check": ("Проверить связь", "Check connection"),
-    "llm_model": ("Модель", "Model"),
     "refresh": ("Обновить", "Refresh"),
     "open_folder": ("Открыть папку", "Open folder"),
     "restore_params": ("Восстановить параметры из PNG", "Restore parameters from PNG"),

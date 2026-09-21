@@ -15,7 +15,7 @@ import random
 import threading
 import time
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 import torch
@@ -72,7 +72,6 @@ class GenerationRequest:
     keep_outside: bool = True
 
     prompt_original: str = ""
-    extras: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -268,9 +267,13 @@ class Generator:
         """Готовит маску и, для режима точной области, вырезает фрагмент.
 
         Прямоугольник вырезки возвращается явным вторым значением, а не
-        сохраняется в самом запросе: `request` может быть переиспользован
-        вызывающей стороной для другой генерации, и общее состояние вроде
-        `request.extras` пережило бы этот вызов, подставляясь в следующий.
+        сохраняется в самом запросе. Так уже было сделано однажды — через
+        изменяемый словарь на объекте запроса — и это дало утечку между
+        вызовами: `_replace` копирует запрос поверхностно, поэтому словарь
+        оставался общим, и вырезка от прошлого прогона подставлялась в
+        следующий, если вызывающая сторона переиспользовала объект. Урок
+        общий: промежуточные результаты одного вызова не живут на входном
+        объекте, даже когда это удобно.
         """
         if request.source is None or request.mask is None or request.mask_mode == MASK_NONE:
             return request, None
@@ -376,7 +379,15 @@ class Generator:
 
 
 def _replace(request: GenerationRequest, **changes: Any) -> GenerationRequest:
-    """Копия запроса с изменёнными полями; словарь extras остаётся общим."""
+    """Копия запроса с изменёнными полями.
+
+    Копия поверхностная: изображения (`source`, `mask`, `references`)
+    намеренно разделяются с оригиналом, потому что они неизменяемы для нас и
+    весят мегабайты. Отсюда правило: у `GenerationRequest` не должно быть
+    изменяемых полей — любое такое поле окажется общим у копии и оригинала,
+    и запись в него переживёт вызов. Ровно этим когда-то был словарь
+    `extras`, через который `_prepare` передавал вырезку в `_finish`.
+    """
     import copy
 
     clone = copy.copy(request)
