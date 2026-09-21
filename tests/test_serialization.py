@@ -107,6 +107,15 @@ def test_the_second_request_cannot_disarm_the_first_stop_button():
     # Последствие №1 из докстринга модуля: без замка второй запрос выполнял бы
     # `self._interrupted = False` посреди первого, и нажатая кнопка «Прервать»
     # переставала бы действовать.
+    #
+    # Порядок событий здесь важен и не совпадает с версией «до»: интерпретация
+    # обязана прозвучать, ПОКА первая генерация ещё внутри пайплайна, и ДО
+    # того, как второй запрос будет допущен, — иначе последний вызов перед
+    # проверкой это сам `interrupt()`, и утверждение держится тривиально,
+    # независимо от того, взял ли кто-нибудь замок между ними. Поэтому
+    # проверка флагов стоит ПОСЛЕ старта второго запроса, дав ему заведомо
+    # достаточно времени, чтобы без замка успеть выполнить сброс в начале
+    # `_generate()` и войти в тело пайплайна (`pipe.inside == 2`).
     pipe = BlockingPipeline()
     engine = _generator(pipe)
 
@@ -114,16 +123,24 @@ def test_the_second_request_cannot_disarm_the_first_stop_button():
     first.start()
     assert pipe.entered.wait(timeout=5)
 
-    second = threading.Thread(target=lambda: engine.generate(request()), daemon=True)
-    second.start()
-    second.join(timeout=0.3)
-
     engine.interrupt()
     assert pipe._interrupt is True
+    assert engine._interrupted is True
+
+    second = threading.Thread(target=lambda: engine.generate(request()), daemon=True)
+    second.start()
+    # Без замка этого времени второму потоку хватит, чтобы дойти до сброса
+    # флагов и войти в пайплайн: он не делает ничего, кроме подготовки на CPU.
+    second.join(timeout=0.5)
+
+    assert pipe._interrupt is True, "второй запрос разоружил кнопку «Прервать» первого"
+    assert engine._interrupted is True, "второй запрос разоружил кнопку «Прервать» первого"
+    assert pipe.inside == 1, "вторая генерация вошла в пайплайн, пока первая ещё не завершилась"
 
     pipe.release.set()
     first.join(timeout=5)
     second.join(timeout=5)
+    assert not first.is_alive() and not second.is_alive()
 
 
 def test_interrupt_is_reachable_while_the_lock_is_held():
