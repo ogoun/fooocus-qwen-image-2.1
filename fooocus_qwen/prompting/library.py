@@ -27,6 +27,59 @@ def safe_filename(name: str) -> str:
     return cleaned or "preset"
 
 
+def _resolve_candidate_file(name: str, directory: Path) -> tuple[Path | None, dict[str, Any] | None, str | None]:
+    """Ищет файл пресета по дисплей-имени среди возможных коллизий.
+
+    Returns:
+        (path, payload, error):
+        - (path, payload, None): файл найден и валиден
+        - (path, None, error_msg): файл найден но повреждён
+        - (None, None, None): файл не найден
+    """
+    clean_name = safe_filename(name)
+    name_clean = name.strip()
+
+    # Ищем файл с соответствующим дисплей-имнем среди возможных коллизий
+    candidates = [directory / f"{clean_name}.json"]
+    for attempt in range(1, 100):
+        candidates.append(directory / f"{clean_name}_{attempt + 1}.json")
+
+    first_error_path = None
+    first_error_msg = None
+
+    for path in candidates:
+        if not path.is_file():
+            continue
+
+        # Файл существует, пробуем его прочитать
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            # Файл найден, но JSON повреждён - запоминаем первую ошибку
+            if first_error_path is None:
+                first_error_path = path
+                first_error_msg = f"Пресет {path.name} повреждён: {error}"
+            continue
+
+        if not isinstance(payload, dict):
+            # Файл найден и JSON валиден, но не словарь
+            if first_error_path is None:
+                first_error_path = path
+                first_error_msg = f"Пресет {path.name} повреждён: ожидалась словарь, получена {type(payload).__name__}"
+            continue
+
+        if payload.get(_NAME_KEY) == name_clean:
+            # Найден нужный файл и он валиден
+            return (path, payload, None)
+
+    # Если мы нашли повреждённый файл с нужным clean_name, сообщим об этом
+    if first_error_path is not None:
+        return (first_error_path, None, first_error_msg)
+
+    # Ничего не найдено
+    return (None, None, None)
+
+
 def save_prompt(name: str, payload: dict[str, Any], directory: Path) -> Path:
     if not name.strip():
         raise ValueError("Имя пресета не может быть пустым")
@@ -66,32 +119,18 @@ def save_prompt(name: str, payload: dict[str, Any], directory: Path) -> Path:
 
 def load_prompt(name: str, directory: Path) -> dict[str, Any]:
     """Загружает пресет по дисплей-имени, ища среди файлов с коллизиями имён."""
-    clean_name = safe_filename(name)
-    name_clean = name.strip()
+    path, payload, error = _resolve_candidate_file(name, directory)
 
-    # Ищем файл с соответствующим дисплей-именем среди возможных коллизий
-    candidates = [directory / f"{clean_name}.json"]
-    for attempt in range(1, 100):
-        candidates.append(directory / f"{clean_name}_{attempt + 1}.json")
+    if error:
+        # Файл найден, но повреждён
+        raise ValueError(error)
 
-    for path in candidates:
-        if not path.is_file():
-            continue
+    if payload is None:
+        # Файл не найден
+        raise FileNotFoundError(f"Пресет промта не найден: {name.strip()}")
 
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-
-        if not isinstance(payload, dict):
-            raise ValueError(f"Пресет {path} повреждён: ожидалась сохранённая словарь, получена {type(payload).__name__}")
-
-        if payload.get(_NAME_KEY) == name_clean:
-            # Найден нужный файл
-            payload.pop(_NAME_KEY, None)
-            return payload
-
-    raise FileNotFoundError(f"Пресет промта не найден: {name_clean}")
+    payload.pop(_NAME_KEY, None)
+    return payload
 
 
 def list_prompts(directory: Path) -> list[str]:
@@ -113,8 +152,13 @@ def list_prompts(directory: Path) -> list[str]:
 
 
 def delete_prompt(name: str, directory: Path) -> bool:
-    path = directory / f"{safe_filename(name)}.json"
-    if not path.is_file():
+    """Удаляет пресет, найдя его по дисплей-имени среди коллизий."""
+    path, payload, error = _resolve_candidate_file(name, directory)
+
+    if error or payload is None:
+        # Файл не найден или повреждён
         return False
+
+    # Найден валидный файл с правильным дисплей-имнем
     path.unlink()
     return True

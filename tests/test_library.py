@@ -86,7 +86,7 @@ def test_collision_different_display_names_stored_separately(tmp_path):
     library.save_prompt(".", PAYLOAD, tmp_path)
     library.save_prompt("..", dict(PAYLOAD, seed=99), tmp_path)
 
-    # Оба должны быть в списке с их оригинальными дисплей-именами
+    # Оба должны быть в списке с их оригинальными дисплей-imenами
     names = library.list_prompts(tmp_path)
     assert "." in names
     assert ".." in names
@@ -95,3 +95,60 @@ def test_collision_different_display_names_stored_separately(tmp_path):
     # Оба должны загружаться и иметь правильные параметры
     assert library.load_prompt(".", tmp_path)["seed"] == 7
     assert library.load_prompt("..", tmp_path)["seed"] == 99
+
+
+def test_delete_removes_correct_preset_in_collision(tmp_path):
+    """delete_prompt должна удалить ровно тот пресет, который попросили, несмотря на коллизию."""
+    # Точно воспроизводим сценарий из найденного бага
+    library.save_prompt("Портрет/студия", {"prompt": "первый"}, tmp_path)
+    library.save_prompt("Портрет:студия", {"prompt": "второй"}, tmp_path)
+
+    # Удаляем второй пресет
+    assert library.delete_prompt("Портрет:студия", tmp_path) is True
+
+    # Проверяем, что первый остался, а второй удалён
+    remaining = library.list_prompts(tmp_path)
+    assert remaining == ["Портрет/студия"]
+
+    # Проверяем, что первый пресет всё ещё загружается с правильным содержимым
+    loaded = library.load_prompt("Портрет/студия", tmp_path)
+    assert loaded["prompt"] == "первый"
+
+    # Проверяем, что второй не загружается
+    with pytest.raises(FileNotFoundError):
+        library.load_prompt("Портрет:студия", tmp_path)
+
+
+def test_load_prompt_corrupted_json_raises_damaged_not_notfound(tmp_path):
+    """load_prompt должна сообщить 'повреждён', а не 'не найден', для испорченного JSON."""
+    # Создаём файл с невалидным JSON под нужным clean_name (для "test" это будет test.json)
+    (tmp_path / "test.json").write_text('{"__name__": "test", "data": {это не json', encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        library.load_prompt("test", tmp_path)
+
+    # Сообщение об ошибке должно говорить о повреждении
+    error_msg = str(exc_info.value).lower()
+    assert "повреждён" in error_msg or "повреж" in error_msg
+
+
+def test_load_prompt_non_dict_json_raises_damaged_not_notfound(tmp_path):
+    """load_prompt должна сообщить 'повреждён', а не 'не найден', для не-словаря в JSON."""
+    # Создаём файл с валидным JSON, который не словарь, под нужным clean_name
+    (tmp_path / "test.json").write_text('["не", "словарь"]', encoding="utf-8")
+
+    with pytest.raises(ValueError) as exc_info:
+        library.load_prompt("test", tmp_path)
+
+    # Сообщение об ошибке должно говорить о повреждении
+    error_msg = str(exc_info.value).lower()
+    assert "повреждён" in error_msg or "повреж" in error_msg
+
+
+def test_load_prompt_genuinely_missing_raises_notfound(tmp_path):
+    """load_prompt должна сообщить 'не найден' для полностью отсутствующего пресета."""
+    with pytest.raises(FileNotFoundError) as exc_info:
+        library.load_prompt("совсем_нет", tmp_path)
+
+    # Сообщение должно говорить о "не найден"
+    assert "не найден" in str(exc_info.value).lower()
