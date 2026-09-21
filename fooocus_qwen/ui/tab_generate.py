@@ -27,6 +27,25 @@ LOGGER = logging.getLogger(__name__)
 MAX_REFERENCES = 10
 
 
+def _ratio_choices(lang: str) -> list[tuple[str, str]]:
+    """Пары (подпись, значение) для выпадающего списка соотношений.
+
+    Семь числовых соотношений ("16:9" и т.п.) — не текст интерфейса, а
+    идентификаторы: они пишутся в пресеты промтов и в метаданные PNG как
+    есть, поэтому подписью служит само значение. Единственное исключение —
+    ``aspect.FOLLOW_REFERENCE``: это предложение на языке интерфейса
+    («от референса»), и без перевода английская сборка вкладки заканчивала
+    список русской строкой (тот же класс дефекта, что уже дважды правился —
+    у радиокнопки режима области и у селектора системного промта). Значение
+    сентинела при этом не меняется: ``engine.generator.resolve_size`` сравнивает
+    с ним, а PNG прежних генераций хранят его как есть.
+    """
+    return [
+        (pick("aspect_follow_reference", lang) if value == aspect.FOLLOW_REFERENCE else value, value)
+        for value in aspect.ASPECT_RATIOS
+    ]
+
+
 def _captions(images, lang: str) -> list[str]:
     """Подписи миниатюр: ровно те теги, которыми промт адресует изображения.
 
@@ -152,11 +171,16 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             )
             ratio = localizer.bind(
                 gr.Dropdown(
-                    choices=list(aspect.ASPECT_RATIOS),
+                    choices=_ratio_choices(lang),
                     value="1:1",
                     label=pick("aspect", lang),
                 ),
                 label=("Соотношение сторон", "Aspect ratio"),
+                # Подписи вариантов — переводимый текст, а не служебные
+                # идентификаторы (см. докстринг _ratio_choices), поэтому, как и
+                # у mask_mode на вкладке редактирования, переводится и label, и
+                # choices.
+                choices=(_ratio_choices("ru"), _ratio_choices("en")),
             )
             image_number = localizer.bind(
                 gr.Slider(1, 8, value=1, step=1, label=pick("image_number", lang)),

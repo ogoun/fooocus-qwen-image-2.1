@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+import re
+
 import pytest
 
 gr = pytest.importorskip("gradio")
@@ -23,6 +25,8 @@ gr = pytest.importorskip("gradio")
 from fooocus_qwen import config
 from fooocus_qwen.ui import app
 from fooocus_qwen.ui.i18n import Localizer
+
+CYRILLIC = re.compile(r"[А-Яа-яЁё]")
 
 
 def _build_and_capture_localizer(monkeypatch, lang: str) -> Localizer:
@@ -102,3 +106,40 @@ def test_at_least_the_known_regression_points_are_actually_checked(monkeypatch):
     # настроек; именно различие между ЭТИМИ label и текстом было найдено
     # вручную при проверке в браузере.
     assert values.count("Сохранить промт") == 2
+
+
+def test_no_choices_list_carries_untranslated_cyrillic_on_the_english_build():
+    """Третий случай того же класса дефекта, но не там, где его ловит ``_mismatches``.
+
+    Два предыдущих раза ловились расхождением МЕЖДУ стартовым значением и
+    зарегистрированным переводом — оба поля были зарегистрированы, просто с
+    ошибкой. У соотношения сторон дефект другой: поле ``choices`` дропдауна
+    вовсе не регистрировалось в ``Localizer`` и просто содержало
+    ``aspect.FOLLOW_REFERENCE`` ("от референса") как есть, поэтому английская
+    сборка вкладки заканчивала список русской строкой, а тесты выше этого не
+    видят в принципе — им нечего сравнивать, ``fields`` для этого компонента
+    просто не содержит ключа ``choices``.
+
+    Единственная защита от НЕзарегистрированной, а не НЕВЕРНО
+    зарегистрированной подписи — обойти собранное на английском приложение
+    целиком, а не только записи локализатора, и убедиться, что ни в одном
+    выпадающем списке или наборе радиокнопок не осталась кириллица. Числовые
+    идентификаторы (соотношения сторон "16:9", имена пресетов, имена файлов)
+    кириллицы не содержат по построению, поэтому ложных срабатываний на них
+    не бывает.
+    """
+    cfg = config.AppConfig(lang="en")
+    demo = app.build(cfg)
+
+    offenders = []
+    for component in demo.blocks.values():
+        choices = getattr(component, "choices", None)
+        if not choices:
+            continue
+        for label, _value in choices:
+            if isinstance(label, str) and CYRILLIC.search(label):
+                offenders.append(f"{type(component).__name__}: {label!r}")
+
+    assert not offenders, "нетранслированный выбор в choices на английской сборке: " + ", ".join(
+        offenders
+    )
