@@ -62,6 +62,20 @@ def test_capacity_evicts_the_least_recently_used():
     assert cache.size == 2
 
 
+def test_capacity_of_one_keeps_only_the_freshest_entry():
+    # Вырожденный случай цикла вытеснения: с capacity=1 каждая новая запись
+    # должна вытеснять единственную существующую, а не накапливаться рядом.
+    cache = EmbedsCache(capacity=1)
+    first, second = (cache.key(text, None) for text in ("a", "b"))
+
+    cache.put(first, sample())
+    cache.put(second, sample())
+
+    assert cache.get(first) is None
+    assert cache.get(second) is not None
+    assert cache.size == 1
+
+
 def test_stored_tensors_live_on_the_host():
     # Кэш не должен занимать видеопамять: с десятью референсами запись весит
     # десятки мегабайт, а записей несколько.
