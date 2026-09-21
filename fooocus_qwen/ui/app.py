@@ -8,7 +8,7 @@ from pathlib import Path
 import gradio as gr
 
 from .. import config
-from . import tab_edit, tab_generate
+from . import tab_edit, tab_gallery, tab_generate, tab_settings
 from .i18n import LANGUAGES, Localizer, pick
 from .state import Studio
 
@@ -38,7 +38,7 @@ def build(cfg: config.AppConfig) -> gr.Blocks:
                 label=("Генерация", "Generate"),
             )
             with generate_tab:
-                tab_generate.build(studio, localizer)
+                generate_components = tab_generate.build(studio, localizer)
 
             edit_tab = localizer.bind(
                 gr.Tab(pick("tab_edit", cfg.lang)),
@@ -47,7 +47,19 @@ def build(cfg: config.AppConfig) -> gr.Blocks:
             with edit_tab:
                 tab_edit.build(studio, localizer)
 
-        # Вкладки галереи и настроек добавляются в задаче 14.
+            gallery_tab = localizer.bind(
+                gr.Tab(pick("tab_gallery", cfg.lang)),
+                label=("Галерея", "Gallery"),
+            )
+            with gallery_tab:
+                tab_gallery.build(studio, localizer, generate_components)
+
+            settings_tab = localizer.bind(
+                gr.Tab(pick("tab_settings", cfg.lang)),
+                label=("Настройки", "Settings"),
+            )
+            with settings_tab:
+                tab_settings.build(studio, localizer)
 
         language.change(localizer.updates, language, localizer.components, queue=False)
 

@@ -65,6 +65,7 @@ T: dict[str, tuple[str, str]] = {
     "boost_now": ("Переписать сейчас", "Rewrite now"),
     "describe": ("Описать изображение", "Describe image"),
     "result": ("Результат", "Result"),
+    "save": ("Сохранить", "Save"),
     "save_prompt": ("Сохранить промт", "Save prompt"),
     "load_prompt": ("Загрузить промт", "Load prompt"),
     "delete_prompt": ("Удалить промт", "Delete prompt"),
@@ -94,6 +95,15 @@ T: dict[str, tuple[str, str]] = {
     "refresh": ("Обновить", "Refresh"),
     "open_folder": ("Открыть папку", "Open folder"),
     "restore_params": ("Восстановить параметры из PNG", "Restore parameters from PNG"),
+    "llm_endpoint_placeholder": (
+        "имя бэкенда, адрес хоста:порт, token=…",
+        "backend name, host:port, token=…",
+    ),
+    "sysprompt_select": ("Системный промт", "System prompt"),
+    "sysprompt_t2i": ("Текст → изображение", "Text to image"),
+    "sysprompt_edit": ("Редактирование", "Editing"),
+    "sysprompt_describe": ("Описание изображения", "Describe image"),
+    "memory": ("Память видеокарты", "GPU memory"),
 }
 
 
