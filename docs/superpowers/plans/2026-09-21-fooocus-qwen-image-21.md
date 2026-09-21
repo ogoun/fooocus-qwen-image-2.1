@@ -3625,10 +3625,20 @@ def test_follow_reference_leaves_size_to_the_pipeline():
     assert gen.resolve_size(request(aspect=aspect.FOLLOW_REFERENCE)) == (None, None)
 
 
-def test_editing_follows_the_source_size_by_default():
-    # При правке кадр не должен менять пропорции без явной просьбы.
-    width, height = gen.resolve_size(request(source=image((100, 50)), mask_mode=gen.MASK_NONE))
-    assert width is None and height is None
+def test_editing_follows_the_source_size_with_the_explicit_sentinel():
+    # Наследование размеров задаётся явным признаком, а не значением "1:1":
+    # иначе осознанный выбор квадрата при правке молча игнорировался бы.
+    resolved = gen.resolve_size(
+        request(source=image((100, 50)), mask_mode=gen.MASK_NONE, aspect=aspect.FOLLOW_REFERENCE)
+    )
+    assert resolved == (None, None)
+
+
+def test_explicit_square_during_editing_is_honoured():
+    width, height = gen.resolve_size(
+        request(source=image((100, 50)), mask_mode=gen.MASK_NONE, aspect="1:1")
+    )
+    assert width == height and width is not None
 
 
 def test_seed_minus_one_is_replaced_by_a_random_one():
@@ -5096,6 +5106,7 @@ from ..engine.generator import (
     MASK_REGION,
     GenerationRequest,
 )
+from ..imaging import aspect as aspect_module
 from ..imaging import masking, metadata, outpaint
 from ..prompting import boost as boost_module
 from ..storage import gallery
@@ -5303,7 +5314,10 @@ def build(studio, localizer: Localizer, generate_components: dict) -> dict:
             prompt=effective or prompt_text,
             prompt_original=prompt_text,
             preset=presets.get(quality_name),
-            aspect="1:1",  # при правке размеры наследуются от исходного изображения
+            # Явный признак «наследовать размеры от исходного изображения». Раньше эту
+            # роль играло значение "1:1", из-за чего осознанный выбор квадрата при правке
+            # был неотличим от отсутствия выбора и молча игнорировался.
+            aspect=aspect_module.FOLLOW_REFERENCE,
             seed=int(seed_value),
             source=source,
             mask=mask,
