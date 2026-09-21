@@ -109,10 +109,12 @@ def build_conditions(request: GenerationRequest) -> list[ConditionSlot]:
 def resolve_size(request: GenerationRequest) -> tuple[int | None, int | None]:
     """Размеры кадра или пара ``None``, если их выводит пайплайн.
 
-    При правке размеры по умолчанию не задаются: кадр должен сохранить
-    пропорции исходного изображения, а их пайплайн возьмёт из него сам.
+    Наследование размеров источника при правке задаётся явным признаком
+    ``aspect.FOLLOW_REFERENCE``, а не значением "1:1": иначе осознанный выбор
+    квадрата при правке был бы неотличим от «пользователь ничего не выбирал»
+    и молча игнорировался бы.
     """
-    if request.source is not None and request.aspect == "1:1":
+    if request.source is not None and request.aspect == aspect.FOLLOW_REFERENCE:
         return None, None
     return aspect.dimensions(request.aspect, request.preset.output_resolution)
 
@@ -146,7 +148,7 @@ class Generator:
         self._interrupted = False
         self._pipe._interrupt = False
 
-        prepared = self._prepare(request)
+        prepared, region_box = self._prepare(request)
         positive, negative = apply_styles(
             prepared.prompt, prepared.negative_prompt, prepared.styles, self._catalogue
         )
@@ -189,44 +191,55 @@ class Generator:
                 LOGGER.info("Генерация прервана пользователем")
                 break
 
-            image = self._finish(request, prepared, output.images[0])
+            image = self._finish(request, prepared, output.images[0], region_box)
             seconds = time.perf_counter() - started
             results.append(
                 GeneratedImage(
                     image=image,
                     seed=seed,
-                    parameters=self._parameters(request, prepared, positive, negative, slots, seed, seconds),
+                    parameters=self._parameters(
+                        request, prepared, positive, negative, slots, seed, seconds, width, height
+                    ),
                 )
             )
 
         return results
 
-    def _prepare(self, request: GenerationRequest) -> GenerationRequest:
-        """Готовит маску и, для режима точной области, вырезает фрагмент."""
+    def _prepare(
+        self, request: GenerationRequest
+    ) -> tuple[GenerationRequest, tuple[int, int, int, int] | None]:
+        """Готовит маску и, для режима точной области, вырезает фрагмент.
+
+        Прямоугольник вырезки возвращается явным вторым значением, а не
+        сохраняется в самом запросе: `request` может быть переиспользован
+        вызывающей стороной для другой генерации, и общее состояние вроде
+        `request.extras` пережило бы этот вызов, подставляясь в следующий.
+        """
         if request.source is None or request.mask is None or request.mask_mode == MASK_NONE:
-            return request
+            return request, None
 
         refined = masking.refine(request.mask, grow=request.mask_grow, feather=request.mask_feather)
         if request.mask_mode != MASK_REGION:
-            return _replace(request, mask=refined)
+            return _replace(request, mask=refined), None
 
         box = masking.region_box(refined, padding=0.25)
         if box is None:
             LOGGER.warning("Маска пуста, режим точной области вырождается в правку целого кадра")
-            return _replace(request, mask=refined, mask_mode=MASK_MASK)
+            return _replace(request, mask=refined, mask_mode=MASK_MASK), None
 
-        request.extras["region_box"] = box
-        return _replace(
+        prepared = _replace(
             request,
             mask=refined.crop(box),
             source=request.source.crop(box),
         )
+        return prepared, box
 
     def _finish(
         self,
         original_request: GenerationRequest,
         prepared: GenerationRequest,
         produced: Image.Image,
+        region_box: tuple[int, int, int, int] | None,
     ) -> Image.Image:
         """Возвращает результат в систему координат исходного изображения."""
         source = original_request.source
@@ -240,14 +253,13 @@ class Generator:
         if not original_request.keep_outside:
             return produced
 
-        box = original_request.extras.get("region_box")
-        if box is not None and prepared.mask is not None:
+        if region_box is not None and prepared.mask is not None:
             full_mask = masking.refine(
                 original_request.mask,
                 grow=original_request.mask_grow,
                 feather=original_request.mask_feather,
             )
-            return masking.stitch(source, produced, box, full_mask)
+            return masking.stitch(source, produced, region_box, full_mask)
 
         return masking.blend(source, produced, prepared.mask)
 
@@ -260,10 +272,13 @@ class Generator:
         slots: Sequence[ConditionSlot],
         seed: int,
         seconds: float,
+        width: int | None,
+        height: int | None,
     ) -> dict[str, Any]:
+        # Размеры уже посчитаны в generate() из того же prepared — вычислять
+        # их здесь ещё раз значило бы выводить один и тот же факт дважды.
         import diffusers
 
-        width, height = resolve_size(prepared)
         return {
             "app_version": __version__,
             "diffusers_version": diffusers.__version__,

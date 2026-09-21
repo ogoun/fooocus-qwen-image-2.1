@@ -91,10 +91,20 @@ def test_follow_reference_leaves_size_to_the_pipeline():
     assert gen.resolve_size(request(aspect=aspect.FOLLOW_REFERENCE)) == (None, None)
 
 
-def test_editing_follows_the_source_size_by_default():
-    # При правке кадр не должен менять пропорции без явной просьбы.
-    width, height = gen.resolve_size(request(source=image((100, 50)), mask_mode=gen.MASK_NONE))
-    assert width is None and height is None
+def test_editing_follows_the_source_size_with_the_explicit_sentinel():
+    # Наследование размеров задаётся явным признаком, а не значением "1:1":
+    # иначе осознанный выбор квадрата при правке молча игнорировался бы.
+    resolved = gen.resolve_size(
+        request(source=image((100, 50)), mask_mode=gen.MASK_NONE, aspect=aspect.FOLLOW_REFERENCE)
+    )
+    assert resolved == (None, None)
+
+
+def test_explicit_square_during_editing_is_honoured():
+    width, height = gen.resolve_size(
+        request(source=image((100, 50)), mask_mode=gen.MASK_NONE, aspect="1:1")
+    )
+    assert width == height and width is not None
 
 
 def test_seed_minus_one_is_replaced_by_a_random_one():
@@ -250,6 +260,10 @@ def test_interruption_returns_no_images():
     # Прерванный цикл денойзинга всё равно декодирует латенты, но это шум,
     # а не картинка, и наружу отдавать его нельзя.
     assert results == []
+    # А главное — цикл обязан остановиться после первой же картинки, а не
+    # сгенерировать все и потом выбросить: смысл прерывания — не тратить
+    # видеопамять и время на кадры, которые всё равно не покажут.
+    assert len(pipe.calls) == 1
 
 
 def test_metadata_records_the_generation_parameters():
@@ -272,3 +286,108 @@ def test_metadata_records_the_generation_parameters():
     assert parameters["use_kv_cache"] is False
     assert parameters["mask_mode"] == gen.MASK_NONE
     assert parameters["references"] == 2
+
+
+# ---------------------------------------------------------------------------
+# MASK_REGION: до этого раунда правок у режима точной области не было ни
+# одного теста, хотя это самая структурно сложная ветка файла и именно она
+# несла находку 1 (утечка region_box между вызовами).
+# ---------------------------------------------------------------------------
+
+
+def test_region_mode_crops_and_stitches_outside_pixels_untouched():
+    source = Image.new("RGBA", (64, 64), (255, 0, 0, 255))
+    mask = Image.new("L", (64, 64), 0)
+    mask.paste(255, (8, 8, 24, 24))  # маленькая область в углу
+
+    generated_colour = (0, 255, 0, 255)
+    pipe = FakePipeline(image_factory=lambda: Image.new("RGBA", (64, 64), generated_colour))
+    engine = make_generator(pipe)
+
+    results = engine.generate(
+        request(
+            source=source,
+            mask=mask,
+            mask_mode=gen.MASK_REGION,
+            mask_grow=0,
+            mask_feather=0,
+        )
+    )
+
+    assert len(results) == 1
+    condition_image = pipe.calls[0]["image"][0]
+    # Пайплайн получил вырезку вокруг маски, а не полный кадр.
+    assert condition_image.size[0] < source.size[0]
+    assert condition_image.size[1] < source.size[1]
+
+    result_image = results[0].image
+    assert result_image.size == source.size  # результат — в размере исходного кадра
+
+    pixels = np.asarray(result_image)
+    # Далеко за пределами и маски, и вырезанного окна пиксели не тронуты.
+    assert tuple(pixels[60, 60]) == (255, 0, 0, 255)
+    assert tuple(pixels[0, 60]) == (255, 0, 0, 255)
+
+
+def test_region_mode_with_empty_mask_degrades_to_whole_frame_editing():
+    source = Image.new("RGBA", (64, 64), (255, 0, 0, 255))
+    empty_mask = Image.new("L", (64, 64), 0)
+
+    generated_colour = (0, 255, 0, 255)
+    pipe = FakePipeline(image_factory=lambda: Image.new("RGBA", (64, 64), generated_colour))
+    engine = make_generator(pipe)
+
+    # Пустая маска не должна поднимать исключение — режим точной области
+    # вырождается в правку целого кадра.
+    results = engine.generate(
+        request(
+            source=source,
+            mask=empty_mask,
+            mask_mode=gen.MASK_REGION,
+            mask_grow=0,
+            mask_feather=0,
+        )
+    )
+
+    assert len(results) == 1
+    condition_image = pipe.calls[0]["image"][0]
+    assert condition_image.size == source.size  # вырезки не было, кадр целиком
+
+
+def test_reusing_the_request_after_region_mode_does_not_leak_the_crop_box():
+    # Регрессия находки 1: `_prepare` писал region_box в `request.extras`,
+    # общий с объектом вызывающей стороны, поэтому повторное использование
+    # того же GenerationRequest для другого запуска подставляло старую
+    # вырезку в новый — и склейка не меняла ни одного пикселя.
+    source = Image.new("RGBA", (64, 64), (255, 0, 0, 255))
+    region_mask = Image.new("L", (64, 64), 0)
+    region_mask.paste(255, (8, 8, 24, 24))  # маленькая область в одном углу
+
+    generated_colour = (0, 255, 0, 255)
+    pipe = FakePipeline(image_factory=lambda: Image.new("RGBA", (64, 64), generated_colour))
+    engine = make_generator(pipe)
+
+    shared_request = request(
+        source=source,
+        mask=region_mask,
+        mask_mode=gen.MASK_REGION,
+        mask_grow=0,
+        mask_feather=0,
+    )
+    engine.generate(shared_request)
+
+    # Тот же объект переиспользуется для другого запуска: правка по маске в
+    # ПРОТИВОПОЛОЖНОМ углу кадра — там, где первая вырезка не была.
+    other_mask = Image.new("L", (64, 64), 0)
+    other_mask.paste(255, (40, 40, 56, 56))
+    shared_request.mask = other_mask
+    shared_request.mask_mode = gen.MASK_MASK
+
+    results = engine.generate(shared_request)
+
+    pixels = np.asarray(results[0].image)
+    # Пиксель внутри новой маски обязан измениться. Если бы region_box от
+    # первого вызова просочился во второй, склейка использовала бы старую
+    # (уже неактуальную) вырезку, новая маска не пересекалась бы с ней, и
+    # этот пиксель остался бы равен источнику — ноль изменённых пикселей.
+    assert tuple(pixels[48, 48]) == generated_colour
