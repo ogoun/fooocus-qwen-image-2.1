@@ -2893,7 +2893,13 @@ def test_host_copy_is_canonical_and_reused():
     host_tensor = staged.module.weight.data
     staged.to_device()
     staged.to_host()
-    assert staged.module.weight.data is host_tensor
+    # Тождество объектов проверять нельзя: геттер Tensor.data каждый раз строит
+    # новую обёртку, и `t.data is t.data` ложно само по себе. Проверяем то, что
+    # на самом деле требуется — что хранилище не подменилось и правка хостовой
+    # копии видна через модуль, то есть возврата с устройства не было.
+    assert staged.module.weight.data.data_ptr() == host_tensor.data_ptr()
+    host_tensor[0, 0] = 42.0
+    assert float(staged.module.weight.data[0, 0]) == 42.0
 
 
 def test_repeated_calls_are_idempotent():
