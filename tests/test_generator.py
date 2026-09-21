@@ -391,3 +391,75 @@ def test_reusing_the_request_after_region_mode_does_not_leak_the_crop_box():
     # (уже неактуальную) вырезку, новая маска не пересекалась бы с ней, и
     # этот пиксель остался бы равен источнику — ноль изменённых пикселей.
     assert tuple(pixels[48, 48]) == generated_colour
+
+
+def test_region_mode_without_compositing_returns_the_frame_not_the_crop():
+    # Незакрытая клетка матрицы «режим × keep_outside». В режиме точной области
+    # `_prepare` уже вырезал источник, поэтому `produced` — патч, а не кадр:
+    # возврат его «как есть» отдавал пользователю, правившему деталь на
+    # большом холсте, крошечную картинку вместо изображения. Склейки по маске
+    # при выключенном keep_outside быть не должно, а вклейка на место — должна.
+    source = Image.new("RGBA", (64, 64), (255, 0, 0, 255))
+    mask = Image.new("L", (64, 64), 0)
+    mask.paste(255, (8, 8, 24, 24))
+
+    generated_colour = (0, 255, 0, 255)
+    pipe = FakePipeline(image_factory=lambda: Image.new("RGBA", (32, 32), generated_colour))
+    engine = make_generator(pipe)
+
+    results = engine.generate(
+        request(
+            source=source,
+            mask=mask,
+            mask_mode=gen.MASK_REGION,
+            mask_grow=0,
+            mask_feather=0,
+            keep_outside=False,
+        )
+    )
+
+    assert len(results) == 1
+    result_image = results[0].image
+    assert result_image.size == source.size, "вернулась вырезка вместо кадра"
+
+    pixels = np.asarray(result_image)
+    # Внутри вырезанного прямоугольника — целиком вывод модели, без смешивания
+    # по маске: keep_outside выключен, и края области размывать нечем.
+    assert tuple(pixels[16, 16]) == generated_colour
+    # Далеко за пределами прямоугольника кадр остался исходным.
+    assert tuple(pixels[60, 60]) == (255, 0, 0, 255)
+
+
+def test_region_mode_without_compositing_does_not_blend_inside_the_region():
+    # Отличие от keep_outside=True: там всё, что вне маски, остаётся исходным,
+    # в том числе внутри вырезанного прямоугольника. Здесь склейки нет, поэтому
+    # прямоугольник заполняется выводом модели целиком. Без этой проверки
+    # предыдущий тест прошёл бы и для обычной склейки.
+    source = Image.new("RGBA", (64, 64), (255, 0, 0, 255))
+    mask = Image.new("L", (64, 64), 0)
+    mask.paste(255, (8, 8, 24, 24))
+    generated_colour = (0, 255, 0, 255)
+
+    def run(keep_outside: bool):
+        pipe = FakePipeline(image_factory=lambda: Image.new("RGBA", (32, 32), generated_colour))
+        engine = make_generator(pipe)
+        produced = engine.generate(
+            request(
+                source=source,
+                mask=mask,
+                mask_mode=gen.MASK_REGION,
+                mask_grow=0,
+                mask_feather=0,
+                keep_outside=keep_outside,
+            )
+        )
+        return np.asarray(produced[0].image), pipe.calls[0]["image"][0].size
+
+    without_blend, crop_size = run(keep_outside=False)
+    with_blend, _ = run(keep_outside=True)
+
+    assert crop_size != source.size, "ожидалась именно вырезка, иначе проверка вырождена"
+
+    # Точка внутри прямоугольника вырезки, но вне маски.
+    assert tuple(with_blend[28, 28]) == (255, 0, 0, 255), "со склейкой вне маски кадр обязан уцелеть"
+    assert tuple(without_blend[28, 28]) == generated_colour, "без склейки патч ложится встык"

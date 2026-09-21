@@ -171,13 +171,20 @@ def _snap_span(
     return start, start + target
 
 
-def stitch(
+def paste_region(
     original: Image.Image,
     patch: Image.Image,
     box: tuple[int, int, int, int],
-    mask: Image.Image,
 ) -> Image.Image:
-    """Вклеивает обработанный фрагмент обратно, соблюдая маску."""
+    """Возвращает фрагмент на его место в кадре, без смешивания по маске.
+
+    Нужна отдельно от ``stitch`` для случая, когда склейку с оригиналом
+    выключили галочкой «сохранять кадр вне маски»: смешивать тогда нельзя, но
+    и отдавать пользователю вырезку вместо кадра — тоже. Масштабирование здесь
+    по той же причине, что и в ``stitch``: пайплайн округляет стороны
+    условного изображения вниз до кратности 32 и может вернуть патч чуть
+    меньше запрошенного прямоугольника.
+    """
     left, top, right, bottom = box
     canvas = original.convert("RGBA").copy()
 
@@ -185,6 +192,16 @@ def stitch(
     if resized.size != (right - left, bottom - top):
         resized = resized.resize((right - left, bottom - top), Image.LANCZOS)
 
-    full = canvas.copy()
-    full.paste(resized, (left, top))
-    return blend(canvas, full, mask)
+    canvas.paste(resized, (left, top))
+    return canvas
+
+
+def stitch(
+    original: Image.Image,
+    patch: Image.Image,
+    box: tuple[int, int, int, int],
+    mask: Image.Image,
+) -> Image.Image:
+    """Вклеивает обработанный фрагмент обратно, соблюдая маску."""
+    canvas = original.convert("RGBA")
+    return blend(canvas, paste_region(canvas, patch, box), mask)

@@ -288,7 +288,15 @@ class Generator:
             return produced
 
         if not original_request.keep_outside:
-            return produced
+            if region_box is None:
+                return produced
+            # Режим «точная область» — единственный, где `produced` не
+            # полнокадровый: `_prepare` уже вырезал по нему источник и маску.
+            # Отдать его как есть значило бы вернуть пользователю, правившему
+            # деталь в 64 пикселя на холсте в 4000, крошечную картинку вместо
+            # кадра. Склейки по маске здесь нет — её и просили отключить, — но
+            # патч обязан вернуться на своё место.
+            return masking.paste_region(source, produced, region_box)
 
         if region_box is not None and prepared.mask is not None:
             full_mask = masking.refine(
