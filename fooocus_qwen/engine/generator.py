@@ -2,8 +2,10 @@
 
 Порядок условных изображений определяет теги ``<imageN>``, которыми промт на них
 ссылается, поэтому он зафиксирован: исходное изображение, затем маска, затем
-референсы. Один и тот же порядок нужен интерфейсу для подписей миниатюр, поэтому
-он вычисляется здесь, а не дублируется в двух местах.
+референсы. Тот же порядок нужен интерфейсу для подписей миниатюр, поэтому и
+порядок, и теги вычисляет одна функция — ``condition_slots()``, — а вкладка
+генерации вызывает её, а не повторяет формулу «i-й референс — <imageI>».
+Формула верна ровно до тех пор, пока в списке нет исходного изображения.
 """
 
 from __future__ import annotations
@@ -87,24 +89,42 @@ def resolve_seed(seed: int) -> int:
     return random.randrange(2**31) if seed < 0 else seed
 
 
-def build_conditions(request: GenerationRequest) -> list[ConditionSlot]:
-    """Условные изображения в том порядке, в каком их увидит модель."""
+def condition_slots(
+    source: Image.Image | None = None,
+    mask: Image.Image | None = None,
+    mask_mode: str = MASK_NONE,
+    references: Sequence[Image.Image] = (),
+) -> list[ConditionSlot]:
+    """Условные изображения в том порядке, в каком их увидит модель.
+
+    Единственное место, где этот порядок и вытекающие из него теги
+    вычисляются. Аргументами, а не готовым запросом, — потому что интерфейсу
+    подписи миниатюр нужны раньше, чем существует запрос на генерацию, а
+    заводить ради подписи фиктивный ``GenerationRequest`` с фиктивным пресетом
+    значило бы соврать о том, что здесь важно. Что важно, видно по сигнатуре:
+    ровно четыре поля запроса из пятнадцати.
+    """
     slots: list[tuple[str, Image.Image]] = []
 
-    if request.source is not None:
-        slots.append(("source", request.source))
+    if source is not None:
+        slots.append(("source", source))
         # В режиме аннотации пометки уже нарисованы на самом изображении,
         # а «точная область» подаёт вырезанную пару так же, как обычная маска.
-        if request.mask is not None and request.mask_mode in (MASK_MASK, MASK_REGION):
-            slots.append(("mask", masking.as_condition(request.mask)))
+        if mask is not None and mask_mode in (MASK_MASK, MASK_REGION):
+            slots.append(("mask", masking.as_condition(mask)))
 
-    slots.extend(("reference", item) for item in request.references)
+    slots.extend(("reference", item) for item in references)
 
     tagged = len(slots) >= 2
     return [
         ConditionSlot(tag=f"<image{index}>" if tagged else "", role=role, image=item)
         for index, (role, item) in enumerate(slots, start=1)
     ]
+
+
+def build_conditions(request: GenerationRequest) -> list[ConditionSlot]:
+    """Условные изображения запроса. Тонкая обёртка над ``condition_slots``."""
+    return condition_slots(request.source, request.mask, request.mask_mode, request.references)
 
 
 def resolve_size(request: GenerationRequest) -> tuple[int | None, int | None]:

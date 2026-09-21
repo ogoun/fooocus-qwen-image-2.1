@@ -14,7 +14,7 @@ import gradio as gr
 
 from .. import config
 from ..engine import presets
-from ..engine.generator import GenerationRequest
+from ..engine.generator import GenerationRequest, condition_slots
 from ..imaging import aspect, metadata
 from ..prompting import boost as boost_module
 from ..prompting import library
@@ -27,15 +27,28 @@ LOGGER = logging.getLogger(__name__)
 MAX_REFERENCES = 10
 
 
-def _captions(count: int) -> list[str]:
+UNTAGGED_CAPTION = "без тега — одно изображение"
+
+
+def _captions(images) -> list[str]:
     """Подписи миниатюр: ровно те теги, которыми промт адресует изображения.
 
-    При единственном референсе теги запрещены спецификацией Qwen, поэтому
-    подпись говорит об этом прямо, а не показывает несуществующий «<image1>».
+    Считаются из ``condition_slots()`` — той же функции, что задаёт порядок
+    условных изображений для самой модели. Своя формула «i-й референс —
+    ``<imageI>``» здесь была бы вторым описанием того же правила и разошлась
+    бы с первым в тот день, когда рядом с референсами появится исходное
+    изображение: тогда ``<image1>`` принадлежит ему, а первому референсу
+    достаётся ``<image2>``.
+
+    При единственном условном изображении теги запрещены спецификацией Qwen,
+    и ``condition_slots()`` отдаёт пустой тег; подпись говорит об этом прямо,
+    а не показывает несуществующий «<image1>».
     """
-    if count == 1:
-        return ["без тега — одно изображение"]
-    return [f"<image{index}>" for index in range(1, count + 1)]
+    return [
+        slot.tag or UNTAGGED_CAPTION
+        for slot in condition_slots(references=tuple(images))
+        if slot.role == "reference"
+    ]
 
 
 def build(studio, localizer: Localizer) -> dict:
@@ -228,7 +241,7 @@ def build(studio, localizer: Localizer) -> dict:
         from PIL import Image as PILImage
 
         images = [PILImage.open(item.name).convert("RGB") for item in (files or [])[:MAX_REFERENCES]]
-        captioned = list(zip(images, _captions(len(images))))
+        captioned = list(zip(images, _captions(images)))
         return images, captioned, f"Референсов: {len(images)} из {MAX_REFERENCES}"
 
     def clear_references():

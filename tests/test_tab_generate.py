@@ -19,25 +19,56 @@ from fooocus_qwen.ui.state import Studio
 # --- подписи миниатюр референсов ---
 
 
+def _images(count: int) -> list:
+    from PIL import Image
+
+    return [Image.new("RGB", (8, 8)) for _ in range(count)]
+
+
 def test_no_references_have_no_captions():
-    assert tab_generate._captions(0) == []
+    assert tab_generate._captions(_images(0)) == []
 
 
 def test_single_reference_is_captioned_without_a_tag():
     # Спецификация Qwen запрещает теги при единственном изображении.
-    captions = tab_generate._captions(1)
+    captions = tab_generate._captions(_images(1))
     assert len(captions) == 1
     assert "<image1>" not in captions[0]
 
 
 def test_two_references_get_image_tags():
-    assert tab_generate._captions(2) == ["<image1>", "<image2>"]
+    assert tab_generate._captions(_images(2)) == ["<image1>", "<image2>"]
 
 
 def test_ten_references_get_ten_distinct_tags():
-    captions = tab_generate._captions(10)
+    captions = tab_generate._captions(_images(10))
     assert captions == [f"<image{i}>" for i in range(1, 11)]
     assert len(set(captions)) == 10
+
+
+def test_captions_come_from_the_same_slot_builder_as_the_model_call():
+    """Подписи и порядок для модели обязаны считаться одной функцией.
+
+    До этой правки документ архитектуры утверждал, что так и есть, а на деле
+    ``_captions`` был вторым, независимым описанием правила тегов, и
+    совпадали они только потому, что на вкладке генерации нет исходного
+    изображения. Проверка строится на случае, где две формулы расходятся:
+    когда в списке есть источник, ``<image1>`` принадлежит ему, а первому
+    референсу достаётся ``<image2>``.
+    """
+    from PIL import Image
+
+    from fooocus_qwen.engine.generator import MASK_NONE, condition_slots
+
+    references = _images(2)
+    slots = condition_slots(
+        source=Image.new("RGB", (8, 8)), mask_mode=MASK_NONE, references=tuple(references)
+    )
+    tags_after_a_source = [slot.tag for slot in slots if slot.role == "reference"]
+    assert tags_after_a_source == ["<image2>", "<image3>"]
+
+    # А без источника — то, что пользователь видит на вкладке генерации.
+    assert tab_generate._captions(references) == ["<image1>", "<image2>"]
 
 
 # --- обработчики пресетов промтов вкладки ---
