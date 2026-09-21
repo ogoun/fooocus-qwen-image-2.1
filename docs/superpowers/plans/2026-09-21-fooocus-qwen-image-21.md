@@ -37,7 +37,7 @@
 
 **Interfaces:**
 - Consumes: ничего.
-- Produces: `config.AppConfig` (поля `host: str`, `port: int`, `lang: str`, `pin_memory: bool`, `preset: str`, `model_dir: Path`, `listen: bool`); `config.parse_args(argv: list[str] | None) -> AppConfig`; константы `config.PROJECT_ROOT`, `MODEL_DIR`, `RESOURCES_DIR`, `USER_DIR`, `OUTPUT_DIR`, `PROMPT_DIR`, `LOG_DIR`, `STYLES_DIR`, `SYSTEM_PROMPT_DIR`; `logging_setup.setup_logging(verbose: bool) -> None`; `__main__.selftest() -> int`.
+- Produces: `config.AppConfig` (поля `host: str`, `port: int`, `lang: str`, `pin_memory: bool`, `preset: str`, `model_dir: Path`, `verbose: bool`); `config.parse_args(argv: list[str] | None) -> AppConfig`; константы `config.PROJECT_ROOT`, `MODEL_DIR`, `RESOURCES_DIR`, `USER_DIR`, `OUTPUT_DIR`, `PROMPT_DIR`, `LOG_DIR`, `STYLES_DIR`, `SYSTEM_PROMPT_DIR`; `logging_setup.setup_logging(verbose: bool) -> None`; `__main__.selftest() -> int`.
 
 - [ ] **Step 1: Создать ветку**
 
