@@ -8,7 +8,7 @@ from pathlib import Path
 import gradio as gr
 
 from .. import config
-from . import tab_generate
+from . import tab_edit, tab_generate
 from .i18n import LANGUAGES, Localizer, pick
 from .state import Studio
 
@@ -40,7 +40,14 @@ def build(cfg: config.AppConfig) -> gr.Blocks:
             with generate_tab:
                 tab_generate.build(studio, localizer)
 
-        # Вкладки редактирования, галереи и настроек добавляются в задачах 13 и 14.
+            edit_tab = localizer.bind(
+                gr.Tab(pick("tab_edit", cfg.lang)),
+                label=("Редактирование", "Edit"),
+            )
+            with edit_tab:
+                tab_edit.build(studio, localizer)
+
+        # Вкладки галереи и настроек добавляются в задаче 14.
 
         language.change(localizer.updates, language, localizer.components, queue=False)
 
