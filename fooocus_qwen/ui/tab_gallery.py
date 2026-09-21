@@ -8,7 +8,6 @@
 
 from __future__ import annotations
 
-import logging
 import os
 import subprocess
 import sys
@@ -22,8 +21,6 @@ from ..imaging import metadata
 from ..storage import gallery
 from .i18n import Localizer, pick
 
-LOGGER = logging.getLogger(__name__)
-
 # Порядок обязан совпадать с порядком выходов кнопки «Восстановить» в build():
 # восстановление читает по этому же порядку значения из словаря параметров, а
 # build() раскладывает их по тем же семи полям вкладки генерации. Оба места
@@ -32,13 +29,32 @@ LOGGER = logging.getLogger(__name__)
 # списке ожиданий — так что рассинхронизация здесь не пройдёт тесты молча.
 
 
+def _safe_int(value: object, default: int) -> int:
+    """``int(value)``, но не роняет обработчик на нечисловых/чужих метаданных."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _safe_float(value: object, default: float) -> float:
+    """``float(value)``, с тем же снисхождением к испорченному значению."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
 def restore_fields(parameters: dict | None) -> tuple:
     """Значения полей вкладки генерации в фиксированном порядке.
 
     Порядок: промт, переписанный промт, негатив, стили, пресет, сид, guidance.
     Отсутствующий или незнакомый пресет (например, из старой сборки) тихо
     заменяется дефолтным — таблица пресетов меняется быстрее, чем метаданные
-    в уже сохранённых PNG.
+    в уже сохранённых PNG. Сид и guidance читаются со снисхождением по той же
+    причине: PNG с нашим ключом чанка, но нечисловым значением (правленный
+    руками файл или чужой инструмент, переиспользовавший ключ) не должен
+    ронять обработчик кнопки — он просто получит дефолт вместо этого поля.
     """
     data = parameters or {}
     preset = data.get("preset", presets.DEFAULT)
@@ -51,8 +67,8 @@ def restore_fields(parameters: dict | None) -> tuple:
         data.get("negative_prompt", ""),
         list(data.get("styles", [])),
         preset,
-        int(data.get("seed", -1)),
-        float(data.get("true_cfg_scale", 1.0)),
+        _safe_int(data.get("seed", -1), -1),
+        _safe_float(data.get("true_cfg_scale", 1.0), 1.0),
     )
 
 

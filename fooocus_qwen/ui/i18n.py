@@ -126,8 +126,23 @@ class Localizer:
         return component
 
     @property
+    def default(self) -> str:
+        """Язык, на котором интерфейс собирается при старте."""
+        return self._default
+
+    @property
     def components(self) -> list[Any]:
         return [component for component, _ in self._entries]
+
+    @property
+    def entries(self) -> list[tuple[Any, dict[str, tuple[str, str]]]]:
+        """Пары (компонент, переводимые поля) для проверки согласованности.
+
+        Нужна тестам, которые сверяют текущее значение поля компонента с тем,
+        что зарегистрировано для языка запуска: без этой пары такую сверку
+        нельзя сделать иначе как через приватный ``_entries``.
+        """
+        return list(self._entries)
 
     def updates(self, lang: str) -> list[Any]:
         index = 0 if lang == "ru" else 1

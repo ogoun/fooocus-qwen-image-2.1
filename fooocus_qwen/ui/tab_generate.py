@@ -169,7 +169,7 @@ def build(studio, localizer: Localizer) -> dict:
                         "Модель рассчитана на работу без guidance. При значении 1.0 негативный "
                         "промт и негативные части стилей в модель не попадают вовсе.",
                         "The model is meant to be sampled without guidance. At 1.0 the negative "
-                        "prompt and the negative half of every style are not sent at all.",
+                        "prompt and the negative half of every style are not sent to the model at all.",
                     ),
                 )
                 seed = localizer.bind(

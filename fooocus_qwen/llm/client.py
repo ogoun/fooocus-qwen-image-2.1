@@ -36,6 +36,25 @@ def _image_to_data_url(image: Image.Image) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
+def _check_header_safe(value: str, description: str) -> None:
+    """Проверяет, что значение можно передать в HTTP-заголовке.
+
+    ``http.client`` кодирует заголовки в latin-1 и бросает голый
+    ``UnicodeEncodeError`` при первом же символе вне этого диапазона — без
+    этой проверки пользователь с не-ASCII токеном (например, оставленным по
+    ошибке кириллическим плейсхолдером из шаблона ``llm_endpoint.txt``)
+    получил бы имя кодека вместо понятной причины отказа.
+    """
+    try:
+        value.encode("latin-1")
+    except UnicodeEncodeError as error:
+        raise LlmError(
+            f"{description} содержит символы, которые нельзя передать в HTTP-заголовке "
+            "(допустимы только латиница, цифры и стандартная пунктуация). "
+            "Замените его на настоящее значение в llm_endpoint.txt."
+        ) from error
+
+
 class LlmClient:
     """Один запрос — один ответ. Историю диалога оболочка не ведёт."""
 
@@ -51,6 +70,7 @@ class LlmClient:
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json; charset=utf-8"}
         if self._endpoint.token:
+            _check_header_safe(self._endpoint.token, "Токен доступа")
             headers["Authorization"] = f"Bearer {self._endpoint.token}"
         return headers
 
@@ -60,7 +80,7 @@ class LlmClient:
         try:
             with urllib.request.urlopen(request, timeout=min(self._timeout, 15)) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, OSError, json.JSONDecodeError) as error:
+        except (urllib.error.URLError, OSError, json.JSONDecodeError, UnicodeError) as error:
             raise LlmError(f"Сервер языковой модели недоступен: {error}") from error
         return [item.get("id", "") for item in payload.get("data", [])]
 
@@ -106,7 +126,7 @@ class LlmClient:
         try:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, OSError, json.JSONDecodeError) as error:
+        except (urllib.error.URLError, OSError, json.JSONDecodeError, UnicodeError) as error:
             raise LlmError(f"Ошибка обращения к языковой модели: {error}") from error
 
         choices = payload.get("choices") or []

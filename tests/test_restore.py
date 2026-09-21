@@ -68,6 +68,17 @@ def test_unknown_preset_falls_back():
     assert tab_gallery.restore_fields({"preset": "Ultra"})[4] == "MiddleQuality"
 
 
+def test_non_numeric_seed_and_cfg_fall_back_to_defaults_instead_of_raising():
+    # PNG с нашим ключом чанка, но нечисловым значением — правленный руками
+    # файл или чужой инструмент, переиспользовавший ключ, — не должен ронять
+    # обработчик кнопки «Восстановить» внутри int()/float().
+    prompt, boosted, negative, styles, preset, seed, cfg = tab_gallery.restore_fields(
+        {"seed": "не число", "true_cfg_scale": "тоже не число"}
+    )
+    assert seed == -1
+    assert cfg == 1.0
+
+
 def test_foreign_png_yields_full_defaults_without_raising(tmp_path):
     """Чужой PNG (без нашего чанка) не должен ронять восстановление.
 

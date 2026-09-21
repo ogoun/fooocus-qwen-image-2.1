@@ -91,3 +91,23 @@ def test_unreachable_server_raises_llm_error():
     client = LlmClient(LlmEndpoint(base_url="http://127.0.0.1:1"), timeout=0.5)
     with pytest.raises(LlmError):
         client.ping()
+
+
+# --- токен вне latin-1 (например, неотредактированный кириллический
+# плейсхолдер из шаблона llm_endpoint.txt) обязан давать читаемую ошибку, а не
+# голый UnicodeEncodeError из http.client ---
+
+
+def test_non_latin1_token_raises_llm_error_from_ping_with_a_readable_message():
+    client = LlmClient(LlmEndpoint(base_url="http://127.0.0.1:1", token="ЗАМЕНИТЕ_НА_СВОЙ_ТОКЕН"))
+    with pytest.raises(LlmError, match="[Тт]окен"):
+        client.ping()
+
+
+def test_non_latin1_token_raises_llm_error_from_complete_the_same_way():
+    # ping() и complete() обязаны пропускать одни и те же ошибки — иначе
+    # AI-буст (через complete) и «Проверить связь» (через ping) расходились бы
+    # в поведении на одном и том же битом токене.
+    client = LlmClient(LlmEndpoint(base_url="http://127.0.0.1:1", token="ЗАМЕНИТЕ_НА_СВОЙ_ТОКЕН"))
+    with pytest.raises(LlmError, match="[Тт]окен"):
+        client.complete("системный", "пользовательский")
