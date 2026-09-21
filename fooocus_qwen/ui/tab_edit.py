@@ -264,6 +264,11 @@ def build(studio, localizer: Localizer) -> dict:
             seed=int(seed_value),
             source=source,
             mask=mask,
+            # Режим переигрывается по факту, а не по выбору пользователя: если
+            # mask is None, collect() уже решил, что маскировать нечего (пустая
+            # маска в mask/region), и это решение — источник истины, а не
+            # напоминание. Аннотация — исключение: там маски нет по определению
+            # режима, а не из-за пустого рисунка, поэтому её оставляем как есть.
             mask_mode=mode_value if mask is not None or mode_value == MASK_ANNOTATION else MASK_NONE,
             mask_grow=int(grow_value),
             mask_feather=int(feather_value),

@@ -53,6 +53,15 @@ def test_empty_mask_falls_back_to_no_mask():
     assert mask is None
 
 
+def test_empty_mask_in_region_mode_also_falls_back_to_no_mask():
+    # Тот же путь, что и для MASK_MASK, но именно режим "точная область" — тот,
+    # на который обращает внимание бриф: пустая маска не должна вырезать
+    # несуществующий фрагмент кадра.
+    source, mask = tab_edit.collect(editor(), gen.MASK_REGION)
+    assert source is not None
+    assert mask is None
+
+
 def test_missing_value_returns_nothing():
     assert tab_edit.collect(None, gen.MASK_MASK) == (None, None)
     assert tab_edit.collect({"background": None, "layers": []}, gen.MASK_MASK) == (None, None)
