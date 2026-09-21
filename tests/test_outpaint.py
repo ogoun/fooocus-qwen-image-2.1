@@ -64,3 +64,35 @@ def test_new_area_is_filled_by_edge_replication():
 def test_unknown_side_is_rejected():
     with pytest.raises(ValueError):
         outpaint.plan((64, 64), ["diagonal"], 0.5)
+
+
+def test_plan_does_not_shrink_the_source_when_only_top_grows():
+    # 80 не кратно 32: aspect.snap(80) == 64 меньше оригинала, и с округлением
+    # к ближайшей кратности cv2.copyMakeBorder получал отрицательный бордюр.
+    image = Image.new("RGBA", (80, 48), (5, 5, 5, 255))
+    result = outpaint.plan((80, 48), ["top"], 0.4)
+
+    canvas_width, canvas_height = result.canvas_size
+    left, top, right, bottom = result.paste_box
+    assert canvas_width >= 80 and canvas_height >= 48
+    assert left >= 0 and top >= 0
+    assert canvas_width - right >= 0 and canvas_height - bottom >= 0
+
+    canvas, mask = outpaint.expand(image, result)  # не должно бросать исключение
+    assert canvas.size == result.canvas_size
+    assert mask.size == result.canvas_size
+
+
+def test_plan_does_not_shrink_the_source_when_only_left_grows():
+    image = Image.new("RGBA", (80, 48), (5, 5, 5, 255))
+    result = outpaint.plan((80, 48), ["left"], 0.4)
+
+    canvas_width, canvas_height = result.canvas_size
+    left, top, right, bottom = result.paste_box
+    assert canvas_width >= 80 and canvas_height >= 48
+    assert left >= 0 and top >= 0
+    assert canvas_width - right >= 0 and canvas_height - bottom >= 0
+
+    canvas, mask = outpaint.expand(image, result)  # не должно бросать исключение
+    assert canvas.size == result.canvas_size
+    assert mask.size == result.canvas_size

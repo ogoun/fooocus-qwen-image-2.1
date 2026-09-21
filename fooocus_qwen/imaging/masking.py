@@ -113,8 +113,13 @@ def region_box(
     """Прямоугольник вокруг маски с контекстным запасом, кратный ``multiple``.
 
     Запас даёт модели увидеть окружение: вырезанный впритык фрагмент лишён
-    контекста, и модель дорисовывает в нём что угодно. Итог всегда лежит внутри
-    холста — выход за границы породил бы кадр не того размера.
+    контекста, и модель дорисовывает в нём что угодно. Прямоугольник обязан
+    полностью содержать маску — иначе часть нарисованной пользователем области
+    молча выпадёт из правки. Если кратное окно, вмещающее маску и запас, не
+    помещается в холст, отдаётся холст целиком; тогда результат может быть не
+    кратен ``multiple`` — это осознанный компромисс, а не проглядели: конвейер
+    сам округляет условные изображения, а ``stitch`` умеет подгонять размер
+    патча под любую сторону.
     """
     array = np.asarray(mask.convert("L"))
     rows = np.flatnonzero(array.any(axis=1))
@@ -123,30 +128,46 @@ def region_box(
         return None
 
     height, width = array.shape
-    top, bottom = int(rows[0]), int(rows[-1]) + 1
-    left, right = int(columns[0]), int(columns[-1]) + 1
+    mask_top, mask_bottom = int(rows[0]), int(rows[-1]) + 1
+    mask_left, mask_right = int(columns[0]), int(columns[-1]) + 1
 
-    pad_x = int((right - left) * padding)
-    pad_y = int((bottom - top) * padding)
-    left, right = max(0, left - pad_x), min(width, right + pad_x)
-    top, bottom = max(0, top - pad_y), min(height, bottom + pad_y)
+    pad_x = int((mask_right - mask_left) * padding)
+    pad_y = int((mask_bottom - mask_top) * padding)
+    pad_left, pad_right = max(0, mask_left - pad_x), min(width, mask_right + pad_x)
+    pad_top, pad_bottom = max(0, mask_top - pad_y), min(height, mask_bottom + pad_y)
 
-    left, right = _snap_span(left, right, width, multiple)
-    top, bottom = _snap_span(top, bottom, height, multiple)
+    left, right = _snap_span(pad_left, pad_right, mask_left, mask_right, width, multiple)
+    top, bottom = _snap_span(pad_top, pad_bottom, mask_top, mask_bottom, height, multiple)
     return left, top, right, bottom
 
 
-def _snap_span(start: int, end: int, limit: int, multiple: int) -> tuple[int, int]:
-    """Растягивает отрезок до кратной длины, не вылезая за ``limit``."""
-    span = end - start
-    target = min(((span + multiple - 1) // multiple) * multiple, (limit // multiple) * multiple)
-    target = max(target, multiple)
-    if target >= limit:
+def _snap_span(
+    pad_start: int,
+    pad_end: int,
+    mask_start: int,
+    mask_end: int,
+    limit: int,
+    multiple: int,
+) -> tuple[int, int]:
+    """Растягивает отрезок до кратной длины, гарантируя, что маска не вылезет наружу.
+
+    Желаемая длина окна — это запрошенный запас, но не короче самой маски:
+    запасом обрезать маску нельзя. Если округлённое вверх до кратности окно не
+    умещается в холст, окно — это холст целиком (см. докстринг ``region_box``).
+    Иначе окно сдвигают в пределах ``[lower, upper]``: правее ``lower`` нельзя —
+    маска вылезет слева, левее ``upper`` нельзя — маска вылезет справа.
+    ``lower <= upper`` соблюдается всегда, потому что ``needed <= target <=
+    limit`` по построению, отдельной защитной проверки не требуется.
+    """
+    needed = mask_end - mask_start
+    desired = max(pad_end - pad_start, needed)
+    target = ((desired + multiple - 1) // multiple) * multiple
+    if target > limit:
         return 0, limit
 
-    start = max(0, start - (target - span) // 2)
-    if start + target > limit:
-        start = limit - target
+    lower = max(0, mask_end - target)
+    upper = min(limit - target, mask_start)
+    start = min(max(mask_start - (target - needed) // 2, lower), upper)
     return start, start + target
 
 

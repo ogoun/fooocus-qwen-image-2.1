@@ -17,7 +17,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from .aspect import snap
+from .aspect import MULTIPLE
 
 SIDES: tuple[str, ...] = ("left", "right", "top", "bottom")
 
@@ -28,6 +28,17 @@ class OutpaintPlan:
 
     canvas_size: tuple[int, int]
     paste_box: tuple[int, int, int, int]
+
+
+def _ceil_multiple(value: int) -> int:
+    """Округляет вверх до кратности 32, не опускаясь ниже одной кратности.
+
+    ``aspect.snap`` округляет к БЛИЖАЙШЕЙ кратности и может уменьшить значение.
+    Здесь это недопустимо: холст обязан вместить исходное изображение плюс
+    запрошенный прирост целиком, иначе у ``cv2.copyMakeBorder`` получится
+    отрицательный бордюр и он упадёт с ошибкой.
+    """
+    return max(MULTIPLE, -(-value // MULTIPLE) * MULTIPLE)
 
 
 def plan(size: tuple[int, int], sides: Sequence[str], amount: float) -> OutpaintPlan:
@@ -44,13 +55,29 @@ def plan(size: tuple[int, int], sides: Sequence[str], amount: float) -> Outpaint
     top = int(height * amount) if "top" in sides else 0
     bottom = int(height * amount) if "bottom" in sides else 0
 
-    canvas_width = snap(width + left + right)
-    canvas_height = snap(height + top + bottom)
+    # Ось, которую не просили расширять, обязана остаться в точности исходного
+    # размера: округление кратности (в любую сторону) сдвинуло бы её и на
+    # растущей, и на нерастущей оси и могло сделать холст уже оригинала.
+    canvas_width = _ceil_multiple(width + left + right) if (left or right) else width
+    canvas_height = _ceil_multiple(height + top + bottom) if (top or bottom) else height
 
-    # Округление холста до кратности 32 съедает или добавляет пиксели; отдаём
-    # разницу тем полям, которые и так растут, чтобы оригинал не деформировался.
-    offset_x = min(left, max(0, canvas_width - width))
-    offset_y = min(top, max(0, canvas_height - height))
+    # Остаток округления вверх отдаём той стороне (или обеим), которая и так
+    # растёт, чтобы холст не раздался на сторону, которую не просили.
+    slack_x = canvas_width - width - left - right
+    if left and right:
+        offset_x = left + slack_x // 2
+    elif left:
+        offset_x = canvas_width - width
+    else:
+        offset_x = 0
+
+    slack_y = canvas_height - height - top - bottom
+    if top and bottom:
+        offset_y = top + slack_y // 2
+    elif top:
+        offset_y = canvas_height - height
+    else:
+        offset_y = 0
 
     return OutpaintPlan(
         canvas_size=(canvas_width, canvas_height),

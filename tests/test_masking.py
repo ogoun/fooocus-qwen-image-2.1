@@ -151,3 +151,52 @@ def test_mask_from_editor_accepts_plain_image():
 def test_mask_from_editor_rejects_value_without_background():
     with pytest.raises(ValueError):
         masking.mask_from_editor({"background": None, "layers": [], "composite": None})
+
+
+def test_region_box_contains_the_mask_on_a_non_multiple_of_32_canvas():
+    # Ширина холста (120) не кратна 32: раньше рассчитанное окно могло стать
+    # уже маски, и часть закрашенной пользователем области выпадала из правки.
+    mask = Image.new("L", (120, 60), 0)
+    mask.paste(255, (5, 10, 115, 20))
+
+    left, top, right, bottom = masking.region_box(mask, padding=0.25)
+
+    assert left <= 5 and right >= 115
+    assert top <= 10 and bottom >= 20
+    assert 0 <= left and 0 <= top and right <= 120 and bottom <= 60
+
+
+def test_region_box_against_the_right_edge_of_a_non_multiple_canvas():
+    mask = Image.new("L", (100, 64), 0)
+    mask.paste(255, (90, 20, 100, 44))
+
+    left, top, right, bottom = masking.region_box(mask, padding=0.25)
+
+    assert left <= 90 and right >= 100
+    assert top <= 20 and bottom >= 44
+    assert 0 <= left and right <= 100 and 0 <= top and bottom <= 64
+
+
+def test_blend_resizes_mask_to_the_original():
+    original = Image.new("RGBA", (64, 64), (1, 2, 3, 255))
+    generated = Image.new("RGBA", (64, 64), (250, 250, 250, 255))
+    mask = Image.new("L", (32, 32), 255)  # маска другого размера, чем оригинал
+
+    result = masking.blend(original, generated, mask)
+
+    assert result.size == (64, 64)
+    assert tuple(np.asarray(result)[32, 32]) == (250, 250, 250, 255)
+
+
+def test_mask_from_editor_resizes_layer_to_the_background():
+    # Слой мог прийти другого размера, чем фон, — редактор их не всегда
+    # выравнивает сам.
+    background = solid((64, 64), (10, 20, 30, 255))
+    layer = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    layer.paste((255, 0, 0, 255), (8, 8, 16, 16))
+    value = {"background": background, "layers": [layer], "composite": None}
+
+    mask = masking.mask_from_editor(value)
+
+    assert mask.size == (64, 64)
+    assert not masking.is_empty(mask)
