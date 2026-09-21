@@ -168,6 +168,49 @@ def test_interrupt_is_reachable_while_the_lock_is_held():
     assert not worker.is_alive()
 
 
+class _RecordingResidency:
+    """Отмечает вызов ``restore()`` событием, а не просто счётчиком.
+
+    Событие даёт ``wait(timeout=...)`` — детерминированный способ узнать, что
+    восстановление состоялось, без опроса в цикле.
+    """
+
+    def __init__(self) -> None:
+        self.restored = threading.Event()
+
+    def restore(self) -> None:
+        self.restored.set()
+
+
+def test_recovery_cannot_run_while_a_generation_holds_the_lock():
+    # FIX 2: Generator.recover() обязан брать тот же замок, что и generate().
+    # Раньше Studio.recover_residency() обращался к ResidencyManager.restore()
+    # напрямую, минуя замок генератора, — и мог вклиниться прямо в середину
+    # чужой перестановки моделей внутри text_encoder_resident(). Форма теста
+    # та же, что и у test_a_second_generation_waits_for_the_first_to_finish:
+    # генерация занимает пайплайн, а recover() с другого потока не должен
+    # войти в тело, пока генерация не закончится.
+    pipe = BlockingPipeline()
+    residency = _RecordingResidency()
+    engine = gen.Generator(pipe, residency=residency, cache=None, catalogue={})
+
+    worker = threading.Thread(target=lambda: engine.generate(request()), daemon=True)
+    worker.start()
+    assert pipe.entered.wait(timeout=5)
+
+    recoverer = threading.Thread(target=engine.recover, daemon=True)
+    recoverer.start()
+    recoverer.join(timeout=0.5)
+    assert recoverer.is_alive(), "recover() не должен входить, пока генерация держит замок"
+    assert not residency.restored.is_set()
+
+    pipe.release.set()
+    worker.join(timeout=5)
+    recoverer.join(timeout=5)
+    assert not worker.is_alive() and not recoverer.is_alive()
+    assert residency.restored.is_set(), "recover() обязан выполниться после освобождения замка"
+
+
 # --- вторая линия: очередь Gradio ---
 
 gr = pytest.importorskip("gradio")

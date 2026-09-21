@@ -135,13 +135,28 @@ def test_a_multiline_message_is_squeezed_into_one_line():
 
 
 class _ExplodingGenerator:
-    def __init__(self, error: BaseException) -> None:
+    """Двойник генератора: сбой в ``generate()`` и вызов ``recover()`` после него.
+
+    ``recover()`` списан с настоящего ``Generator.recover()`` в миниатюре —
+    после FIX 2 ``Studio.recover_residency()`` маршрутизирует вызов через
+    генератор, а не обращается к ``ResidencyManager`` напрямую, и любой его
+    двойник обязан отвечать на ``recover()``. При отсутствии резидентности
+    (как в тестах ниже, где она не нужна) ничего не делает — тот же контракт,
+    что и у боевого метода.
+    """
+
+    def __init__(self, error: BaseException, residency=None) -> None:
         self._error = error
+        self._residency = residency
         self.calls = 0
 
     def generate(self, _request, progress=None):
         self.calls += 1
         raise self._error
+
+    def recover(self) -> None:
+        if self._residency is not None:
+            self._residency.restore()
 
 
 class _RecordingResidency:
@@ -160,9 +175,8 @@ def _request():
 
 def test_run_generation_turns_a_failure_into_a_message_and_restores_residency():
     studio = Studio(config.AppConfig())
-    studio._generator = _ExplodingGenerator(RuntimeError("модель не загрузилась"))
     residency = _RecordingResidency()
-    studio._residency = residency
+    studio._generator = _ExplodingGenerator(RuntimeError("модель не загрузилась"), residency)
 
     produced, failure = studio.run_generation(_request(), "ru")
 
@@ -188,13 +202,18 @@ def test_run_generation_reports_success_without_touching_residency():
 
 
 def test_recover_residency_is_safe_when_restoring_itself_fails():
-    studio = Studio(config.AppConfig())
+    # Перехват исключения переехал внутрь Generator.recover() вместе с замком
+    # (FIX 2): Studio лишь маршрутизирует вызов. Поэтому здесь нужен настоящий
+    # Generator, а не двойник, — иначе фиктивный try/except в тесте мог бы
+    # разойтись с боевым и замаскировать регрессию.
+    from fooocus_qwen.engine.generator import Generator
 
     class _BrokenResidency:
         def restore(self):
             raise RuntimeError("и восстановление не удалось")
 
-    studio._residency = _BrokenResidency()
+    studio = Studio(config.AppConfig())
+    studio._generator = Generator(pipe=None, residency=_BrokenResidency(), cache=None, catalogue={})
     studio.recover_residency()  # не должно выбросить наружу
 
 
