@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import random
+import threading
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
@@ -120,7 +121,22 @@ def resolve_size(request: GenerationRequest) -> tuple[int | None, int | None]:
 
 
 class Generator:
-    """Выполняет запросы на генерацию по одному."""
+    """Выполняет запросы на генерацию по одному.
+
+    «По одному» — это не пожелание, а инвариант, и он обеспечивается здесь, а
+    не проводкой интерфейса. За генератором стоит ровно один пайплайн, один
+    ``ResidencyManager`` и один ``EmbedsCache`` на всё приложение, а видеокарта
+    одна на 24 ГБ при 13.3 ГБ резидентного трансформера. Второй запрос,
+    начавшийся посреди первого, (1) сбросил бы флаг прерывания первого, и
+    кнопка «Прервать» перестала бы работать; (2) при промахе кэша эмбеддингов
+    вытеснил бы трансформер на хост прямо посреди чужого цикла денойзинга,
+    переприсвоив ``tensor.data`` под работающим forward; (3) просто не
+    поместился бы в видеопамять.
+
+    Полагаться на ``concurrency_id`` очереди Gradio для этого нельзя: очередь —
+    это слой выше, который легко забыть при добавлении новой вкладки, а
+    перечисленные последствия наступают молча и недетерминированно.
+    """
 
     def __init__(
         self,
@@ -134,13 +150,34 @@ class Generator:
         self._cache = cache
         self._catalogue = catalogue
         self._interrupted = False
+        self._lock = threading.Lock()
 
     def interrupt(self) -> None:
-        """Просит прервать текущую генерацию. Читается циклом денойзинга."""
+        """Просит прервать текущую генерацию. Читается циклом денойзинга.
+
+        Замок ``_lock`` здесь намеренно НЕ берётся: он занят ровно тем, что эта
+        кнопка должна остановить, и ожидание на нём сделало бы остановку
+        недостижимой. Обе записи — выставление булева флага, а не изменение
+        структуры данных, поэтому их безопасно делать из чужого потока: цикл
+        денойзинга читает ``pipe._interrupt`` между шагами, а ``generate``
+        проверяет ``self._interrupted`` между изображениями.
+        """
         self._interrupted = True
         self._pipe._interrupt = True
 
     def generate(
+        self,
+        request: GenerationRequest,
+        progress: ProgressCallback | None = None,
+    ) -> list[GeneratedImage]:
+        """Выполняет запрос, дождавшись, пока освободится видеокарта.
+
+        Замок держит весь цикл целиком — по причинам из докстринга класса.
+        """
+        with self._lock:
+            return self._generate(request, progress)
+
+    def _generate(
         self,
         request: GenerationRequest,
         progress: ProgressCallback | None = None,

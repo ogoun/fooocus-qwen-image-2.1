@@ -18,6 +18,7 @@ from ..prompting import boost as boost_module
 from ..prompting import library
 from ..storage import gallery
 from .i18n import Localizer, pick
+from .state import GPU_CONCURRENCY_ID
 
 MAX_REFERENCES = 10
 
@@ -339,6 +340,10 @@ def build(studio, localizer: Localizer) -> dict:
         [prompt, boosted, boost_enabled, references, quality, ratio, image_number,
          styles, negative, cfg, seed, kv_cache],
         [result, status],
+        # Общая с вкладкой редактирования группа очереди: без неё предел
+        # concurrency в единицу действовал бы только внутри этого обработчика,
+        # а «Сгенерировать» и «Применить правку» стартовали бы одновременно.
+        concurrency_id=GPU_CONCURRENCY_ID,
     )
     # Кнопка остановки должна срабатывать, пока генерация занимает очередь.
     stop_button.click(stop, None, status, queue=False)

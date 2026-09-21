@@ -30,6 +30,7 @@ from ..imaging import masking, metadata, outpaint
 from ..prompting import boost as boost_module
 from ..storage import gallery
 from .i18n import Localizer, pick
+from .state import GPU_CONCURRENCY_ID
 
 LOGGER = logging.getLogger(__name__)
 
@@ -309,6 +310,8 @@ def build(studio, localizer: Localizer) -> dict:
         run,
         [editor, prompt, boost_enabled, mode, quality, grow, feather, keep_outside, seed],
         [result, status],
+        # Та же группа очереди, что и у «Сгенерировать»: видеокарта одна.
+        concurrency_id=GPU_CONCURRENCY_ID,
     )
     stop_button.click(stop, None, status, queue=False)
     send_back.click(take_back, result, [editor, status])
