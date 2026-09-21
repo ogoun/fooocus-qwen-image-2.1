@@ -1,0 +1,93 @@
+"""Клиент проверяется на настоящем HTTP-сервере в потоке, без заглушек сети."""
+
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+import pytest
+from PIL import Image
+
+from fooocus_qwen.llm.client import LlmClient, LlmError
+from fooocus_qwen.llm.endpoint import LlmEndpoint
+
+RECEIVED: list[dict] = []
+
+
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, *args):  # тишина в выводе тестов
+        pass
+
+    def do_GET(self):
+        if self.path == "/v1/models":
+            self._reply({"data": [{"id": "qwen3"}, {"id": "llama"}]})
+        else:
+            self.send_error(404)
+
+    def do_POST(self):
+        length = int(self.headers["Content-Length"])
+        body = json.loads(self.rfile.read(length).decode("utf-8"))
+        RECEIVED.append({"body": body, "auth": self.headers.get("Authorization")})
+        self._reply({"choices": [{"message": {"content": "переписанный промт"}}]})
+
+    def _reply(self, payload):
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+
+@pytest.fixture
+def server():
+    RECEIVED.clear()
+    httpd = HTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{httpd.server_port}"
+    httpd.shutdown()
+    # shutdown() останавливает цикл serve_forever, но не закрывает слушающий
+    # сокет — без этого он утекает и порождает ResourceWarning на выходе.
+    httpd.server_close()
+    thread.join(timeout=5)
+
+
+def test_ping_returns_model_names(server):
+    client = LlmClient(LlmEndpoint(base_url=server))
+    assert client.ping() == ["qwen3", "llama"]
+
+
+def test_complete_sends_system_and_user_messages(server):
+    client = LlmClient(LlmEndpoint(base_url=server, token="SECRET"), model="qwen3")
+    answer = client.complete("системный", "пользовательский")
+
+    assert answer == "переписанный промт"
+    body = RECEIVED[0]["body"]
+    assert body["model"] == "qwen3"
+    assert body["messages"][0] == {"role": "system", "content": "системный"}
+    assert body["messages"][1]["content"] == "пользовательский"
+    assert RECEIVED[0]["auth"] == "Bearer SECRET"
+
+
+def test_images_are_sent_as_data_urls(server):
+    client = LlmClient(LlmEndpoint(base_url=server))
+    client.complete("س", "опиши", images=[Image.new("RGB", (8, 8), "red")])
+
+    content = RECEIVED[0]["body"]["messages"][1]["content"]
+    assert isinstance(content, list)
+    assert content[0]["type"] == "text"
+    assert content[1]["type"] == "image_url"
+    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+def test_thinking_is_disabled():
+    # Рассуждения вслух добавляют секунды и не нужны для переписывания промта.
+    client = LlmClient(LlmEndpoint(base_url="http://127.0.0.1:1"))
+    body = client._build_body("s", "u", None, 0.3, 100)
+    assert body["chat_template_kwargs"] == {"enable_thinking": False}
+
+
+def test_unreachable_server_raises_llm_error():
+    client = LlmClient(LlmEndpoint(base_url="http://127.0.0.1:1"), timeout=0.5)
+    with pytest.raises(LlmError):
+        client.ping()
