@@ -16,7 +16,7 @@ import gradio as gr
 
 from .. import config
 from ..llm import LlmError
-from .i18n import Localizer, pick
+from .i18n import MESSAGES, Localizer, pick, say
 
 _PROMPT_FILES: tuple[str, ...] = (
     "system_prompt_t2i.txt",
@@ -34,22 +34,31 @@ _PROMPT_KEYS: dict[str, str] = {
 }
 
 
-def _read_endpoint() -> str:
+def _read_endpoint(lang: str) -> str:
     try:
         return config.ENDPOINT_FILE.read_text(encoding="utf-8")
     except OSError:
-        return "# Файл не найден. Укажите бэкенд, адрес и token=…\n"
+        # Заглушка — не содержимое файла, а обращение к пользователю, поэтому
+        # она переводится, хотя и оформлена комментарием внутри текстового поля.
+        return say("endpoint_file_missing", lang)
 
 
-def _read_prompt(name: str) -> str:
+def _read_prompt(name: str, lang: str) -> str:
     try:
         return (config.SYSTEM_PROMPT_DIR / name).read_text(encoding="utf-8")
     except OSError:
-        return f"# Файл {name} не найден. Запустите tools/fetch_system_prompts.py\n"
+        return say("prompt_file_missing", lang, name=name)
 
 
-def build(studio, localizer: Localizer) -> dict:
+def build(studio, localizer: Localizer, language=None) -> dict:
+    """Собирает вкладку.
+
+    ``language`` — компонент с текущим языком; см. докстринг
+    ``tab_generate.build``.
+    """
     lang = studio.config.lang
+    if language is None:
+        language = gr.State(lang)
 
     with gr.Row():
         with gr.Column():
@@ -58,7 +67,7 @@ def build(studio, localizer: Localizer) -> dict:
                     label=pick("llm_endpoint", lang),
                     placeholder=pick("llm_endpoint_placeholder", lang),
                     lines=5,
-                    value=_read_endpoint(),
+                    value=_read_endpoint(lang),
                 ),
                 label=("Адрес языковой модели", "Language model endpoint"),
                 placeholder=(
@@ -91,7 +100,9 @@ def build(studio, localizer: Localizer) -> dict:
                 label=("Системный промт", "System prompt"),
                 choices=(ru_choices, en_choices),
             )
-            prompt_text = gr.Textbox(lines=18, value=_read_prompt(_PROMPT_FILES[0]), show_label=False)
+            prompt_text = gr.Textbox(
+                lines=18, value=_read_prompt(_PROMPT_FILES[0], lang), show_label=False
+            )
             save_prompt_button = localizer.bind(
                 gr.Button(pick("save_prompt", lang)), value=("Сохранить промт", "Save prompt")
             )
@@ -103,17 +114,26 @@ def build(studio, localizer: Localizer) -> dict:
     with gr.Row():
         memory = localizer.bind(
             gr.Textbox(
-                label=pick("memory", lang), interactive=False, lines=2, value="модель ещё не загружена"
+                label=pick("memory", lang),
+                interactive=False,
+                lines=2,
+                value=say("model_not_loaded", lang),
             ),
             label=("Память видеокарты", "GPU memory"),
+            # Значение поля тоже переводимо: это заглушка «ещё не загружена»,
+            # а не результат измерения. Переключение языка сбрасывает поле к
+            # ней — для снимка, который обновляют кнопкой, это верное
+            # поведение, а вот русская строка вокруг английских подписей —
+            # нет.
+            value=MESSAGES["model_not_loaded"],
         )
         memory_refresh = localizer.bind(gr.Button(pick("refresh", lang)), value=("Обновить", "Refresh"))
 
-    def store_endpoint(text):
+    def store_endpoint(text, lang):
         config.ENDPOINT_FILE.write_text(text, encoding="utf-8")
-        return "Адрес сохранён"
+        return say("endpoint_saved", lang)
 
-    def check_connection():
+    def check_connection(lang):
         # load_endpoint бросает FileNotFoundError (файла нет — обычное дело
         # для свежей установки) или ValueError (в файле нет ни одного хоста),
         # ping() — LlmError (сервер недоступен или ответил ошибкой). Все три
@@ -121,20 +141,27 @@ def build(studio, localizer: Localizer) -> dict:
         try:
             client = studio.llm_client()
         except (LlmError, FileNotFoundError, ValueError, OSError) as error:
-            return f"Нет связи: {error}"
-        return f"Связь есть. Выбранная модель: {client.model or 'сервер не назвал ни одной'}"
+            return say("llm_no_connection", lang, error=error)
+        return say(
+            "llm_connected", lang, model=client.model or say("llm_no_model_named", lang)
+        )
 
-    def load_prompt_file(name):
-        return _read_prompt(name)
+    def load_prompt_file(name, lang):
+        return _read_prompt(name, lang)
 
-    def store_prompt_file(name, text):
+    def store_prompt_file(name, text, lang):
         (config.SYSTEM_PROMPT_DIR / name).write_text(text, encoding="utf-8")
-        return f"Файл {name} сохранён"
+        return say("prompt_file_saved", lang, name=name)
 
-    save_endpoint.click(store_endpoint, endpoint_text, endpoint_status)
-    check.click(check_connection, None, endpoint_status)
-    chosen_file.change(load_prompt_file, chosen_file, prompt_text)
-    save_prompt_button.click(store_prompt_file, [chosen_file, prompt_text], prompt_status)
-    memory_refresh.click(studio.memory_report, None, memory)
+    def memory_report(lang):
+        return studio.memory_report(lang)
+
+    save_endpoint.click(store_endpoint, [endpoint_text, language], endpoint_status)
+    check.click(check_connection, language, endpoint_status)
+    chosen_file.change(load_prompt_file, [chosen_file, language], prompt_text)
+    save_prompt_button.click(
+        store_prompt_file, [chosen_file, prompt_text, language], prompt_status
+    )
+    memory_refresh.click(memory_report, language, memory)
 
     return {"memory": memory, "endpoint_status": endpoint_status, "prompt_status": prompt_status}

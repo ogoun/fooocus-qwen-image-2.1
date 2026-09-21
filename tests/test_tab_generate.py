@@ -26,22 +26,22 @@ def _images(count: int) -> list:
 
 
 def test_no_references_have_no_captions():
-    assert tab_generate._captions(_images(0)) == []
+    assert tab_generate._captions(_images(0), "ru") == []
 
 
 def test_single_reference_is_captioned_without_a_tag():
     # Спецификация Qwen запрещает теги при единственном изображении.
-    captions = tab_generate._captions(_images(1))
+    captions = tab_generate._captions(_images(1), "ru")
     assert len(captions) == 1
     assert "<image1>" not in captions[0]
 
 
 def test_two_references_get_image_tags():
-    assert tab_generate._captions(_images(2)) == ["<image1>", "<image2>"]
+    assert tab_generate._captions(_images(2), "ru") == ["<image1>", "<image2>"]
 
 
 def test_ten_references_get_ten_distinct_tags():
-    captions = tab_generate._captions(_images(10))
+    captions = tab_generate._captions(_images(10), "ru")
     assert captions == [f"<image{i}>" for i in range(1, 11)]
     assert len(set(captions)) == 10
 
@@ -68,7 +68,7 @@ def test_captions_come_from_the_same_slot_builder_as_the_model_call():
     assert tags_after_a_source == ["<image2>", "<image3>"]
 
     # А без источника — то, что пользователь видит на вкладке генерации.
-    assert tab_generate._captions(references) == ["<image1>", "<image2>"]
+    assert tab_generate._captions(references, "ru") == ["<image1>", "<image2>"]
 
 
 # --- обработчики пресетов промтов вкладки ---
@@ -100,7 +100,7 @@ def test_save_writes_a_preset_file_under_prompt_dir(monkeypatch, tmp_path):
     handlers = _build_handlers(monkeypatch, tmp_path)
 
     update, message = handlers["save"](
-        "Мой пресет", "кот на подоконнике", "", [], config.AppConfig().preset, "1:1", -1, 1.0
+        "Мой пресет", "кот на подоконнике", "", [], config.AppConfig().preset, "1:1", -1, 1.0, "ru"
     )
     assert list(tmp_path.glob("*.json"))
     assert "Мой пресет" in message
@@ -110,11 +110,11 @@ def test_save_writes_a_preset_file_under_prompt_dir(monkeypatch, tmp_path):
 def test_load_restores_the_saved_fields(monkeypatch, tmp_path):
     handlers = _build_handlers(monkeypatch, tmp_path)
 
-    handlers["save"]("пресет", "промт", "негатив", ["sai-anime"], "MaxQuality", "16:9", 7, 2.5)
+    handlers["save"]("пресет", "промт", "негатив", ["sai-anime"], "MaxQuality", "16:9", 7, 2.5, "ru")
     (
         prompt_text, negative_text, style_names, quality_name,
         ratio_value, seed_value, cfg_value, message,
-    ) = handlers["load"]("пресет")
+    ) = handlers["load"]("пресет", "ru")
 
     assert prompt_text == "промт"
     assert negative_text == "негатив"
@@ -129,17 +129,17 @@ def test_load_restores_the_saved_fields(monkeypatch, tmp_path):
 def test_delete_removes_the_preset_and_reports_when_missing(monkeypatch, tmp_path):
     handlers = _build_handlers(monkeypatch, tmp_path)
 
-    handlers["save"]("временный", "промт", "", [], "LowQuality", "1:1", -1, 1.0)
-    update, message = handlers["delete"]("временный")
+    handlers["save"]("временный", "промт", "", [], "LowQuality", "1:1", -1, 1.0, "ru")
+    update, message = handlers["delete"]("временный", "ru")
     assert not list(tmp_path.glob("*.json"))
     assert "удалён" in message
 
-    _, missing_message = handlers["delete"]("временный")
+    _, missing_message = handlers["delete"]("временный", "ru")
     assert "не найден" in missing_message
 
 
 def test_save_rejects_an_empty_name(monkeypatch, tmp_path):
     handlers = _build_handlers(monkeypatch, tmp_path)
 
-    handlers["save"]("   ", "промт", "", [], "LowQuality", "1:1", -1, 1.0)
+    handlers["save"]("   ", "промт", "", [], "LowQuality", "1:1", -1, 1.0, "ru")
     assert not list(tmp_path.glob("*.json"))

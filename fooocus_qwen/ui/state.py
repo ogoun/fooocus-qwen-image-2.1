@@ -17,6 +17,7 @@ from .. import config
 from ..llm import LlmClient, LlmError, load_endpoint
 from ..prompting import boost
 from ..prompting.styles import Style, load_styles
+from .i18n import say
 
 LOGGER = logging.getLogger(__name__)
 
@@ -65,7 +66,7 @@ def _is_out_of_memory(error: BaseException) -> bool:
     return out_of_memory is not None and isinstance(error, out_of_memory)
 
 
-def describe_failure(error: BaseException) -> str:
+def describe_failure(error: BaseException, lang: str) -> str:
     """Читаемая строка состояния вместо сырого traceback в тосте.
 
     Отсутствующие веса, испорченный ``model_index.json`` и нехватка
@@ -74,17 +75,18 @@ def describe_failure(error: BaseException) -> str:
     говорит ничего и выглядит как падение приложения. Установщик считает, что
     «установилось» значит «запустится»; работающему приложению разумно
     держаться того же стандарта.
+
+    Сам текст исключения не переводится: он приходит из torch, diffusers или
+    операционной системы и всегда английский. Переводится обрамление — то,
+    что объясняет пользователю, что делать.
     """
     if _is_out_of_memory(error):
-        return (
-            "Не хватило видеопамяти. Попробуйте пресет качества пониже, меньше "
-            f"изображений за раз или меньше референсов. {_quote(error)}"
-        )
+        return say("failure_out_of_memory", lang, error=_quote(error))
     if isinstance(error, FileNotFoundError):
-        return f"Файл не найден: {_quote(error)}. Проверьте, что веса модели на месте."
+        return say("failure_file_not_found", lang, error=_quote(error))
     if isinstance(error, OSError):
-        return f"Ошибка ввода-вывода: {_quote(error)}"
-    return f"Сбой: {type(error).__name__}: {_quote(error)}"
+        return say("failure_io", lang, error=_quote(error))
+    return say("failure_other", lang, kind=type(error).__name__, error=_quote(error))
 
 
 class Studio:
@@ -119,18 +121,23 @@ class Studio:
     def model_loaded(self) -> bool:
         return self._generator is not None
 
-    def memory_report(self) -> str:
+    def memory_report(self, lang: str) -> str:
         if self._residency is None:
-            return "модель ещё не загружена"
+            return say("model_not_loaded", lang)
         stats = self._residency.stats()
-        return (
-            f"видеопамять: {stats['allocated_gib']:.1f} ГиБ занято, "
-            f"{stats['reserved_gib']:.1f} ГиБ зарезервировано; "
-            f"перестановок энкодера: {int(stats['swaps'])}; "
-            f"кэш промтов: {self._cache.hits} попаданий / {self._cache.misses} промахов"
+        return say(
+            "memory_report",
+            lang,
+            allocated=stats["allocated_gib"],
+            reserved=stats["reserved_gib"],
+            swaps=int(stats["swaps"]),
+            hits=self._cache.hits,
+            misses=self._cache.misses,
         )
 
-    def run_generation(self, request: Any, progress: Any = None) -> tuple[list[Any], str | None]:
+    def run_generation(
+        self, request: Any, lang: str, progress: Any = None
+    ) -> tuple[list[Any], str | None]:
         """Генерация, у которой сбой — это строка состояния, а не traceback.
 
         Возвращает пару (результаты, сообщение об ошибке или ``None``). Второй
@@ -147,7 +154,7 @@ class Studio:
         except Exception as error:  # noqa: BLE001 — тост с traceback хуже строки статуса
             LOGGER.exception("Генерация не выполнена")
             self.recover_residency()
-            return [], describe_failure(error)
+            return [], describe_failure(error, lang)
 
     def recover_residency(self) -> None:
         """Возвращает веса на штатные места после сбоя.
@@ -175,6 +182,7 @@ class Studio:
         self,
         prompt: str,
         mode: str,
+        lang: str,
         references: list[Image.Image] | None = None,
     ) -> tuple[str, str | None, str]:
         """Возвращает переписанный промт, соотношение сторон и сообщение о результате."""
@@ -185,12 +193,13 @@ class Studio:
             )
         except (LlmError, FileNotFoundError, ValueError, OSError) as error:
             LOGGER.warning("AI-буст не выполнен: %s", error)
-            return prompt, None, f"AI буст не выполнен: {error}"
-        return result.prompt, result.wh_ratio, "AI буст выполнен"
+            return prompt, None, say("boost_failed", lang, error=error)
+        return result.prompt, result.wh_ratio, say("boost_done", lang)
 
-    def describe_image(self, image: Image.Image) -> tuple[str, str]:
+    def describe_image(self, image: Image.Image, lang: str) -> tuple[str, str]:
         try:
-            return boost.describe(self.llm_client(), image, config.SYSTEM_PROMPT_DIR), "Описание готово"
+            text = boost.describe(self.llm_client(), image, config.SYSTEM_PROMPT_DIR)
         except (LlmError, FileNotFoundError, ValueError, OSError) as error:
             LOGGER.warning("Описание не выполнено: %s", error)
-            return "", f"Описание не выполнено: {error}"
+            return "", say("describe_failed", lang, error=error)
+        return text, say("describe_done", lang)

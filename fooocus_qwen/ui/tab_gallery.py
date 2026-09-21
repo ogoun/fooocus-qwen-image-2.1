@@ -20,7 +20,7 @@ from ..engine import presets
 from ..imaging import aspect as aspect_module
 from ..imaging import metadata
 from ..storage import gallery
-from .i18n import Localizer, pick
+from .i18n import Localizer, pick, say
 
 # Порядок обязан совпадать с порядком выходов кнопки «Восстановить» в build():
 # восстановление читает по этому же порядку значения из словаря параметров, а
@@ -99,8 +99,17 @@ def _open_folder(path: Path) -> None:
         subprocess.run(["xdg-open", str(path)], check=False)
 
 
-def build(studio, localizer: Localizer, generate_components: dict) -> dict:
+def build(studio, localizer: Localizer, generate_components: dict, language=None) -> dict:
+    """Собирает вкладку.
+
+    ``language`` — компонент с текущим языком; см. докстринг
+    ``tab_generate.build``. Здесь он нужен и для содержимого ``gr.JSON``:
+    там переводимы не только значения, но и ключи словаря — пользователь
+    читает и их.
+    """
     lang = studio.config.lang
+    if language is None:
+        language = gr.State(lang)
 
     with gr.Row():
         with gr.Column(scale=3):
@@ -138,35 +147,37 @@ def build(studio, localizer: Localizer, generate_components: dict) -> dict:
     def refresh_history():
         return [str(path) for path in gallery.recent(config.OUTPUT_DIR)]
 
-    def on_select(event: gr.SelectData):
+    def on_select(lang, event: gr.SelectData):
         value = event.value
         path = Path(value["image"]["path"]) if isinstance(value, dict) else Path(value)
         parameters = metadata.read_png(path)
-        return str(path), (parameters or {"сообщение": "в этом PNG нет наших параметров"})
+        fallback = {say("field_message", lang): say("png_without_parameters", lang)}
+        return str(path), (parameters or fallback)
 
-    def open_outputs():
+    def open_outputs(lang):
         config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         _open_folder(config.OUTPUT_DIR)
-        return {"открыт каталог": str(config.OUTPUT_DIR)}
+        return {say("field_opened_folder", lang): str(config.OUTPUT_DIR)}
 
-    def restore(path, uploaded):
+    def restore(path, uploaded, lang):
         # Перетащенный файл важнее выбора в галерее: пользователь явно принёс
         # новый PNG, значит, речь уже не о том, что было выбрано раньше.
         source = Path(uploaded) if uploaded else (Path(path) if path else None)
         if source is None:
             return (gr.update(),) * RESTORED_FIELDS + (
-                {"сообщение": "выберите изображение в галерее или перетащите PNG"},
+                {say("field_message", lang): say("pick_or_drop_png", lang)},
             )
 
         parameters = metadata.read_png(source)
-        return restore_fields(parameters) + (parameters or {"сообщение": "параметры не найдены"},)
+        missing = {say("field_message", lang): say("parameters_not_found", lang)}
+        return restore_fields(parameters) + (parameters or missing,)
 
     refresh.click(refresh_history, None, history)
-    open_button.click(open_outputs, None, details)
-    history.select(on_select, None, [selected, details])
+    open_button.click(open_outputs, language, details)
+    history.select(on_select, language, [selected, details])
     restore_button.click(
         restore,
-        [selected, dropped],
+        [selected, dropped, language],
         [
             generate_components["prompt"],
             generate_components["boosted"],

@@ -38,29 +38,35 @@ def build(cfg: config.AppConfig) -> gr.Blocks:
                 label=("Генерация", "Generate"),
             )
             with generate_tab:
-                generate_components = tab_generate.build(studio, localizer)
+                generate_components = tab_generate.build(studio, localizer, language)
 
             edit_tab = localizer.bind(
                 gr.Tab(pick("tab_edit", cfg.lang)),
                 label=("Редактирование", "Edit"),
             )
             with edit_tab:
-                tab_edit.build(studio, localizer)
+                tab_edit.build(studio, localizer, language)
 
             gallery_tab = localizer.bind(
                 gr.Tab(pick("tab_gallery", cfg.lang)),
                 label=("Галерея", "Gallery"),
             )
             with gallery_tab:
-                tab_gallery.build(studio, localizer, generate_components)
+                tab_gallery.build(studio, localizer, generate_components, language)
 
             settings_tab = localizer.bind(
                 gr.Tab(pick("tab_settings", cfg.lang)),
                 label=("Настройки", "Settings"),
             )
             with settings_tab:
-                tab_settings.build(studio, localizer)
+                tab_settings.build(studio, localizer, language)
 
+        # Переключатель языка делает две вещи. Явно — перерисовывает подписи
+        # уже собранных компонентов. Неявно, но не менее важно — его значение
+        # ходит последним входом в каждый обработчик, который что-то сообщает
+        # пользователю: сообщения собираются в момент ответа, а не при сборке
+        # интерфейса, поэтому строка состояния говорит на текущем языке, а не
+        # на языке запуска.
         language.change(localizer.updates, language, localizer.components, queue=False)
 
     return demo

@@ -19,7 +19,7 @@ from ..imaging import aspect, metadata
 from ..prompting import boost as boost_module
 from ..prompting import library
 from ..storage import gallery
-from .i18n import Localizer, pick
+from .i18n import Localizer, pick, say
 from .state import GPU_CONCURRENCY_ID, describe_failure
 
 LOGGER = logging.getLogger(__name__)
@@ -27,10 +27,7 @@ LOGGER = logging.getLogger(__name__)
 MAX_REFERENCES = 10
 
 
-UNTAGGED_CAPTION = "без тега — одно изображение"
-
-
-def _captions(images) -> list[str]:
+def _captions(images, lang: str) -> list[str]:
     """Подписи миниатюр: ровно те теги, которыми промт адресует изображения.
 
     Считаются из ``condition_slots()`` — той же функции, что задаёт порядок
@@ -41,19 +38,30 @@ def _captions(images) -> list[str]:
     достаётся ``<image2>``.
 
     При единственном условном изображении теги запрещены спецификацией Qwen,
-    и ``condition_slots()`` отдаёт пустой тег; подпись говорит об этом прямо,
-    а не показывает несуществующий «<image1>».
+    и ``condition_slots()`` отдаёт пустой тег; подпись говорит об этом прямо
+    и на языке интерфейса, а не показывает несуществующий «<image1>».
     """
     return [
-        slot.tag or UNTAGGED_CAPTION
+        slot.tag or say("caption_untagged", lang)
         for slot in condition_slots(references=tuple(images))
         if slot.role == "reference"
     ]
 
 
-def build(studio, localizer: Localizer) -> dict:
+def build(studio, localizer: Localizer, language=None) -> dict:
+    """Собирает вкладку.
+
+    ``language`` — компонент с текущим языком (выпадающий список из шапки).
+    Он приходит извне и добавляется последним входом к каждому обработчику,
+    который что-то сообщает пользователю: язык меняется во время работы, и
+    захваченный в замыкание ``lang`` навсегда остался бы языком запуска.
+    Если компонент не передан (так вкладку собирают тесты), заводится
+    ``gr.State`` с языком запуска — обработчики от этого не меняются.
+    """
     lang = studio.config.lang
     catalogue_names = sorted(studio.catalogue)
+    if language is None:
+        language = gr.State(lang)
 
     references = gr.State([])
 
@@ -227,7 +235,7 @@ def build(studio, localizer: Localizer) -> dict:
 
     # --- обработчики ---
 
-    def add_references(files):
+    def add_references(files, lang):
         """Пересобирает список референсов из виджета целиком.
 
         Виджет ``gr.File(file_count="multiple")`` в каждом событии ``change``
@@ -241,23 +249,25 @@ def build(studio, localizer: Localizer) -> dict:
         from PIL import Image as PILImage
 
         images = [PILImage.open(item.name).convert("RGB") for item in (files or [])[:MAX_REFERENCES]]
-        captioned = list(zip(images, _captions(images)))
-        return images, captioned, f"Референсов: {len(images)} из {MAX_REFERENCES}"
+        captioned = list(zip(images, _captions(images, lang)))
+        return images, captioned, say("references_counted", lang, count=len(images), total=MAX_REFERENCES)
 
-    def clear_references():
+    def clear_references(lang):
         # Сбрасываем и сам виджет: иначе следующее добавление файла принесёт
         # с собой прежний набор, который виджет продолжает хранить внутри себя.
-        return [], [], None, "Референсы очищены"
+        return [], [], None, say("references_cleared", lang)
 
-    def rewrite(prompt_text, current_references, ratio_value):
+    def rewrite(prompt_text, current_references, ratio_value, lang):
         mode = boost_module.MODE_EDIT if current_references else boost_module.MODE_T2I
-        text, wh_ratio, message = studio.boost_prompt(prompt_text, mode, current_references or None)
+        text, wh_ratio, message = studio.boost_prompt(
+            prompt_text, mode, lang, current_references or None
+        )
         chosen = wh_ratio if wh_ratio in aspect.ASPECT_RATIOS else ratio_value
         return text, chosen, message
 
     def run(
         prompt_text, boosted_text, use_boost, current_references, quality_name, ratio_value,
-        count, style_names, negative_text, cfg_value, seed_value, kv_value,
+        count, style_names, negative_text, cfg_value, seed_value, kv_value, lang,
         progress=gr.Progress(),
     ):
         # Обработчик целиком под try: отсутствующие веса, испорченный
@@ -269,7 +279,7 @@ def build(studio, localizer: Localizer) -> dict:
             if use_boost and not effective:
                 mode = boost_module.MODE_EDIT if current_references else boost_module.MODE_T2I
                 effective, wh_ratio, message = studio.boost_prompt(
-                    prompt_text, mode, current_references or None
+                    prompt_text, mode, lang, current_references or None
                 )
                 if wh_ratio in aspect.ASPECT_RATIOS:
                     ratio_value = wh_ratio
@@ -289,13 +299,16 @@ def build(studio, localizer: Localizer) -> dict:
             )
 
             def report(index: int, step: int, total: int) -> None:
-                progress((step, total), desc=f"изображение {index + 1}/{int(count)}")
+                progress(
+                    (step, total),
+                    desc=say("progress_image", lang, index=index + 1, total=int(count)),
+                )
 
-            produced, failure = studio.run_generation(request, progress=report)
+            produced, failure = studio.run_generation(request, lang, progress=report)
             if failure is not None:
                 return [], f"{message} {failure}".strip()
             if not produced:
-                return [], f"{message} Генерация прервана".strip()
+                return [], f"{message} {say('generation_interrupted', lang)}".strip()
 
             paths = []
             for item in produced:
@@ -304,20 +317,25 @@ def build(studio, localizer: Localizer) -> dict:
                 paths.append(str(destination))
 
             seeds = ", ".join(str(item.seed) for item in produced)
-            report_line = f"Готово. Сиды: {seeds}. {studio.memory_report()}"
+            report_line = say(
+                "generation_done", lang, seeds=seeds, memory=studio.memory_report(lang)
+            )
             return paths, f"{message} {report_line}".strip()
         except Exception as error:  # noqa: BLE001
             LOGGER.exception("Обработчик генерации не выполнен")
-            return [], describe_failure(error)
+            return [], describe_failure(error, lang)
 
-    def stop():
+    def stop(lang):
         if studio.model_loaded:
             studio.generator.interrupt()
-        return "Останавливаю…"
+        return say("stopping", lang)
 
-    def save(name, prompt_text, negative_text, style_names, quality_name, ratio_value, seed_value, cfg_value):
+    def save(
+        name, prompt_text, negative_text, style_names, quality_name, ratio_value,
+        seed_value, cfg_value, lang,
+    ):
         if not (name or "").strip():
-            return gr.update(), "Укажите название пресета"
+            return gr.update(), say("preset_name_required", lang)
         library.save_prompt(
             name,
             {
@@ -331,11 +349,14 @@ def build(studio, localizer: Localizer) -> dict:
             },
             config.PROMPT_DIR,
         )
-        return gr.update(choices=library.list_prompts(config.PROMPT_DIR), value=name), f"Пресет «{name}» сохранён"
+        return (
+            gr.update(choices=library.list_prompts(config.PROMPT_DIR), value=name),
+            say("preset_saved", lang, name=name),
+        )
 
-    def load(name):
+    def load(name, lang):
         if not name:
-            return (gr.update(),) * 7 + ("Пресет не выбран",)
+            return (gr.update(),) * 7 + (say("preset_not_selected", lang),)
         # Пресет мог быть удалён или испорчен мимо приложения: файлы лежат в
         # user/prompts/ и правятся чем угодно. load_prompt() сообщает об этом
         # исключением (FileNotFoundError либо ValueError), и выбор строки в
@@ -345,7 +366,7 @@ def build(studio, localizer: Localizer) -> dict:
             payload = library.load_prompt(name, config.PROMPT_DIR)
         except (FileNotFoundError, ValueError, OSError) as error:
             LOGGER.warning("Пресет «%s» не загружен: %s", name, error)
-            return (gr.update(),) * 7 + (f"Пресет «{name}» не загружен: {error}",)
+            return (gr.update(),) * 7 + (say("preset_load_failed", lang, name=name, error=error),)
         return (
             payload.get("prompt", ""),
             payload.get("negative_prompt", ""),
@@ -354,32 +375,34 @@ def build(studio, localizer: Localizer) -> dict:
             payload.get("aspect", "1:1"),
             payload.get("seed", -1),
             payload.get("true_cfg_scale", 1.0),
-            f"Пресет «{name}» загружен",
+            say("preset_loaded", lang, name=name),
         )
 
-    def delete(name):
+    def delete(name, lang):
         try:
             removed = library.delete_prompt(name, config.PROMPT_DIR)
         except OSError as error:
             # Файл может быть открыт другой программой или лежать на томе,
             # доступном только на чтение: сказать об этом строкой состояния.
             LOGGER.warning("Пресет «%s» не удалён: %s", name, error)
-            return gr.update(), f"Пресет «{name}» не удалён: {error}"
-        message = f"Пресет «{name}» удалён" if removed else "Пресет не найден"
+            return gr.update(), say("preset_delete_failed", lang, name=name, error=error)
+        message = (
+            say("preset_deleted", lang, name=name) if removed else say("preset_missing", lang)
+        )
         return gr.update(choices=library.list_prompts(config.PROMPT_DIR), value=None), message
 
     reference_upload.change(
-        add_references, reference_upload, [references, reference_gallery, status]
+        add_references, [reference_upload, language], [references, reference_gallery, status]
     )
     reference_clear.click(
-        clear_references, None, [references, reference_gallery, reference_upload, status]
+        clear_references, language, [references, reference_gallery, reference_upload, status]
     )
-    boost_now.click(rewrite, [prompt, references, ratio], [boosted, ratio, status])
+    boost_now.click(rewrite, [prompt, references, ratio, language], [boosted, ratio, status])
 
     run_button.click(
         run,
         [prompt, boosted, boost_enabled, references, quality, ratio, image_number,
-         styles, negative, cfg, seed, kv_cache],
+         styles, negative, cfg, seed, kv_cache, language],
         [result, status],
         # Общая с вкладкой редактирования группа очереди: без неё предел
         # concurrency в единицу действовал бы только внутри этого обработчика,
@@ -387,13 +410,15 @@ def build(studio, localizer: Localizer) -> dict:
         concurrency_id=GPU_CONCURRENCY_ID,
     )
     # Кнопка остановки должна срабатывать, пока генерация занимает очередь.
-    stop_button.click(stop, None, status, queue=False)
+    stop_button.click(stop, language, status, queue=False)
 
     save_button.click(
-        save, [preset_name, prompt, negative, styles, quality, ratio, seed, cfg], [saved, status]
+        save,
+        [preset_name, prompt, negative, styles, quality, ratio, seed, cfg, language],
+        [saved, status],
     )
-    saved.change(load, saved, [prompt, negative, styles, quality, ratio, seed, cfg, status])
-    delete_button.click(delete, saved, [saved, status])
+    saved.change(load, [saved, language], [prompt, negative, styles, quality, ratio, seed, cfg, status])
+    delete_button.click(delete, [saved, language], [saved, status])
 
     return {
         "prompt": prompt,

@@ -29,7 +29,7 @@ from ..imaging import aspect as aspect_module
 from ..imaging import masking, metadata, outpaint
 from ..prompting import boost as boost_module
 from ..storage import gallery
-from .i18n import Localizer, pick
+from .i18n import Localizer, pick, say
 from .state import GPU_CONCURRENCY_ID, describe_failure
 
 LOGGER = logging.getLogger(__name__)
@@ -81,8 +81,15 @@ def collect(value, mode: str) -> tuple[Image.Image | None, Image.Image | None]:
     return background.convert("RGBA"), mask
 
 
-def build(studio, localizer: Localizer) -> dict:
+def build(studio, localizer: Localizer, language=None) -> dict:
+    """Собирает вкладку.
+
+    ``language`` — компонент с текущим языком; см. докстринг
+    ``tab_generate.build``, правило здесь то же.
+    """
     lang = studio.config.lang
+    if language is None:
+        language = gr.State(lang)
 
     with gr.Row():
         with gr.Column(scale=3):
@@ -211,12 +218,12 @@ def build(studio, localizer: Localizer) -> dict:
 
     # --- обработчики ---
 
-    def expand_canvas(value, chosen_sides, ratio_amount):
+    def expand_canvas(value, chosen_sides, ratio_amount, lang):
         source, _ = collect(value, MASK_NONE)
         if source is None:
-            return gr.update(), MASK_MASK, "Сначала загрузите изображение"
+            return gr.update(), MASK_MASK, say("upload_first", lang)
         if not chosen_sides:
-            return gr.update(), MASK_MASK, "Выберите хотя бы одну сторону"
+            return gr.update(), MASK_MASK, say("choose_a_side", lang)
 
         canvas, mask = outpaint.expand(source, outpaint.plan(source.size, chosen_sides, ratio_amount))
 
@@ -229,19 +236,19 @@ def build(studio, localizer: Localizer) -> dict:
         return (
             {"background": canvas, "layers": [layer], "composite": None},
             MASK_MASK,
-            f"Холст расширен до {canvas.size[0]}×{canvas.size[1]}",
+            say("canvas_expanded", lang, width=canvas.size[0], height=canvas.size[1]),
         )
 
-    def describe(value):
+    def describe(value, lang):
         source, _ = collect(value, MASK_NONE)
         if source is None:
-            return gr.update(), "Сначала загрузите изображение"
-        text, message = studio.describe_image(source)
+            return gr.update(), say("upload_first", lang)
+        text, message = studio.describe_image(source, lang)
         return (text or gr.update()), message
 
     def run(
         value, prompt_text, use_boost, mode_value, quality_name,
-        grow_value, feather_value, keep_value, seed_value,
+        grow_value, feather_value, keep_value, seed_value, lang,
         progress=gr.Progress(),
     ):
         # Обработчик целиком под try по тем же причинам, что и на вкладке
@@ -249,24 +256,24 @@ def build(studio, localizer: Localizer) -> dict:
         try:
             return _apply(
                 value, prompt_text, use_boost, mode_value, quality_name,
-                grow_value, feather_value, keep_value, seed_value, progress,
+                grow_value, feather_value, keep_value, seed_value, lang, progress,
             )
         except Exception as error:  # noqa: BLE001
             LOGGER.exception("Обработчик правки не выполнен")
-            return [], describe_failure(error)
+            return [], describe_failure(error, lang)
 
     def _apply(
         value, prompt_text, use_boost, mode_value, quality_name,
-        grow_value, feather_value, keep_value, seed_value, progress,
+        grow_value, feather_value, keep_value, seed_value, lang, progress,
     ):
         source, mask = collect(value, mode_value)
         if source is None:
-            return [], "Сначала загрузите изображение"
+            return [], say("upload_first", lang)
 
         effective, message = prompt_text, ""
         if use_boost:
             effective, _, message = studio.boost_prompt(
-                prompt_text, boost_module.MODE_EDIT, [source]
+                prompt_text, boost_module.MODE_EDIT, lang, [source]
             )
 
         request = GenerationRequest(
@@ -292,13 +299,13 @@ def build(studio, localizer: Localizer) -> dict:
         )
 
         def report(index: int, step: int, total: int) -> None:
-            progress((step, total), desc="правка")
+            progress((step, total), desc=say("progress_edit", lang))
 
-        produced, failure = studio.run_generation(request, progress=report)
+        produced, failure = studio.run_generation(request, lang, progress=report)
         if failure is not None:
             return [], f"{message} {failure}".strip()
         if not produced:
-            return [], f"{message} Правка прервана".strip()
+            return [], f"{message} {say('edit_interrupted', lang)}".strip()
 
         paths = []
         for item in produced:
@@ -306,31 +313,38 @@ def build(studio, localizer: Localizer) -> dict:
             metadata.save_png(item.image, destination, item.parameters)
             paths.append(str(destination))
 
-        return paths, f"{message} Готово. {studio.memory_report()}".strip()
+        edit_done = say("edit_done", lang, memory=studio.memory_report(lang))
+        return paths, f"{message} {edit_done}".strip()
 
-    def take_back(produced):
+    def take_back(produced, lang):
         if not produced:
-            return gr.update(), "Нечего отправлять"
+            return gr.update(), say("nothing_to_send", lang)
         first = produced[0]
         path = first[0] if isinstance(first, (list, tuple)) else first
         image = Image.open(path).convert("RGBA")
-        return {"background": image, "layers": [], "composite": None}, "Результат перенесён в редактор"
+        return (
+            {"background": image, "layers": [], "composite": None},
+            say("sent_to_editor", lang),
+        )
 
-    def stop():
+    def stop(lang):
         if studio.model_loaded:
             studio.generator.interrupt()
-        return "Останавливаю…"
+        return say("stopping", lang)
 
-    expand_button.click(expand_canvas, [editor, sides, amount], [editor, mode, status])
-    describe_button.click(describe, editor, [prompt, status])
+    expand_button.click(
+        expand_canvas, [editor, sides, amount, language], [editor, mode, status]
+    )
+    describe_button.click(describe, [editor, language], [prompt, status])
     run_button.click(
         run,
-        [editor, prompt, boost_enabled, mode, quality, grow, feather, keep_outside, seed],
+        [editor, prompt, boost_enabled, mode, quality, grow, feather, keep_outside, seed,
+         language],
         [result, status],
         # Та же группа очереди, что и у «Сгенерировать»: видеокарта одна.
         concurrency_id=GPU_CONCURRENCY_ID,
     )
-    stop_button.click(stop, None, status, queue=False)
-    send_back.click(take_back, result, [editor, status])
+    stop_button.click(stop, language, status, queue=False)
+    send_back.click(take_back, [result, language], [editor, status])
 
     return {"editor": editor, "result": result, "prompt": prompt, "status": status}

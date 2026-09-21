@@ -61,7 +61,7 @@ def test_restore_reads_parameters_from_the_selected_history_path(monkeypatch, tm
     handlers = _build_handlers(monkeypatch, tmp_path)
     source = metadata.save_png(Image.new("RGB", (8, 8)), tmp_path / "a.png", PARAMS)
 
-    *fields, details = handlers["restore"](str(source), None)
+    *fields, details = handlers["restore"](str(source), None, "ru")
     assert fields[0] == "кот в шляпе"
     assert fields[4] == "MaxQuality"
     assert details == PARAMS
@@ -71,7 +71,7 @@ def test_restore_reads_parameters_from_a_dropped_file(monkeypatch, tmp_path):
     handlers = _build_handlers(monkeypatch, tmp_path)
     source = metadata.save_png(Image.new("RGB", (8, 8)), tmp_path / "b.png", PARAMS)
 
-    *fields, details = handlers["restore"](None, str(source))
+    *fields, details = handlers["restore"](None, str(source), "ru")
     assert fields[0] == "кот в шляпе"
     assert details == PARAMS
 
@@ -81,7 +81,7 @@ def test_restore_reports_missing_parameters_for_a_foreign_png_without_raising(mo
     foreign = tmp_path / "foreign.png"
     Image.new("RGB", (8, 8), "blue").save(foreign)
 
-    *fields, details = handlers["restore"](str(foreign), None)
+    *fields, details = handlers["restore"](str(foreign), None, "ru")
     assert tuple(fields) == ("", "", "", [], "MiddleQuality", -1, 1.0, "1:1")
     assert isinstance(details, dict)
     assert "не найдены" in next(iter(details.values()))
@@ -90,7 +90,7 @@ def test_restore_reports_missing_parameters_for_a_foreign_png_without_raising(mo
 def test_restore_without_any_source_leaves_the_fields_untouched(monkeypatch, tmp_path):
     handlers = _build_handlers(monkeypatch, tmp_path)
 
-    *fields, details = handlers["restore"](None, None)
+    *fields, details = handlers["restore"](None, None, "ru")
     # gr.update() без аргументов сериализуется в {"__type__": "update"} — маркер
     # «не менять это поле», а не конкретное значение.
     assert all(field == {"__type__": "update"} for field in fields)
@@ -128,7 +128,7 @@ def test_open_outputs_creates_the_directory_and_reports_it(monkeypatch, tmp_path
     for block_fn in demo.fns.values():
         handlers.setdefault(block_fn.fn.__name__, block_fn.fn)
 
-    report = handlers["open_outputs"]()
+    report = handlers["open_outputs"]("ru")
     assert target.is_dir()
     assert str(target) in next(iter(report.values()))
 
@@ -141,7 +141,7 @@ def test_on_select_reads_metadata_of_the_chosen_thumbnail(monkeypatch, tmp_path)
     source = metadata.save_png(Image.new("RGB", (8, 8)), tmp_path / "c.png", PARAMS)
 
     event = gr.SelectData(target=None, data={"index": 0, "value": {"image": {"path": str(source)}}})
-    path, details = handlers["on_select"](event)
+    path, details = handlers["on_select"]("ru", event)
     assert path == str(source)
     assert details == PARAMS
 
@@ -152,6 +152,6 @@ def test_on_select_on_a_foreign_png_reports_absence_without_raising(monkeypatch,
     Image.new("RGB", (8, 8), "green").save(foreign)
 
     event = gr.SelectData(target=None, data={"index": 0, "value": {"image": {"path": str(foreign)}}})
-    path, details = handlers["on_select"](event)
+    path, details = handlers["on_select"]("ru", event)
     assert path == str(foreign)
     assert isinstance(details, dict) and details

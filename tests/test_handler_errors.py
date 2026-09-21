@@ -53,22 +53,22 @@ def test_loading_a_preset_deleted_outside_the_application_reports_instead_of_rai
 ):
     _studio, handlers = _handlers(monkeypatch, tmp_path, tab_generate)
 
-    handlers["save"]("исчезающий", "промт", "", [], "LowQuality", "1:1", -1, 1.0)
+    handlers["save"]("исчезающий", "промт", "", [], "LowQuality", "1:1", -1, 1.0, "ru")
     for path in tmp_path.glob("*.json"):
         path.unlink()
 
-    result = handlers["load"]("исчезающий")
+    result = handlers["load"]("исчезающий", "ru")
     assert "не загружен" in result[-1]
 
 
 def test_loading_a_corrupt_preset_reports_instead_of_raising(monkeypatch, tmp_path):
     _studio, handlers = _handlers(monkeypatch, tmp_path, tab_generate)
 
-    handlers["save"]("битый", "промт", "", [], "LowQuality", "1:1", -1, 1.0)
+    handlers["save"]("битый", "промт", "", [], "LowQuality", "1:1", -1, 1.0, "ru")
     saved = next(iter(tmp_path.glob("*.json")))
     saved.write_text("{ это не JSON", encoding="utf-8")
 
-    result = handlers["load"]("битый")
+    result = handlers["load"]("битый", "ru")
     assert "не загружен" in result[-1]
 
 
@@ -76,24 +76,24 @@ def test_a_preset_whose_json_is_not_a_dictionary_is_reported_too(monkeypatch, tm
     # `_load_payload` считает повреждённым и валидный JSON, который не словарь.
     _studio, handlers = _handlers(monkeypatch, tmp_path, tab_generate)
 
-    handlers["save"]("список", "промт", "", [], "LowQuality", "1:1", -1, 1.0)
+    handlers["save"]("список", "промт", "", [], "LowQuality", "1:1", -1, 1.0, "ru")
     saved = next(iter(tmp_path.glob("*.json")))
     saved.write_text(json.dumps([1, 2, 3]), encoding="utf-8")
 
-    result = handlers["load"]("список")
+    result = handlers["load"]("список", "ru")
     assert "не загружен" in result[-1]
 
 
 def test_delete_survives_a_filesystem_refusal(monkeypatch, tmp_path):
     _studio, handlers = _handlers(monkeypatch, tmp_path, tab_generate)
-    handlers["save"]("занятый", "промт", "", [], "LowQuality", "1:1", -1, 1.0)
+    handlers["save"]("занятый", "промт", "", [], "LowQuality", "1:1", -1, 1.0, "ru")
 
     def refuse(*_args, **_kwargs):
         raise PermissionError("файл занят другой программой")
 
     monkeypatch.setattr(library, "delete_prompt", refuse)
 
-    _update, message = handlers["delete"]("занятый")
+    _update, message = handlers["delete"]("занятый", "ru")
     assert "не удалён" in message
 
 
@@ -108,25 +108,25 @@ def test_out_of_memory_is_named_as_such(monkeypatch):
     import torch
 
     error = torch.OutOfMemoryError("CUDA out of memory. Tried to allocate 2.00 GiB")
-    text = describe_failure(error)
+    text = describe_failure(error, "ru")
     assert "видеопамят" in text.lower()
     assert "пресет" in text.lower()
 
 
 def test_a_missing_file_is_named_as_such():
-    text = describe_failure(FileNotFoundError("model_index.json"))
+    text = describe_failure(FileNotFoundError("model_index.json"), "ru")
     assert "не найден" in text.lower()
 
 
 def test_an_unexpected_error_still_names_its_type():
-    text = describe_failure(KeyError("transformer"))
+    text = describe_failure(KeyError("transformer"), "ru")
     assert "KeyError" in text
 
 
 def test_a_multiline_message_is_squeezed_into_one_line():
     # Сообщение torch о нехватке памяти — несколько строк со сводкой
     # аллокатора; поле состояния однострочное, полный текст идёт в журнал.
-    text = describe_failure(RuntimeError("первая строка\nвторая строка\n" + "x" * 500))
+    text = describe_failure(RuntimeError("первая строка\nвторая строка\n" + "x" * 500), "ru")
     assert "\n" not in text
     assert len(text) < 400
 
@@ -164,7 +164,7 @@ def test_run_generation_turns_a_failure_into_a_message_and_restores_residency():
     residency = _RecordingResidency()
     studio._residency = residency
 
-    produced, failure = studio.run_generation(_request())
+    produced, failure = studio.run_generation(_request(), "ru")
 
     assert produced == []
     assert failure is not None and "модель не загрузилась" in failure
@@ -180,7 +180,7 @@ def test_run_generation_reports_success_without_touching_residency():
     residency = _RecordingResidency()
     studio._residency = residency
 
-    produced, failure = studio.run_generation(_request())
+    produced, failure = studio.run_generation(_request(), "ru")
 
     assert produced == ["картинка"]
     assert failure is None
@@ -206,7 +206,7 @@ def test_generate_handler_reports_a_model_failure_in_the_status_line(monkeypatch
     studio._generator = _ExplodingGenerator(FileNotFoundError("model_index.json"))
 
     images, status = handlers["run"](
-        "кот", "", False, [], presets.DEFAULT, "1:1", 1, [], "", 1.0, -1, True,
+        "кот", "", False, [], presets.DEFAULT, "1:1", 1, [], "", 1.0, -1, True, "ru",
         progress=lambda *args, **kwargs: None,
     )
 
@@ -222,7 +222,7 @@ def test_edit_handler_reports_a_model_failure_in_the_status_line(monkeypatch, tm
 
     value = {"background": Image.new("RGBA", (64, 64), "red"), "layers": [], "composite": None}
     images, status = handlers["run"](
-        value, "убрать фон", False, "none", presets.DEFAULT, 8, 12, True, -1,
+        value, "убрать фон", False, "none", presets.DEFAULT, 8, 12, True, -1, "ru",
         progress=lambda *args, **kwargs: None,
     )
 
@@ -236,7 +236,7 @@ def test_generate_handler_survives_a_broken_argument(monkeypatch, tmp_path):
     _studio, handlers = _handlers(monkeypatch, tmp_path, tab_generate)
 
     images, status = handlers["run"](
-        "кот", "", False, [], presets.DEFAULT, "1:1", 1, [], "", 1.0, "не число", True,
+        "кот", "", False, [], presets.DEFAULT, "1:1", 1, [], "", 1.0, "не число", True, "ru",
         progress=lambda *args, **kwargs: None,
     )
 

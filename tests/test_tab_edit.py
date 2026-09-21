@@ -127,7 +127,7 @@ def test_run_reconstructs_mask_mode_from_what_collect_actually_returned(
 
     paths, _message = handlers["run"](
         _editor_value(painted=painted), "prompt", False, mode_value,
-        config.AppConfig().preset, 8, 12, True, -1,
+        config.AppConfig().preset, 8, 12, True, -1, "ru",
     )
 
     assert paths == []  # фиктивный генератор всегда возвращает пустой список
@@ -145,7 +145,7 @@ def test_run_reconstructs_mask_mode_from_what_collect_actually_returned(
 def test_expand_canvas_enlarges_the_background_and_marks_only_the_new_area():
     handlers, _studio = _build_handlers()
 
-    new_value, mode, message = handlers["expand_canvas"](_editor_value((64, 64)), ["right"], 0.5)
+    new_value, mode, message = handlers["expand_canvas"](_editor_value((64, 64)), ["right"], 0.5, "ru")
 
     background = new_value["background"]
     assert background.size[0] > 64
@@ -164,7 +164,7 @@ def test_expand_canvas_enlarges_the_background_and_marks_only_the_new_area():
 def test_expand_canvas_without_source_asks_to_upload_first():
     handlers, _studio = _build_handlers()
 
-    update, mode, message = handlers["expand_canvas"](None, ["right"], 0.5)
+    update, mode, message = handlers["expand_canvas"](None, ["right"], 0.5, "ru")
     assert mode == gen.MASK_MASK
     assert message  # сообщение непустое — просит сначала загрузить изображение
 
@@ -172,6 +172,6 @@ def test_expand_canvas_without_source_asks_to_upload_first():
 def test_expand_canvas_without_sides_asks_to_choose_one():
     handlers, _studio = _build_handlers()
 
-    update, mode, message = handlers["expand_canvas"](_editor_value(), [], 0.5)
+    update, mode, message = handlers["expand_canvas"](_editor_value(), [], 0.5, "ru")
     assert mode == gen.MASK_MASK
     assert message
