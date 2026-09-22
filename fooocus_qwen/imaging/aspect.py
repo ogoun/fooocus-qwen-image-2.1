@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+import math
+
 MULTIPLE = 32
 REFERENCE_RESOLUTION = 2048
 
@@ -56,3 +58,32 @@ def label(ratio: str, output_resolution: int) -> str:
         return FOLLOW_REFERENCE
     width, height = dimensions(ratio, output_resolution)
     return f"{ratio} — {width}×{height}"
+
+def frame_for(size: tuple[int, int], output_resolution: int) -> tuple[int, int]:
+    """Кадр площадью ``output_resolution²`` с соотношением сторон ``size``.
+
+    Повторяет ``calculate_dimensions`` из пайплайна (строки 149-156): тот же
+    корень из площади, то же округление к ближайшей кратности 32. Нужна там,
+    где размер кадра приходится вычислять самим, — а именно когда детальность
+    референсов задана отдельно от разрешения пресета. В этом случае
+    ``output_resolution`` уходит на референсы, и оставить ``height``/``width``
+    пустыми нельзя: пайплайн вывел бы кадр из той же уменьшенной величины и
+    кадр съёжился бы вместе с референсами.
+
+    Совпадение с пайплайном проверяется тестом: разойдись формулы, кадр в
+    режиме «от референса» поехал бы ровно на величину расхождения.
+    """
+    width, height = size
+    ratio = width / height
+    frame_width = math.sqrt(output_resolution * output_resolution * ratio)
+    return snap_nearest(frame_width), snap_nearest(frame_width / ratio)
+
+
+def snap_nearest(value: float) -> int:
+    """Округление к ближайшей кратности 32 — ровно как в пайплайне.
+
+    Отличается от ``snap`` только тем, что не поднимает результат до одной
+    кратности: пайплайн этого не делает, а расхождение здесь и есть то, что
+    ``frame_for`` обязана исключить.
+    """
+    return round(value / MULTIPLE) * MULTIPLE

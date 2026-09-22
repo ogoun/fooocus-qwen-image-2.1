@@ -463,3 +463,93 @@ def test_region_mode_without_compositing_does_not_blend_inside_the_region():
     # Точка внутри прямоугольника вырезки, но вне маски.
     assert tuple(with_blend[28, 28]) == (255, 0, 0, 255), "со склейкой вне маски кадр обязан уцелеть"
     assert tuple(without_blend[28, 28]) == generated_colour, "без склейки патч ложится встык"
+
+
+# --- детальность референсов отдельно от разрешения кадра -------------------
+
+
+def test_a_single_reference_keeps_the_full_scale():
+    # Один референс измерен и практичен (21 ГиБ, 124 с): урезать нечего.
+    scale = gen.resolve_reference_scale(request(references=(image(),)))
+    assert scale == presets.get("LowQuality").output_resolution
+
+
+def test_several_references_are_scaled_down_on_their_own():
+    """Автоматика вступает там, где значение по умолчанию неработоспособно.
+
+    Пять референсов на разрешении пресета давали тринадцать минут на кадр
+    против тридцати восьми секунд при масштабе 512 (docs/BENCHMARK.md).
+    Молчаливое согласие на такой режим — худший выбор, чем решение,
+    о котором сказано пользователю.
+    """
+    middle = presets.get("MiddleQuality")
+    two = gen.resolve_reference_scale(request(preset=middle, references=tuple(image() for _ in range(2))))
+    five = gen.resolve_reference_scale(request(preset=middle, references=tuple(image() for _ in range(5))))
+    assert two == 768
+    assert five == 512
+
+
+def test_an_explicit_scale_wins_over_the_automatic_one():
+    five = tuple(image() for _ in range(5))
+    chosen = gen.resolve_reference_scale(
+        request(preset=presets.get("MiddleQuality"), references=five, reference_scale=1024)
+    )
+    assert chosen == 1024
+
+
+def test_the_scale_never_exceeds_the_preset():
+    # Условные изображения крупнее кадра не дают ничего, кроме расхода памяти.
+    low = presets.get("LowQuality")  # 1024
+    assert gen.resolve_reference_scale(request(preset=low, reference_scale=4096)) == 1024
+
+
+def test_editing_without_references_stays_at_full_scale():
+    """Масштаб общий для всех условных изображений, включая исходник.
+
+    Поэтому автоматика смотрит только на референсы: у правки без них
+    детальность исходника и решает качество, урезать её нельзя.
+    """
+    middle = presets.get("MiddleQuality")
+    edited = request(preset=middle, source=image((512, 512)), mask=image((512, 512)),
+                     mask_mode=gen.MASK_MASK)
+    assert gen.resolve_reference_scale(edited) == middle.output_resolution
+
+
+def test_the_frame_does_not_shrink_together_with_the_references():
+    """Главная ловушка рычага, и ради неё он весь и затевался.
+
+    При пустых height/width пайплайн выводит кадр из ``output_resolution``
+    (строка 623). Отдай мы туда уменьшенный масштаб, не задав размеры явно,
+    кадр съёжился бы вместе с референсами — рычаг сработал бы наоборот.
+    """
+    middle = presets.get("MiddleQuality")  # 1536
+    five = tuple(image((768, 768)) for _ in range(5))
+    reduced = request(preset=middle, aspect=aspect.FOLLOW_REFERENCE, references=five,
+                      source=image((1024, 1024)))
+
+    assert gen.resolve_reference_scale(reduced) == 512  # масштаб урезан
+    width, height = gen.resolve_size(reduced)
+    assert (width, height) == (1536, 1536), "кадр обязан остаться на разрешении пресета"
+
+
+def test_the_pipeline_still_derives_the_frame_when_nothing_was_reduced():
+    # Без урезания прежнее поведение сохраняется: размеры выводит пайплайн.
+    edited = request(aspect=aspect.FOLLOW_REFERENCE, source=image((800, 600)))
+    assert gen.resolve_size(edited) == (None, None)
+
+
+def test_the_frame_follows_the_source_and_not_the_last_reference():
+    """Опора — исходник правки, а не последнее условное изображение.
+
+    Пайплайн взял бы соотношение сторон ``image[-1]``, то есть последнего
+    референса: референсы стоят в списке после источника. При правке это не
+    то, что имел в виду пользователь, выбравший «от референса» у картинки,
+    которую он правит.
+    """
+    middle = presets.get("MiddleQuality")
+    wide_references = tuple(image((1024, 256)) for _ in range(5))
+    edited = request(preset=middle, aspect=aspect.FOLLOW_REFERENCE,
+                     source=image((600, 800)), references=wide_references)
+
+    width, height = gen.resolve_size(edited)
+    assert height > width, f"кадр пошёл за референсом, а не за источником: {width}x{height}"

@@ -14,7 +14,11 @@ import gradio as gr
 
 from .. import config
 from ..engine import presets
-from ..engine.generator import GenerationRequest, condition_slots
+from ..engine.generator import (
+    GenerationRequest,
+    condition_slots,
+    resolve_reference_scale,
+)
 from ..imaging import aspect, metadata
 from ..prompting import boost as boost_module
 from ..prompting import library
@@ -227,6 +231,31 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     label=("Сид", "Seed"),
                     info=("−1 — выбрать случайно", "−1 picks a random one"),
                 )
+                # Выпадающий список, а не ползунок: осмысленных значений
+                # немного, они привязаны к измеренным режимам
+                # (docs/BENCHMARK.md), и промежуточные числа обещали бы
+                # плавность, которой здесь нет.
+                reference_scale = localizer.bind(
+                    gr.Dropdown(
+                        choices=[(pick("reference_scale_auto", lang), 0),
+                                 ("512", 512), ("768", 768), ("1024", 1024),
+                                 ("1536", 1536), ("2048", 2048)],
+                        value=0,
+                        label=pick("reference_scale", lang),
+                        info=pick("reference_scale_info", lang),
+                    ),
+                    label=("Детальность референсов", "Reference detail"),
+                    info=(
+                        "Разрешение, к которому приводятся референсы и исходник правки. "
+                        "Размер кадра от этого не меняется. «Авто» урезает масштаб при "
+                        "двух и более референсах: на полном пять референсов считаются "
+                        "тринадцать минут, на 512 — сорок секунд.",
+                        "The resolution condition images are scaled to. It does not change "
+                        "the frame size. “Auto” reduces the scale from two "
+                        "references up: at full scale five references take thirteen minutes "
+                        "per frame, at 512 — forty seconds.",
+                    ),
+                )
                 kv_cache = localizer.bind(
                     gr.Checkbox(
                         value=True, label=pick("kv_cache", lang), info=pick("kv_cache_info", lang)
@@ -291,7 +320,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     def run(
         prompt_text, boosted_text, use_boost, current_references, quality_name, ratio_value,
-        count, style_names, negative_text, cfg_value, seed_value, kv_value, lang,
+        count, style_names, negative_text, cfg_value, seed_value, kv_value, scale_value, lang,
         progress=gr.Progress(),
     ):
         # Обработчик целиком под try: отсутствующие веса, испорченный
@@ -320,7 +349,15 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 image_number=int(count),
                 true_cfg_scale=float(cfg_value),
                 use_kv_cache=bool(kv_value),
+                reference_scale=int(scale_value or 0),
             )
+
+            # Автоматический выбор масштаба обязан быть виден: пользователь,
+            # подавший пять референсов, получит их в 512, и молчать об этом —
+            # значит оставить необъяснимую потерю детальности.
+            chosen = resolve_reference_scale(request)
+            if not scale_value and chosen != request.preset.output_resolution:
+                message = f"{message} {say('reference_scale_chosen', lang, scale=chosen)}".strip()
 
             def report(index: int, step: int, total: int) -> None:
                 progress(
@@ -426,7 +463,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     run_button.click(
         run,
         [prompt, boosted, boost_enabled, references, quality, ratio, image_number,
-         styles, negative, cfg, seed, kv_cache, language],
+         styles, negative, cfg, seed, kv_cache, reference_scale, language],
         [result, status],
         # Общая с вкладкой редактирования группа очереди: без неё предел
         # concurrency в единицу действовал бы только внутри этого обработчика,

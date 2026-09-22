@@ -56,3 +56,31 @@ def test_unknown_ratio_is_an_error():
 
 def test_label_shows_actual_pixels():
     assert aspect.label("1:1", 2048) == "1:1 — 2048×2048"
+
+
+def test_frame_for_matches_the_pipeline_formula():
+    """Наша формула обязана совпадать с пайплайновой до пикселя.
+
+    ``frame_for`` вычисляет то, что иначе вычислил бы сам пайплайн
+    (``calculate_dimensions``, строки 149-156). Расхождение проявилось бы не
+    ошибкой, а тихим сдвигом размера кадра в режиме «от референса» ровно на
+    величину расхождения — поэтому формула здесь воспроизводится независимо
+    и сверяется.
+    """
+    import math
+
+    def like_the_pipeline(size, resolution):
+        ratio = size[0] / size[1]
+        width = math.sqrt(resolution * resolution * ratio)
+        return round(width / 32) * 32, round((width / ratio) / 32) * 32
+
+    for size in ((1024, 1024), (1408, 1024), (600, 800), (2752, 1536), (97, 241)):
+        for resolution in (512, 768, 1024, 1536, 2048):
+            assert aspect.frame_for(size, resolution) == like_the_pipeline(size, resolution), (
+                f"расхождение на {size} при {resolution}"
+            )
+
+
+def test_frame_for_preserves_the_aspect_ratio():
+    width, height = aspect.frame_for((1600, 900), 1024)
+    assert abs(width / height - 1600 / 900) < 0.02

@@ -74,6 +74,17 @@ T: dict[str, tuple[str, str]] = {
         "The model is meant to be sampled without guidance. At 1.0 the negative prompt "
         "and the negative half of every style are not sent to the model at all.",
     ),
+    "reference_scale": ("Детальность референсов", "Reference detail"),
+    "reference_scale_info": (
+        "Разрешение, к которому приводятся референсы и исходник правки. Размер "
+        "кадра от этого не меняется. «Авто» урезает масштаб при двух и более "
+        "референсах: на полном пять референсов считаются тринадцать минут, на 512 — "
+        "сорок секунд.",
+        "The resolution condition images are scaled to. It does not change the frame "
+        "size. “Auto” reduces the scale from two references up: at full "
+        "scale five references take thirteen minutes per frame, at 512 — forty seconds.",
+    ),
+    "reference_scale_auto": ("Авто", "Auto"),
     "kv_cache": ("Кэш ключей и значений", "KV cache"),
     "kv_cache_info": (
         "Ускоряет генерацию. Переключение меняет результат при том же сиде.",
@@ -140,6 +151,10 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "caption_untagged": ("без тега — одно изображение", "no tag — a single image"),
     "references_counted": ("Референсов: {count} из {total}", "References: {count} of {total}"),
     "references_cleared": ("Референсы очищены", "References cleared"),
+    "reference_scale_chosen": (
+        "детальность референсов {scale} (выбрано автоматически)",
+        "reference detail {scale} (chosen automatically)",
+    ),
     "generation_interrupted": ("Генерация прервана", "Generation interrupted"),
     "generation_done": ("Готово. Сиды: {seeds}. {memory}", "Done. Seeds: {seeds}. {memory}"),
     "progress_image": ("изображение {index}/{total}", "image {index}/{total}"),

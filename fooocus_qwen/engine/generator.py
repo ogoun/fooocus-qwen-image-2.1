@@ -59,6 +59,7 @@ class GenerationRequest:
     references: tuple[Image.Image, ...] = ()
 
     aspect: str = "1:1"
+    reference_scale: int = 0  # 0 — выбрать по числу референсов, см. resolve_reference_scale
     seed: int = -1
     image_number: int = 1
     true_cfg_scale: float = 1.0
@@ -126,6 +127,45 @@ def build_conditions(request: GenerationRequest) -> list[ConditionSlot]:
     return condition_slots(request.source, request.mask, request.mask_mode, request.references)
 
 
+# Пороги выбраны по измерениям (docs/BENCHMARK.md, раздел про рычаг): при
+# кадре 1536×1536 пять референсов масштаба 512 стоят 18.5 ГиБ и 4.8 с/шаг,
+# масштаба 768 — 22.5 ГиБ и 6.7 с/шаг у самой границы, а масштаба 1024 уже
+# уводят карту в вытеснение с тридцатью шестью секундами на шаг.
+AUTO_SCALE: tuple[tuple[int, int], ...] = (
+    (4, 512),   # четыре и больше референсов
+    (2, 768),   # два-три
+)
+
+
+def resolve_reference_scale(request: GenerationRequest) -> int:
+    """Разрешение, к которому пайплайн приведёт условные изображения.
+
+    Ноль означает «выбрать самостоятельно». Выбор нужен потому, что значение
+    по умолчанию — разрешение пресета — при нескольких референсах не просто
+    медленно, а неработоспособно: пять референсов на MiddleQuality давали
+    тринадцать минут на кадр против тридцати восьми секунд при масштабе 512.
+    Молчаливое согласие на такой режим было бы худшей услугой, чем
+    самостоятельное решение, о котором сказано в строке состояния.
+
+    Масштаб поднимать выше пресета незачем: условные изображения крупнее
+    кадра не дают ничего, кроме расхода памяти.
+
+    Осторожно: масштаб общий для **всех** условных изображений, включая
+    исходник при правке. Поэтому автоматика смотрит только на число
+    референсов: правка без референсов остаётся на полном разрешении, где
+    детальность исходника и решает качество.
+    """
+    limit = request.preset.output_resolution
+    if request.reference_scale:
+        return min(request.reference_scale, limit)
+
+    count = len(request.references)
+    for threshold, scale in AUTO_SCALE:
+        if count >= threshold:
+            return min(scale, limit)
+    return limit
+
+
 def resolve_size(request: GenerationRequest) -> tuple[int | None, int | None]:
     """Размеры кадра или пара ``None``, если их выводит пайплайн.
 
@@ -133,10 +173,28 @@ def resolve_size(request: GenerationRequest) -> tuple[int | None, int | None]:
     ``aspect.FOLLOW_REFERENCE``, а не значением "1:1": иначе осознанный выбор
     квадрата при правке был бы неотличим от «пользователь ничего не выбирал»
     и молча игнорировался бы.
+
+    Пустую пару можно вернуть только тогда, когда масштаб референсов равен
+    разрешению пресета. Иначе пайплайн выведет кадр из **уменьшенной**
+    величины (строка 623: ``height = height or calculated_height``), и кадр
+    съёжится вместе с референсами — то есть рычаг сработает наоборот. В этом
+    случае размеры вычисляются здесь, по соотношению сторон опорного
+    изображения.
     """
-    if request.source is not None and request.aspect == aspect.FOLLOW_REFERENCE:
+    if request.aspect != aspect.FOLLOW_REFERENCE:
+        return aspect.dimensions(request.aspect, request.preset.output_resolution)
+
+    if resolve_reference_scale(request) == request.preset.output_resolution:
         return None, None
-    return aspect.dimensions(request.aspect, request.preset.output_resolution)
+
+    # Опора — исходник правки, а при его отсутствии последнее условное
+    # изображение: именно его соотношение сторон взял бы сам пайплайн.
+    anchor = request.source
+    if anchor is None and request.references:
+        anchor = request.references[-1]
+    if anchor is None:
+        return None, None
+    return aspect.frame_for(anchor.size, request.preset.output_resolution)
 
 
 class Generator:
@@ -262,7 +320,7 @@ class Generator:
                 height=height,
                 width=width,
                 num_inference_steps=prepared.preset.num_inference_steps,
-                output_resolution=prepared.preset.output_resolution,
+                output_resolution=resolve_reference_scale(prepared),
                 use_kv_cache=prepared.use_kv_cache,
                 generator=generator,
                 callback_on_step_end=step_callback,
@@ -392,6 +450,11 @@ class Generator:
             "width": width,
             "height": height,
             "output_resolution": prepared.preset.output_resolution,
+            # Масштаб условных изображений пишется отдельно от разрешения
+            # пресета: с этого раунда они расходятся, и без записи кадр с
+            # пятью референсами было бы не воспроизвести — при масштабе по
+            # умолчанию он считался бы тринадцать минут вместо сорока секунд.
+            "reference_scale": resolve_reference_scale(prepared),
             "true_cfg_scale": prepared.true_cfg_scale,
             # Переключение этого флага меняет результат при том же сиде,
             # поэтому без него параметры невоспроизводимы.
