@@ -15,7 +15,13 @@ from .state import Studio
 LOGGER = logging.getLogger(__name__)
 
 
-def build(cfg: config.AppConfig) -> gr.Blocks:
+def build(cfg: config.AppConfig, return_studio: bool = False):
+    """Собирает интерфейс. С ``return_studio`` отдаёт ещё и состояние.
+
+    Состояние нужно запуску, чтобы начать фоновую загрузку модели, и
+    только ему: тесты собирают интерфейс без него и ничего лишнего не
+    получают.
+    """
     studio = Studio(cfg)
     localizer = Localizer(cfg.lang)
 
@@ -90,11 +96,15 @@ def build(cfg: config.AppConfig) -> gr.Blocks:
         )
         language.change(localizer.updates, language, localizer.components, queue=False)
 
-    return demo
+    return (demo, studio) if return_studio else demo
 
 
 def launch(cfg: config.AppConfig) -> None:
-    demo = build(cfg)
+    demo, studio = build(cfg, return_studio=True)
+    if cfg.preload:
+        # Пока пользователь открывает браузер и набирает промт, модель
+        # успевает загрузиться: эти секунды больше не его.
+        studio.preload_in_background()
     demo.queue(default_concurrency_limit=1)
     # В Gradio 6 параметр css переехал из конструктора Blocks в launch() — передача
     # его в конструктор всё ещё работает, но с предупреждением об устаревании.

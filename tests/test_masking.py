@@ -7,7 +7,7 @@
 
 import numpy as np
 import pytest
-from PIL import Image
+from PIL import Image, ImageDraw
 
 from fooocus_qwen.imaging import masking
 
@@ -284,3 +284,91 @@ def test_clipped_share_is_zero_when_the_mask_covers_everything():
     original = Image.new("RGB", size, (0, 0, 0))
     produced = Image.new("RGB", size, (255, 255, 255))
     assert masking.clipped_share(original, produced, Image.new("L", size, 255)) == 0.0
+
+
+# --- оптимизации обязаны быть тождественны прежним вычислениям ---
+
+
+def _blend_reference(original, generated, mask):
+    """Прежняя реализация склейки: считает весь кадр целиком.
+
+    Оставлена здесь эталоном. Новая считает только внутри рамки маски —
+    это тождество, а не приближение (вне маски результат равен исходнику
+    по определению), и тождество должно быть доказано, а не заявлено.
+    """
+    base = original.convert("RGBA")
+    patch = generated.convert("RGBA")
+    if patch.size != base.size:
+        patch = patch.resize(base.size, Image.LANCZOS)
+    soft = mask.convert("L")
+    if soft.size != base.size:
+        soft = soft.resize(base.size, Image.LANCZOS)
+
+    base_array = np.asarray(base).astype(np.float32)
+    patch_array = np.asarray(patch).astype(np.float32)
+    weight = (np.asarray(soft).astype(np.float32) / 255.0)[..., None]
+    mixed = np.rint(base_array * (1.0 - weight) + patch_array * weight)
+    return Image.fromarray(
+        np.where(weight == 0.0, base_array, mixed).astype(np.uint8), mode="RGBA"
+    )
+
+
+def _clipped_reference(original, generated, mask):
+    """Прежняя реализация доли обрезанного: float32 вместо целых чисел."""
+    base = np.asarray(original.convert("RGB")).astype(np.float32)
+    patch = generated.convert("RGB")
+    if patch.size != original.size:
+        patch = patch.resize(original.size, Image.LANCZOS)
+    soft = mask.convert("L")
+    if soft.size != original.size:
+        soft = soft.resize(original.size, Image.LANCZOS)
+    outside = np.asarray(soft) == 0
+    if not outside.any():
+        return 0.0
+    delta = np.abs(base - np.asarray(patch).astype(np.float32)).mean(axis=2)
+    return float((delta[outside] > 16).mean() * 100)
+
+
+def _random_case(seed, side=96):
+    rng = np.random.default_rng(seed)
+    original = Image.fromarray(rng.integers(0, 256, (side, side, 3), dtype=np.uint8), "RGB")
+    generated = Image.fromarray(rng.integers(0, 256, (side, side, 3), dtype=np.uint8), "RGB")
+    mask = Image.new("L", (side, side), 0)
+    kind = seed % 4
+    if kind == 1:  # пятно
+        ImageDraw.Draw(mask).ellipse(
+            (rng.integers(0, side // 2), rng.integers(0, side // 2),
+             rng.integers(side // 2, side), rng.integers(side // 2, side)), fill=255)
+        mask = masking.refine(mask, grow=3, feather=5)
+    elif kind == 2:  # маска целиком
+        mask = Image.new("L", (side, side), 255)
+    elif kind == 3:  # рамка, как у дорисовки полей
+        array = np.full((side, side), 255, dtype=np.uint8)
+        array[side // 4: side * 3 // 4, side // 4: side * 3 // 4] = 0
+        mask = Image.fromarray(array, "L")
+    # kind == 0: маска пуста
+    return original, generated, mask
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_blend_is_bit_identical_to_the_previous_implementation(seed):
+    original, generated, mask = _random_case(seed)
+    fast = np.asarray(masking.blend(original, generated, mask))
+    slow = np.asarray(_blend_reference(original, generated, mask))
+    assert np.array_equal(fast, slow), f"расхождение на сиде {seed}"
+
+
+@pytest.mark.parametrize("seed", range(12))
+def test_clipped_share_matches_the_previous_implementation(seed):
+    original, generated, mask = _random_case(seed)
+    fast = masking.clipped_share(original, generated, mask)
+    slow = _clipped_reference(original, generated, mask)
+    assert abs(fast - slow) < 1e-9, f"расхождение на сиде {seed}: {fast} против {slow}"
+
+
+def test_blend_of_an_empty_mask_returns_the_original_untouched():
+    # Вырожденный случай новой ветки: рамки нет, считать нечего.
+    original = Image.new("RGB", (32, 32), (10, 20, 30))
+    generated = Image.new("RGB", (32, 32), (200, 200, 200))
+    blended = masking.blend(original, generated, Image.new("L", (32, 32), 0))
+    assert np.array_equal(np.asarray(blended), np.asarray(original.convert("RGBA")))

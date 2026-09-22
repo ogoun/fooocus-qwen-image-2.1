@@ -89,6 +89,8 @@ def decode(pipe, latents, height: int, width: int) -> Image.Image:
 def main() -> int:
     parser = argparse.ArgumentParser(description="Размер плитки VAE против полос")
     parser.add_argument("--steps", type=int, default=STEPS)
+    parser.add_argument("--size", type=int, nargs=2, default=None,
+                        help="кадр, по умолчанию 1280 1888")
     parser.add_argument("--evict", action="store_true",
                         help="выселить трансформер на хост перед декодированием")
     args = parser.parse_args()
@@ -96,15 +98,16 @@ def main() -> int:
     logging_setup.setup_logging(False)
     OUT.mkdir(parents=True, exist_ok=True)
 
+    width, height = args.size if args.size else (WIDTH, HEIGHT)
     pipe, residency, _cache = loader.load(config.MODEL_DIR)
 
-    print("считаю латент один раз…", flush=True)
+    print(f"кадр {width}x{height}; считаю латент один раз…", flush=True)
     latents = pipe(
         prompt=PROMPT,
-        height=HEIGHT,
-        width=WIDTH,
+        height=height,
+        width=width,
         num_inference_steps=args.steps,
-        output_resolution=RESOLUTION,
+        output_resolution=max(width, height),
         output_type="latent",
         generator=torch.Generator(device=pipe._execution_device).manual_seed(SEED),
     ).images
@@ -142,7 +145,7 @@ def main() -> int:
         torch.cuda.reset_peak_memory_stats()
         started = time.perf_counter()
         try:
-            image = decode(pipe, latents, HEIGHT, WIDTH)
+            image = decode(pipe, latents, height, width)
         except torch.cuda.OutOfMemoryError:
             torch.cuda.empty_cache()
             rows[key] = {"ok": False, "reason": "нехватка видеопамяти"}

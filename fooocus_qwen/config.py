@@ -39,6 +39,7 @@ class AppConfig:
     port: int = DEFAULT_PORT
     lang: str = "ru"
     pin_memory: bool = True
+    preload: bool = True
     preset: str = "MiddleQuality"
     verbose: bool = False
     model_dir: Path = MODEL_DIR
@@ -66,6 +67,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="не закреплять копии весов в оперативной памяти",
     )
     parser.set_defaults(pin_memory=True)
+    parser.add_argument(
+        "--no-preload",
+        dest="preload",
+        action="store_false",
+        help="не загружать модель в фоне при старте (первая генерация будет дольше)",
+    )
+    parser.set_defaults(preload=True)
     parser.add_argument("--prompt", help="сгенерировать одно изображение без интерфейса и выйти")
     parser.add_argument("--out", help="куда сохранить результат режима --prompt")
     parser.add_argument("--selftest", action="store_true", help="проверить готовность окружения и выйти")
@@ -79,6 +87,7 @@ def parse_args(argv: list[str] | None = None) -> AppConfig:
         port=args.port,
         lang=args.lang,
         pin_memory=args.pin_memory,
+        preload=args.preload,
         preset=args.preset,
         verbose=args.verbose,
     )

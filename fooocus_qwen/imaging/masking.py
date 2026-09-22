@@ -113,13 +113,30 @@ def blend(original: Image.Image, generated: Image.Image, mask: Image.Image) -> I
     if soft.size != base.size:
         soft = soft.resize(base.size, Image.LANCZOS)
 
-    base_array = np.asarray(base).astype(np.float32)
-    patch_array = np.asarray(patch).astype(np.float32)
-    weight = (np.asarray(soft).astype(np.float32) / 255.0)[..., None]
+    soft_array = np.asarray(soft)
+    result = np.array(base, dtype=np.uint8)  # копия: вне маски ответ уже готов
 
-    mixed = np.rint(base_array * (1.0 - weight) + patch_array * weight)
-    untouched = weight == 0.0
-    result = np.where(untouched, base_array, mixed).astype(np.uint8)
+    # Считаем только внутри рамки ненулевой маски. Это не приближение, а
+    # тождество: там, где маска строго нулевая, результат равен исходнику по
+    # определению самой склейки, и прежний код получал те же числа, честно
+    # перемножив весь кадр и затем выбросив результат через np.where.
+    #
+    # Разница видна на больших кадрах: правка пятна в четверть кадра на
+    # фотографии 4096x4096 занимала 0.86 с из 2.9 с всей работы вне
+    # видеокарты (docs/research/2026-09-22-profil-i-optimizacii.md).
+    rows = np.flatnonzero(soft_array.any(axis=1))
+    if rows.size == 0:
+        return Image.fromarray(result, mode="RGBA")
+    columns = np.flatnonzero(soft_array.any(axis=0))
+    top, bottom = int(rows[0]), int(rows[-1]) + 1
+    left, right = int(columns[0]), int(columns[-1]) + 1
+
+    base_part = np.asarray(base)[top:bottom, left:right].astype(np.float32)
+    patch_part = np.asarray(patch)[top:bottom, left:right].astype(np.float32)
+    weight = (soft_array[top:bottom, left:right].astype(np.float32) / 255.0)[..., None]
+
+    mixed = np.rint(base_part * (1.0 - weight) + patch_part * weight)
+    result[top:bottom, left:right] = np.where(weight == 0.0, base_part, mixed).astype(np.uint8)
 
     return Image.fromarray(result, mode="RGBA")
 
@@ -245,7 +262,6 @@ def clipped_share(original: Image.Image, generated: Image.Image, mask: Image.Ima
     перерисовывает кадр целиком, и вне маски он никогда не совпадает с
     оригиналом побайтово — совпадает лишь то, что выдаёт ``blend``.
     """
-    base = np.asarray(original.convert("RGB")).astype(np.float32)
     patch = generated.convert("RGB")
     if patch.size != original.size:
         patch = patch.resize(original.size, Image.LANCZOS)
@@ -256,5 +272,11 @@ def clipped_share(original: Image.Image, generated: Image.Image, mask: Image.Ima
     outside = np.asarray(soft) == 0
     if not outside.any():
         return 0.0
-    delta = np.abs(base - np.asarray(patch).astype(np.float32)).mean(axis=2)
-    return float((delta[outside] > 16).mean() * 100)
+
+    # Разность считается в uint8 через OpenCV, а не во float32 через numpy:
+    # то же число, но без двух копий кадра в четырёхбайтовых числах. На
+    # фотографии 4096x4096 это 0.42 с против 0.15 с.
+    difference = cv2.absdiff(
+        np.asarray(original.convert("RGB")), np.asarray(patch)
+    ).mean(axis=2, dtype=np.float32)
+    return float((difference[outside] > 16).mean() * 100)
