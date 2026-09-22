@@ -206,7 +206,7 @@ def test_a_model_failure_is_reported_in_english_too(monkeypatch, tmp_path):
 
     studio._generator = _Boom()
     _images, status = handlers["run"](
-        "cat", "", False, [], presets.DEFAULT, "1:1", 1, [], "", 1.0, -1, True, 0, "en",
+        "cat", "", "", False, [], presets.DEFAULT, "1:1", 1, [], "", 1.0, -1, True, 0, "en",
         progress=lambda *args, **kwargs: None,
     )
     _assert_english(status, "сообщение о сбое генерации")

@@ -225,7 +225,7 @@ def test_generate_handler_reports_a_model_failure_in_the_status_line(monkeypatch
     studio._generator = _ExplodingGenerator(FileNotFoundError("model_index.json"))
 
     images, status = handlers["run"](
-        "кот", "", False, [], presets.DEFAULT, "1:1", 1, [], "", 1.0, -1, True, 0, "ru",
+        "кот", "", "", False, [], presets.DEFAULT, "1:1", 1, [], "", 1.0, -1, True, 0, "ru",
         progress=lambda *args, **kwargs: None,
     )
 
@@ -255,7 +255,7 @@ def test_generate_handler_survives_a_broken_argument(monkeypatch, tmp_path):
     _studio, handlers = _handlers(monkeypatch, tmp_path, tab_generate)
 
     images, status = handlers["run"](
-        "кот", "", False, [], presets.DEFAULT, "1:1", 1, [], "", 1.0, "не число", True, 0, "ru",
+        "кот", "", "", False, [], presets.DEFAULT, "1:1", 1, [], "", 1.0, "не число", True, 0, "ru",
         progress=lambda *args, **kwargs: None,
     )
 

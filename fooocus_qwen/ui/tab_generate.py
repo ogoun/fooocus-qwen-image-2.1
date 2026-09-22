@@ -88,6 +88,10 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         language = gr.State(lang)
 
     references = gr.State([])
+    # Исходный текст, по которому составлен переписанный промт. Нужен, чтобы
+    # заметить, что промт с тех пор правили, а в модель по-прежнему уйдёт
+    # старая переписка.
+    boost_source = gr.State("")
 
     with gr.Row(elem_classes=[layout.WORK_ROW]):
         with gr.Column(scale=3, min_width=layout.CANVAS_MIN_WIDTH):
@@ -341,16 +345,28 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         return [], [], None, gr.update(open=False), say("references_cleared", lang)
 
     def rewrite(prompt_text, current_references, ratio_value, lang):
+        """Переписывает промт и сразу включает буст.
+
+        Галочка включается потому, что нажатие этой кнопки и есть заявление
+        «хочу переписанный промт». Без этого кнопка работала независимо от
+        галочки, а в модель переписанный текст уходит только при включённой:
+        нажать, увидеть текст и получить картинку по старому промту было
+        проще простого, и ничто об этом не сообщало.
+        """
         mode = boost_module.MODE_EDIT if current_references else boost_module.MODE_T2I
         text, wh_ratio, message = studio.boost_prompt(
             prompt_text, mode, lang, current_references or None
         )
         chosen = wh_ratio if wh_ratio in aspect.ASPECT_RATIOS else ratio_value
-        return text, chosen, message
+        # Источник запоминается только при удачной переписке: иначе отказ
+        # сервера пометил бы прежний текст как свежий.
+        source = prompt_text if text else gr.update()
+        return text, chosen, gr.update(value=bool(text)), source, message
 
     def run(
-        prompt_text, boosted_text, use_boost, current_references, quality_name, ratio_value,
-        count, style_names, negative_text, cfg_value, seed_value, kv_value, scale_value, lang,
+        prompt_text, boosted_text, boost_source_text, use_boost, current_references,
+        quality_name, ratio_value, count, style_names, negative_text, cfg_value, seed_value,
+        kv_value, scale_value, lang,
         progress=gr.Progress(),
     ):
         # Обработчик целиком под try: отсутствующие веса, испорченный
@@ -359,11 +375,19 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         try:
             effective = (boosted_text or "").strip() if use_boost else ""
             message = ""
+
+            # Оба предупреждения — про молчаливое расхождение между тем, что
+            # пользователь видит в поле, и тем, что уходит в модель.
+            if not use_boost and (boosted_text or "").strip():
+                message = say("boost_ignored", lang)
+            elif effective and (boost_source_text or "") != (prompt_text or ""):
+                message = say("boost_stale", lang)
+
             if use_boost and not effective:
                 mode = boost_module.MODE_EDIT if current_references else boost_module.MODE_T2I
                 effective, wh_ratio, message = studio.boost_prompt(
                     prompt_text, mode, lang, current_references or None
-                )
+                )  # сюда попадаем только при пустом поле, предупреждать не о чем
                 if wh_ratio in aspect.ASPECT_RATIOS:
                     ratio_value = wh_ratio
 
@@ -492,12 +516,16 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         language,
         [references, reference_gallery, reference_upload, reference_box, status],
     )
-    boost_now.click(rewrite, [prompt, references, ratio, language], [boosted, ratio, status])
+    boost_now.click(
+        rewrite,
+        [prompt, references, ratio, language],
+        [boosted, ratio, boost_enabled, boost_source, status],
+    )
 
     run_button.click(
         run,
-        [prompt, boosted, boost_enabled, references, quality, ratio, image_number,
-         styles, negative, cfg, seed, kv_cache, reference_scale, language],
+        [prompt, boosted, boost_source, boost_enabled, references, quality, ratio,
+         image_number, styles, negative, cfg, seed, kv_cache, reference_scale, language],
         [result, status],
         # Общая с вкладкой редактирования группа очереди: без неё предел
         # concurrency в единицу действовал бы только внутри этого обработчика,
