@@ -137,7 +137,7 @@ def test_server_error_on_a_request_with_an_image_hints_at_missing_vision(monkeyp
         _raising_urlopen(urllib.error.HTTPError("u", 500, "Internal Server Error", {}, None)),
     )
     client = LlmClient(LlmEndpoint(base_url="http://example.invalid"))
-    with pytest.raises(LlmError, match="зрени"):
+    with pytest.raises(LlmError, match="не умеет их читать"):
         client.complete("s", "u", images=[Image.new("RGB", (8, 8), "red")])
 
 
@@ -169,3 +169,51 @@ def test_a_network_failure_with_an_image_does_not_blame_vision(monkeypatch):
     with pytest.raises(LlmError) as info:
         client.complete("s", "u", images=[Image.new("RGB", (8, 8), "red")])
     assert "зрени" not in str(info.value)
+
+
+# --- подсказка про модель без зрения -----------------------------------
+
+
+class FailingHandler(Handler):
+    """Сервер, который давится изображением ровно так, как настоящий.
+
+    Проверено на живой llama.cpp с текстовой моделью: запрос без картинки
+    проходит, запрос с картинкой возвращает 500. По одному номеру ошибки
+    человеку не догадаться, что дело не в сети и не в токене.
+    """
+
+    def do_POST(self):
+        length = int(self.headers["Content-Length"])
+        body = json.loads(self.rfile.read(length).decode("utf-8"))
+        RECEIVED.append({"body": body, "auth": self.headers.get("Authorization")})
+        if isinstance(body["messages"][1]["content"], list):
+            self.send_error(500, "Internal Server Error")
+        else:
+            self._reply({"choices": [{"message": {"content": "готово"}}]})
+
+
+@pytest.fixture
+def blind_server():
+    RECEIVED.clear()
+    httpd = HTTPServer(("127.0.0.1", 0), FailingHandler)
+    thread = threading.Thread(target=httpd.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{httpd.server_port}"
+    httpd.shutdown()
+    httpd.server_close()
+    thread.join(timeout=5)
+
+
+def test_a_text_only_model_is_named_as_the_likely_cause(blind_server):
+    client = LlmClient(LlmEndpoint(base_url=blind_server))
+    with pytest.raises(LlmError) as failure:
+        client.complete("s", "опиши", images=[Image.new("RGB", (8, 8), "red")])
+
+    text = str(failure.value)
+    assert "500" in text, "техническая причина обязана остаться в сообщении"
+    assert "не умеет их читать" in text, text
+    # Оба пути сюда ведут: кнопка описания и AI буст при правке с
+    # референсами. Называть только кнопку значило бы вводить в заблуждение
+    # того, кто пришёл через буст.
+    assert "Описать изображение" in text
+    assert "буст" in text
