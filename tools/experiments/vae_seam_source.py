@@ -57,10 +57,16 @@ PROMPT = (
 )
 
 
-def chroma_lines(array: np.ndarray, stride: int) -> dict:
-    """Цветные вертикальные линии и их положение относительно решётки плиток."""
+def chroma_lines(array: np.ndarray, stride: int, axis: int = 0) -> dict:
+    """Цветные линии и их положение относительно решётки плиток.
+
+    ``axis=0`` — вертикальные линии (профиль по столбцам), ``axis=1`` —
+    горизонтальные. Мерить надо обе оси: раскладка плиток по ширине и по
+    высоте независима, и огрызок в конце одной из них даёт полосу только
+    вдоль неё.
+    """
     chroma = array[:, :, 1] - 0.5 * (array[:, :, 0] + array[:, :, 2])
-    column = chroma.mean(axis=0)
+    column = chroma.mean(axis=axis)
     window = 21
     trend = np.convolve(np.pad(column, window // 2, mode="edge"), np.ones(window) / window, mode="valid")
     residual = column - trend
@@ -133,6 +139,11 @@ def main() -> int:
             pipe.vae.tile_sample_stride_width = args.stride
             if name == "здешний":
                 vae_tiling.install(pipe.vae)
+            else:
+                # Загрузчик ставит здешний декодер сразу при загрузке: без
+                # этой строки «штатный» вариант был бы им же — ровно та
+                # ошибка, на которой уже один раз сгорело это исследование.
+                vae_tiling.uninstall(pipe.vae)
 
         torch.cuda.synchronize()
         torch.cuda.reset_peak_memory_stats()
@@ -147,16 +158,20 @@ def main() -> int:
         results[name] = (np.asarray(image.convert("RGB"), dtype=np.float32), seconds, peak)
 
     reference = results["целиком"][0]
-    print(f"\n{'вариант':12} {'швов':>5} {'линий':>6} {'СКО':>8} {'расх. с целым':>14} {'с':>6} {'ГиБ':>6}")
+    print(f"\n{'вариант':12} {'верт.':>6} {'гориз.':>7} {'макс. откл.':>12} {'расх. с целым':>14} {'с':>6} {'ГиБ':>6}")
     for name, (array, seconds, peak) in results.items():
-        stats = chroma_lines(array, args.stride)
+        vertical = chroma_lines(array, args.stride, axis=0)
+        horizontal = chroma_lines(array, args.stride, axis=1)
         delta = float(np.abs(array - reference).mean())
+        worst = float(np.abs(array - reference).max())
         print(
-            f"{name:12} {stats['on_grid']:5d} {stats['lines']:6d} {stats['sigma']:8.4f} "
+            f"{name:12} {vertical['lines']:6d} {horizontal['lines']:7d} {worst:12.2f} "
             f"{delta:14.4f} {seconds:6.2f} {peak:6.2f}"
         )
-        if stats["on_grid"]:
-            print(f"             на решётке: x = {stats['where']}")
+        if vertical["where"]:
+            print(f"             вертикальные x = {vertical['where']}")
+        if horizontal["where"]:
+            print(f"             горизонтальные y = {horizontal['where']}")
     print(f"\nкадры сохранены в {OUT}")
     return 0
 

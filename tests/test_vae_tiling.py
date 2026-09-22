@@ -194,3 +194,69 @@ def test_installing_twice_changes_nothing():
     first = type(vae)
     vae_tiling.install(vae)
     assert type(vae) is first
+
+
+def test_no_tile_is_cut_short_at_the_far_edge():
+    """Последняя плитка берётся полной, сдвигом назад, а не обрезком.
+
+    Наивный шаг `range(0, size, stride)` даёт в конце огрызок: при латенте
+    118 и плитке 32 последняя плитка выходит шириной в шесть клеток. Беда не
+    в размере, а в контексте: декодер видит полоску в 96 пикселей вместо
+    512 и работает по ней заметно иначе. Дальше эта плитка подмешивается к
+    уже готовой области — и на месте, где начинается её вес, встаёт видимая
+    полоса (замер: до 5.9 уровня из 255 на `x ≈ 1800` кадра шириной 1888).
+
+    Вдобавок такая плитка вообще ничего не покрывает: область 1792…1888 уже
+    закрыта предыдущей, которая упирается в край кадра.
+    """
+    starts = vae_tiling.tile_starts(118, tile=TILE_LATENT, stride=STRIDE_LATENT)
+
+    assert starts[-1] + TILE_LATENT == 118, "последняя плитка обязана быть полной"
+    assert all(start + TILE_LATENT <= 118 for start in starts), "плитка не может торчать за кадр"
+    assert 112 not in starts, "огрызок в конце не нужен: эту площадь уже закрыли"
+
+
+def test_tile_starts_cover_everything_without_redundancy():
+    """Ни дыр, ни плиток, которые ничего не добавляют."""
+    for size in (118, 80, 64, 33, 97, 40, 32, 31, 200):
+        starts = vae_tiling.tile_starts(size, tile=TILE_LATENT, stride=STRIDE_LATENT)
+        assert starts[0] == 0
+        assert starts == sorted(set(starts)), f"{size}: повторы в {starts}"
+        assert starts[-1] + min(TILE_LATENT, size) >= size, f"{size}: конец не покрыт"
+        for previous, current in zip(starts, starts[1:]):
+            assert current > previous, f"{size}: плитки не продвигаются"
+            # Каждая следующая обязана добавлять площадь, иначе она лишняя.
+            assert previous + TILE_LATENT < size, f"{size}: плитка после {previous} уже не нужна"
+
+
+def test_the_narrow_last_tile_is_never_decoded():
+    """Свойство проверяется по вызовам декодера, а не по картинке."""
+    latent = _coordinates(80, 118)
+    widths = []
+
+    def watching(tile):
+        widths.append(tile.shape[-1])
+        return _honest_decode(tile)
+
+    _run(latent, watching)
+    assert set(widths) == {TILE_LATENT}, f"декодер получил неполные плитки: {sorted(set(widths))}"
+
+
+def test_the_stock_decoder_can_be_put_back():
+    """Опыт обязан уметь сравнить здешний декодер со штатным.
+
+    Загрузчик ставит здешний сразу при загрузке модели, и без обратной
+    операции сравнение «штатный против здешнего» незаметно превращается в
+    сравнение здешнего с самим собой.
+    """
+
+    class _Vae:
+        pass
+
+    vae = _Vae()
+    vae_tiling.install(vae)
+    assert isinstance(vae, vae_tiling.SeamlessTiledVae)
+
+    vae_tiling.uninstall(vae)
+    assert not isinstance(vae, vae_tiling.SeamlessTiledVae)
+    assert type(vae) is _Vae

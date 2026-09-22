@@ -70,11 +70,9 @@ def decode_tiled(
     accumulator: torch.Tensor | None = None
     weights: torch.Tensor | None = None
 
-    for top in range(0, height, stride_latent):
-        for left in range(0, width, stride_latent):
+    for top in tile_starts(height, tile=tile_latent, stride=stride_latent):
+        for left in tile_starts(width, tile=tile_latent, stride=stride_latent):
             piece = latent[:, :, :, top : top + tile_latent, left : left + tile_latent]
-            if piece.shape[-1] == 0 or piece.shape[-2] == 0:
-                continue
             decoded = decode(piece)
 
             # Край кадра обрезать нечем и незачем: соседа за ним нет.
@@ -116,6 +114,31 @@ def decode_tiled(
     if uncovered:  # pragma: no cover — геометрия проверена тестами на всех размерах
         raise RuntimeError(f"плитки не закрыли {uncovered} пикселей кадра")
     return (accumulator / weights).to(latent.dtype)
+
+
+def tile_starts(size: int, *, tile: int, stride: int) -> list[int]:
+    """Начала плиток по одной оси. Последняя сдвинута назад до полной.
+
+    Наивный шаг ``range(0, size, stride)`` оставляет в конце огрызок: при
+    латенте 118 и плитке 32 последняя плитка выходит в шесть клеток. Беда не
+    в размере, а в контексте — декодер видит полоску в 96 пикселей вместо
+    512 и работает по ней заметно иначе. Дальше эта плитка подмешивается к
+    области, которую предыдущая уже закрыла целиком, и на месте, где
+    начинается её вес, встаёт видимая полоса: замер даёт до 5.9 уровня из
+    255 на ``x ≈ 1800`` кадра шириной 1888, на трёх кадрах с разными
+    промтами в одном и том же месте.
+
+    Поэтому последняя плитка не обрезается по остатку, а начинается там,
+    где ей хватает места на полный размер. Перекрытие с предыдущей от этого
+    растёт — это дешевле, чем неполный контекст, и качество по кадру
+    остаётся однородным.
+    """
+    if size <= tile:
+        return [0]
+    last = size - tile
+    starts = list(range(0, last, stride))
+    starts.append(last)
+    return starts
 
 
 def _window(
@@ -209,6 +232,20 @@ class SeamlessTiledVae:
         if not return_dict:
             return (decoded,)
         return DecoderOutput(sample=decoded)
+
+
+def uninstall(vae) -> None:
+    """Возвращает штатный декодер `diffusers`.
+
+    Нужна опытам: загрузчик ставит здешний декодер сразу при загрузке, и без
+    этой функции сравнение «штатный против здешнего» незаметно превращается
+    в сравнение здешнего с самим собой — ровно та ошибка, на которой уже
+    один раз сгорело исследование полос.
+    """
+    for base in type(vae).__bases__:
+        if not issubclass(base, SeamlessTiledVae):
+            vae.__class__ = base
+            return
 
 
 def install(vae) -> None:
