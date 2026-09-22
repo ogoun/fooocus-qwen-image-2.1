@@ -59,6 +59,7 @@ def configure(
     собственный: на экран смотрит не только тот, кто его вводит.
     """
     path = Path(path)
+    ask, ask_secret = _forgiving(ask), _forgiving(ask_secret)
     current = _describe_current(path)
     if current:
         out(f"  сейчас настроено: {current}")
@@ -89,6 +90,27 @@ def configure(
     if probe is not None:
         _report_probe(endpoint, probe, out)
     return True
+
+
+def _forgiving(ask: Callable[[str], str]) -> Callable[[str], str]:
+    """Оборачивает вопрос так, что конец ввода и Ctrl+C означают «пропустить».
+
+    Проверять ``sys.stdin.isatty()`` заранее недостаточно, и это не
+    предположение: в Git Bash под Windows перенаправление из ``/dev/null``
+    даёт ``isatty() == True`` — MSYS эмулирует его символьным устройством,
+    которое Windows считает консольным. Установка, запущенная сценарием,
+    падала на этом месте с ``EOFError`` уже после того, как зависимости
+    поставлены. Поэтому отказ обрабатывается там, где он случается, а не
+    предсказывается заранее.
+    """
+
+    def guarded(question: str) -> str:
+        try:
+            return ask(question)
+        except (EOFError, KeyboardInterrupt):
+            return ""
+
+    return guarded
 
 
 def _describe_current(path: Path) -> str:

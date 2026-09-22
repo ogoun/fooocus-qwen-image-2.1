@@ -10,7 +10,12 @@
     2. Остальные зависимости из requirements.txt.
     3. torch закрепляется ещё раз: сторонние пакеты способны подменить
        CUDA-сборку на обычную.
-    4. Самопроверка: «установилось» должно означать «запустится».
+    4. Веса модели: тридцать три гигабайта, качаются только если их нет.
+    5. Адрес языковой модели для AI-буста промтов — по желанию.
+    6. Самопроверка: «установилось» должно означать «запустится».
+
+    Шаги 4 и 5 делает сам пакет (`--fetch-model`, `--setup-llm`): то же
+    самое, написанное дважды на двух языках оболочки, разъезжается.
 
 .EXAMPLE
     .\install.ps1
@@ -33,7 +38,7 @@ $torchIndex = 'https://download.pytorch.org/whl/cu128'
 
 function Step($number, $text) {
     Write-Host ''
-    Write-Host "[$number/4] $text" -ForegroundColor Cyan
+    Write-Host "[$number/6] $text" -ForegroundColor Cyan
 }
 
 Push-Location $root
@@ -72,7 +77,14 @@ try {
         Write-Host "  всё на месте: $version"
     }
 
-    Step 4 'Проверяю готовность'
+    Step 4 'Проверяю веса модели'
+    & $python -m fooocus_qwen --fetch-model
+    if ($LASTEXITCODE -ne 0) { throw 'Не удалось получить веса модели' }
+
+    Step 5 'Настраиваю языковую модель для AI-буста промтов'
+    & $python -m fooocus_qwen --setup-llm
+
+    Step 6 'Проверяю готовность'
     & $python -m fooocus_qwen --selftest
     if ($LASTEXITCODE -ne 0) { throw 'Самопроверка не пройдена' }
 

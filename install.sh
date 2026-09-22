@@ -35,7 +35,13 @@ case "$version" in
           "$python" -m pip install --force-reinstall torch torchvision --index-url "$torch_index" ;;
 esac
 
-step 4 "Проверяю готовность"
+step 4 "Проверяю веса модели"
+"$python" -m fooocus_qwen --fetch-model
+
+step 5 "Настраиваю языковую модель для AI-буста промтов"
+"$python" -m fooocus_qwen --setup-llm
+
+step 6 "Проверяю готовность"
 "$python" -m fooocus_qwen --selftest
 
 printf '\n\033[32mГотово. Запуск:\033[0m\n    ./run.sh\n'

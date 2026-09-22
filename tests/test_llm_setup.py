@@ -140,3 +140,28 @@ def test_render_is_parseable_for_any_reasonable_answer():
         result = ep.parse_endpoint_file(text)
         assert result.token == token
         assert host.split("://")[-1].split(":")[0] in result.base_url
+
+
+def test_the_end_of_input_means_skip_not_a_crash(tmp_path):
+    """Установку запускают и сценарием — там на вопрос отвечать некому.
+
+    Проверять `sys.stdin.isatty()` заранее мало: в Git Bash под Windows
+    перенаправление из `/dev/null` даёт `isatty() == True`, и установка
+    падала с `EOFError` после того, как зависимости уже поставлены.
+    """
+    path = tmp_path / "llm_endpoint.txt"
+
+    def eof(_question: str) -> str:
+        raise EOFError("некому отвечать")
+
+    assert setup.configure(path, ask=eof, ask_secret=eof, out=lambda _l="": None, probe=None) is False
+    assert not path.exists()
+
+
+def test_ctrl_c_during_the_question_is_a_skip_too(tmp_path):
+    path = tmp_path / "llm_endpoint.txt"
+
+    def interrupt(_question: str) -> str:
+        raise KeyboardInterrupt
+
+    assert setup.configure(path, ask=interrupt, ask_secret=interrupt, out=lambda _l="": None, probe=None) is False

@@ -89,10 +89,56 @@ def generate_once(args) -> int:
     return 0
 
 
+def fetch_model() -> int:
+    """Доводит веса до полного состава. Зовётся установкой."""
+    from .engine import fetch
+
+    try:
+        downloaded = fetch.ensure_model(config.MODEL_DIR)
+    except fetch.ModelDownloadError as error:
+        print(f"[нет] {error}")
+        return 1
+    except OSError as error:
+        # Сеть, диск, права: причина человеку важнее типа исключения.
+        print(f"[нет] не удалось скачать веса: {error}")
+        return 1
+
+    if downloaded:
+        print(f"[ок ] веса скачаны: {config.MODEL_DIR}")
+    else:
+        print(f"[ок ] веса на месте: {config.MODEL_DIR}")
+    return 0
+
+
+def setup_llm() -> int:
+    """Спрашивает адрес и токен языковой модели.
+
+    Отказ отвечать и отсутствие консоли — не ошибки: AI-буст промтов
+    необязателен, без него работает всё остальное. Уронить установку на
+    последнем шаге, когда зависимости уже поставлены, было бы худшим из
+    возможных исходов.
+    """
+    from .llm import setup
+
+    if not sys.stdin.isatty():
+        print("  Пропускаю настройку языковой модели: установка идёт без консоли.")
+        print(f"  Адрес можно задать позже в {config.ENDPOINT_FILE.name} или во вкладке «Настройки».")
+        return 0
+
+    setup.configure(config.ENDPOINT_FILE)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = config.build_parser().parse_args(argv)
     logging_setup.setup_logging(args.verbose)
     config.ensure_directories()
+
+    if args.fetch_model:
+        return fetch_model()
+
+    if args.setup_llm:
+        return setup_llm()
 
     if args.selftest:
         return selftest()

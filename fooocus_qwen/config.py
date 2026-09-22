@@ -77,6 +77,22 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--prompt", help="сгенерировать одно изображение без интерфейса и выйти")
     parser.add_argument("--out", help="куда сохранить результат режима --prompt")
     parser.add_argument("--selftest", action="store_true", help="проверить готовность окружения и выйти")
+    # Два режима установки. Логика у них общая для Windows и Linux, поэтому
+    # живёт здесь, а install.ps1 и install.sh только зовут её флагом: то же
+    # самое, написанное дважды на двух языках оболочки, разъезжается, и
+    # первым это замечает пользователь той системы, что реже под рукой.
+    parser.add_argument(
+        "--fetch-model",
+        dest="fetch_model",
+        action="store_true",
+        help="скачать недостающие веса модели и выйти",
+    )
+    parser.add_argument(
+        "--setup-llm",
+        dest="setup_llm",
+        action="store_true",
+        help="спросить адрес и токен языковой модели, записать их и выйти",
+    )
     return parser
 
 
