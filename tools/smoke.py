@@ -42,6 +42,7 @@ from fooocus_qwen.engine.generator import (
     MASK_REGION,
     GenerationRequest,
     Generator,
+    resolve_reference_scale,
 )
 from fooocus_qwen.imaging import aspect, masking, metadata, outpaint
 from fooocus_qwen.prompting.styles import load_styles
@@ -352,26 +353,44 @@ def scenario_references(engine: Generator) -> None:
                (80, 180, 190), (230, 120, 70), (110, 110, 110), (180, 60, 140), (60, 200, 130)]
     refs = tuple(Image.new("RGB", (768, 768), colour) for colour in palette)
 
-    # Пресет намеренно быстрый, а не средний: замеры показали, что уже один
-    # референс на MiddleQuality поднимает пик до 21 ГиБ из 24, а пять уводят
-    # карту в деградацию с вытеснением в оперативную память и тринадцатью
-    # минутами на кадр. Проверяем работоспособность десяти референсов, а не
-    # терпение — цифры про память живут в docs/BENCHMARK.md.
+    # Пресет средний намеренно: именно на нём десять референсов и были
+    # неподъёмны до появления раздельного масштаба условных изображений.
+    # Теперь автоматика обязана урезать его до 512 и сделать режим рабочим —
+    # это и проверяется, вместе с самой работоспособностью десяти референсов.
+    middle = presets.get("MiddleQuality")
+    request = GenerationRequest(
+        prompt="a tidy shelf holding ten coloured boxes",
+        preset=middle,
+        references=refs,
+        seed=77,
+    )
+    chosen = resolve_reference_scale(request)
+    record(
+        "масштаб референсов урезан автоматически",
+        "ок" if chosen < middle.output_resolution else "ПРОВАЛ",
+        f"{middle.output_resolution} -> {chosen} при десяти референсах",
+    )
+
     try:
-        image = one(
-            engine,
-            prompt="a tidy shelf holding ten coloured boxes",
-            preset=presets.get("LowQuality"),
-            references=refs,
-            seed=77,
-        )
+        started = time.perf_counter()
+        produced = engine.generate(request)
+        image = produced[0].image if produced else None
+        elapsed = time.perf_counter() - started
     except torch.cuda.OutOfMemoryError:
         torch.cuda.empty_cache()
         record("десять референсов", "ПРОВАЛ", "нехватка видеопамяти")
         image = None
     if image is not None:
         path = save(image, "references-10")
-        record("десять референсов", "ок", f"{image.size} -> {path.name}")
+        # Размер кадра обязан остаться пресетным: урезается масштаб условных
+        # изображений, а не кадр. Ради этого рычаг и разделяли.
+        width, height = aspect.dimensions("1:1", middle.output_resolution)
+        good = image.size == (width, height)
+        record(
+            "десять референсов",
+            "ок" if good else "ПРОВАЛ",
+            f"{image.size} (кадр пресета {width}x{height}), {elapsed:.1f} с -> {path.name}",
+        )
 
     single = one(
         engine,

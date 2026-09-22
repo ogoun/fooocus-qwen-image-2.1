@@ -331,14 +331,15 @@ class Generator:
                 LOGGER.info("Генерация прервана пользователем")
                 break
 
-            image = self._finish(request, prepared, output.images[0], region_box)
+            image, clipped = self._finish(request, prepared, output.images[0], region_box)
             seconds = time.perf_counter() - started
             results.append(
                 GeneratedImage(
                     image=image,
                     seed=seed,
                     parameters=self._parameters(
-                        request, prepared, positive, negative, slots, seed, seconds, width, height
+                        request, prepared, positive, negative, slots, seed, seconds,
+                        width, height, clipped,
                     ),
                 )
             )
@@ -384,26 +385,34 @@ class Generator:
         prepared: GenerationRequest,
         produced: Image.Image,
         region_box: tuple[int, int, int, int] | None,
-    ) -> Image.Image:
-        """Возвращает результат в систему координат исходного изображения."""
+    ) -> tuple[Image.Image, float]:
+        """Результат в системе координат исходника и доля обрезанной правки.
+
+        Второе значение — проценты кадра вне маски, которые модель изменила,
+        а склейка вернула к оригиналу. Ноль там, где склейки нет. Оно нужно
+        не генератору, а интерфейсу: по нему он предупреждает о шве. Именно
+        возвращаемым значением, а не полем на запросе — запрос переживает
+        вызов, и складывать на него промежуточные результаты одного прогона
+        здесь уже пробовали (см. докстроку ``_prepare``).
+        """
         source = original_request.source
         if source is None or prepared.mask_mode == MASK_NONE:
-            return produced
+            return produced, 0.0
 
         if prepared.mask_mode == MASK_ANNOTATION:
             # Пометки были частью условного изображения; склеивать не по чему.
-            return produced
+            return produced, 0.0
 
         if not original_request.keep_outside:
             if region_box is None:
-                return produced
+                return produced, 0.0
             # Режим «точная область» — единственный, где `produced` не
             # полнокадровый: `_prepare` уже вырезал по нему источник и маску.
             # Отдать его как есть значило бы вернуть пользователю, правившему
             # деталь в 64 пикселя на холсте в 4000, крошечную картинку вместо
             # кадра. Склейки по маске здесь нет — её и просили отключить, — но
             # патч обязан вернуться на своё место.
-            return masking.paste_region(source, produced, region_box)
+            return masking.paste_region(source, produced, region_box), 0.0
 
         if region_box is not None and prepared.mask is not None:
             full_mask = masking.refine(
@@ -411,9 +420,10 @@ class Generator:
                 grow=original_request.mask_grow,
                 feather=original_request.mask_feather,
             )
-            return masking.stitch(source, produced, region_box, full_mask)
+            return masking.stitch(source, produced, region_box, full_mask), 0.0
 
-        return masking.blend(source, produced, prepared.mask)
+        clipped = masking.clipped_share(source, produced, prepared.mask)
+        return masking.blend(source, produced, prepared.mask), clipped
 
     def _parameters(
         self,
@@ -426,6 +436,7 @@ class Generator:
         seconds: float,
         width: int | None,
         height: int | None,
+        clipped: float,
     ) -> dict[str, Any]:
         # Размеры уже посчитаны в generate() из того же prepared — вычислять
         # их здесь ещё раз значило бы выводить один и тот же факт дважды.
@@ -463,6 +474,9 @@ class Generator:
             "mask_grow": prepared.mask_grow,
             "mask_feather": prepared.mask_feather,
             "references": sum(1 for slot in slots if slot.role == "reference"),
+            # Сколько работы модели обрезала склейка. Ноль там, где склейки
+            # нет. По этому числу интерфейс предупреждает о шве.
+            "clipped_outside_pct": round(clipped, 1),
             "seconds": round(seconds, 2),
         }
 

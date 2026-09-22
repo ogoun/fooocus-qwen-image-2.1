@@ -81,6 +81,10 @@ def collect(value, mode: str) -> tuple[Image.Image | None, Image.Image | None]:
     return background.convert("RGBA"), mask
 
 
+# Доля кадра вне маски, начиная с которой шов виден и о нём стоит сказать.
+# Ниже — обычная точечная правка, где обрезать почти нечего.
+CLIPPED_WARNING_PCT = 25.0
+
 def build(studio, localizer: Localizer, language=None) -> dict:
     """Собирает вкладку.
 
@@ -314,6 +318,17 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             paths.append(str(destination))
 
         edit_done = say("edit_done", lang, memory=studio.memory_report(lang))
+
+        # Обрезанная склейкой работа модели — единственный случай, когда
+        # результат формально безупречен (обещание о неприкосновенности
+        # выполнено), а глазу виден шов. Молчать о нём значило бы оставить
+        # пользователя гадать; штатный выход у случая есть, и он в одном
+        # переключателе.
+        clipped = max((item.parameters.get("clipped_outside_pct", 0.0) for item in produced),
+                      default=0.0)
+        if clipped >= CLIPPED_WARNING_PCT:
+            edit_done = f"{edit_done} {say('edit_clipped', lang, share=clipped)}"
+
         return paths, f"{message} {edit_done}".strip()
 
     def take_back(produced, lang):

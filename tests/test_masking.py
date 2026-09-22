@@ -240,3 +240,47 @@ def test_mask_from_editor_resizes_layer_to_the_background():
 
     assert mask.size == (64, 64)
     assert not masking.is_empty(mask)
+
+
+def test_clipped_share_counts_only_what_the_blend_threw_away():
+    """Считается изменение вне маски, а не вообще любое изменение.
+
+    Внутри маски модель меняет кадр по просьбе пользователя, и это не
+    обрезается. Обрезается то, что она сделала снаружи, — ради чего величина
+    и нужна: по ней интерфейс предупреждает о шве.
+    """
+    size = (64, 64)
+    original = Image.new("RGB", size, (10, 10, 10))
+    mask = Image.new("L", size, 0)
+    mask.paste(255, (0, 0, 64, 16))  # верхняя четверть — область правки
+
+    # Модель изменила только внутри маски: обрезать нечего.
+    inside_only = original.copy()
+    inside_only.paste((250, 250, 250), (0, 0, 64, 16))
+    assert masking.clipped_share(original, inside_only, mask) == 0.0
+
+    # Модель изменила и снаружи: три четверти кадра уйдут под нож склейки.
+    everywhere = Image.new("RGB", size, (250, 250, 250))
+    share = masking.clipped_share(original, everywhere, mask)
+    assert 99.0 <= share <= 100.0, share
+
+
+def test_clipped_share_ignores_imperceptible_drift():
+    """Порог, а не точное равенство — иначе величина была бы всегда стопроцентной.
+
+    Пайплайн перерисовывает кадр целиком, и вне маски он не совпадает с
+    оригиналом побайтово никогда. Совпадает лишь то, что выдаёт ``blend``.
+    """
+    size = (64, 64)
+    original = Image.new("RGB", size, (100, 100, 100))
+    drifted = Image.new("RGB", size, (104, 104, 104))  # +4 уровня, глазу не видно
+    mask = Image.new("L", size, 0)
+    mask.paste(255, (0, 0, 64, 8))
+    assert masking.clipped_share(original, drifted, mask) == 0.0
+
+
+def test_clipped_share_is_zero_when_the_mask_covers_everything():
+    size = (32, 32)
+    original = Image.new("RGB", size, (0, 0, 0))
+    produced = Image.new("RGB", size, (255, 255, 255))
+    assert masking.clipped_share(original, produced, Image.new("L", size, 255)) == 0.0

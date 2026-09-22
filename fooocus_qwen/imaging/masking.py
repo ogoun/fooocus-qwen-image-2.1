@@ -224,3 +224,37 @@ def stitch(
     """Вклеивает обработанный фрагмент обратно, соблюдая маску."""
     canvas = original.convert("RGBA")
     return blend(canvas, paste_region(canvas, patch, box), mask)
+
+def clipped_share(original: Image.Image, generated: Image.Image, mask: Image.Image) -> float:
+    """Доля кадра **вне** маски, которую модель изменила, а склейка обрезала.
+
+    Возвращает проценты. Величина нужна, чтобы заметить и назвать вслух один
+    конкретный случай: просьба глобальна по смыслу («сделай волосы
+    платиновыми»), модель перекрашивает все волосы связно и красиво, а
+    склейка обрезает её работу ровно по границе маски — и в кадре остаётся
+    резкий шов. Растушёвка тут не спасает: при перепаде яркости в шестьдесят
+    уровней двенадцать пикселей перехода дают около четырёх уровней на
+    пиксель, что глаз видит прекрасно.
+
+    Дефектом это не является: неприкосновенность кадра вне маски — данное
+    обещание, и нарушать его нельзя. Но у случая есть штатный выход — снять
+    «Сохранять кадр вне маски», — и пользователь должен узнать о нём тогда,
+    когда случай наступил, а не из документации задним числом.
+
+    Сравнение ведётся по порогу, а не по точному равенству: пайплайн
+    перерисовывает кадр целиком, и вне маски он никогда не совпадает с
+    оригиналом побайтово — совпадает лишь то, что выдаёт ``blend``.
+    """
+    base = np.asarray(original.convert("RGB")).astype(np.float32)
+    patch = generated.convert("RGB")
+    if patch.size != original.size:
+        patch = patch.resize(original.size, Image.LANCZOS)
+    soft = mask.convert("L")
+    if soft.size != original.size:
+        soft = soft.resize(original.size, Image.LANCZOS)
+
+    outside = np.asarray(soft) == 0
+    if not outside.any():
+        return 0.0
+    delta = np.abs(base - np.asarray(patch).astype(np.float32)).mean(axis=2)
+    return float((delta[outside] > 16).mean() * 100)
