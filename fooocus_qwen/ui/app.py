@@ -14,6 +14,28 @@ from .state import Studio
 
 LOGGER = logging.getLogger(__name__)
 
+# Обход вкладок при загрузке страницы: см. пояснение у ``demo.load`` ниже.
+# Шаг в 60 мс — не украшение: Svelte монтирует содержимое вкладки не в
+# обработчике клика, а в следующем цикле отрисовки, и подряд идущие клики
+# смонтировали бы только последнюю.
+WARM_UP_TABS = """
+() => {
+    const tabs = Array.from(document.querySelectorAll('button[role="tab"]'));
+    if (tabs.length < 2) { return; }
+    let index = 0;
+    const step = () => {
+        if (index < tabs.length) {
+            tabs[index].click();
+            index += 1;
+            setTimeout(step, 60);
+        } else {
+            tabs[0].click();
+        }
+    };
+    step();
+}
+"""
+
 
 def build(cfg: config.AppConfig, return_studio: bool = False):
     """Собирает интерфейс. С ``return_studio`` отдаёт ещё и состояние.
@@ -41,16 +63,30 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
             cfg.lang.upper(), size="sm", elem_classes=[layout.LANG], scale=0, min_width=0
         )
 
-        def switch_language(current: str) -> tuple[str, dict]:
-            """Переключает язык по кругу и переписывает надпись на кнопке.
+        def switch_language(current: str) -> list:
+            """Переключает язык, надпись на кнопке и все подписи разом.
 
             По кругу, а не «включить английский»: языков два, и кнопка
             показывает тот, что сейчас выбран, — так же, как это делают
             переключатели языка в браузерах и почтовых клиентах.
+
+            Подписи перерисовывает этот же обработчик, а не событие
+            ``change`` у состояния, как было раньше. В Gradio 6.5.1 это
+            событие не наступает, когда состояние меняется выходом другого
+            обработчика: значение ``gr.State`` живёт на сервере, клиенту не
+            передаётся, и обнаружить его изменение он не может. Проверено на
+            чистом Gradio без нашего кода — после клика уходит один запрос
+            вместо двух, кнопка меняет надпись, а подписи остаются на
+            прежнем языке.
+
+            Один обработчик вместо цепочки ещё и атомарен: состояние,
+            кнопка и подписи приезжают одним ответом, и промежуточного
+            состояния, где язык уже сменился, а интерфейс ещё нет, не
+            существует.
             """
             order = list(LANGUAGES)
             following = order[(order.index(current) + 1) % len(order)] if current in order else order[0]
-            return following, gr.update(value=following.upper())
+            return [following, gr.update(value=following.upper()), *localizer.updates(following)]
 
 
         with gr.Tabs():
@@ -91,10 +127,27 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
         # пользователю: сообщения собираются в момент ответа, а не при сборке
         # интерфейса, поэтому строка состояния говорит на текущем языке, а не
         # на языке запуска.
+        # Подпись вкладки Gradio обновляет только у той, чьё содержимое уже
+        # смонтировано: у неоткрытых кнопка в полосе вкладок остаётся на
+        # прежнем языке до первого захода внутрь. Проверено на чистом Gradio
+        # 6.5.1 без нашего кода — обновление доходит до всех, применяется к
+        # одной. Обновление контейнера ``gr.Tabs`` не помогает, а вот один
+        # заход в каждую вкладку — да: после него переключатель переписывает
+        # всю полосу разом.
+        #
+        # Поэтому при загрузке страницы вкладки открываются по очереди и
+        # управление возвращается на первую. Это стоит четверть секунды на
+        # старте и избавляет от наполовину переведённой полосы вкладок.
+        demo.load(None, None, None, js=WARM_UP_TABS)
+
+        # Регистрация именно здесь, после сборки вкладок: до неё
+        # ``localizer.components`` ещё пуст, и клик обновлял бы одну кнопку.
         language_button.click(
-            switch_language, language, [language, language_button], queue=False
+            switch_language,
+            language,
+            [language, language_button, *localizer.components],
+            queue=False,
         )
-        language.change(localizer.updates, language, localizer.components, queue=False)
 
     return (demo, studio) if return_studio else demo
 

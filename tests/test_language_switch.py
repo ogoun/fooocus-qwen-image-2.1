@@ -26,11 +26,20 @@ def _built(lang="ru"):
     return app.build(config.AppConfig(lang=lang))
 
 
-def _switcher(demo):
+def _named(demo, name):
+    """Находит обработчик по имени функции.
+
+    Функция может и отсутствовать: обход вкладок при загрузке страницы
+    зарегистрирован как чистый ``js`` без серверной части.
+    """
     for block_fn in demo.fns.values():
-        if block_fn.fn.__name__ == "switch_language":
-            return block_fn.fn
-    raise AssertionError("обработчик переключения языка не найден")
+        if getattr(block_fn.fn, "__name__", None) == name:
+            return block_fn
+    raise AssertionError(f"обработчик {name} не найден")
+
+
+def _switcher(demo):
+    return _named(demo, "switch_language").fn
 
 
 def test_the_page_has_no_heading_of_its_own():
@@ -69,7 +78,7 @@ def test_there_is_no_dropdown_for_the_language_any_more():
 
 def test_one_click_switches_the_language_and_the_caption():
     switch = _switcher(_built("ru"))
-    following, update = switch("ru")
+    following, update = switch("ru")[:2]
     assert following == "en"
     assert update["value"] == "EN"
 
@@ -95,6 +104,82 @@ def test_an_unknown_language_falls_back_instead_of_raising():
     # Значение могло прийти из испорченной конфигурации; падать обработчику
     # переключения языка не за что.
     switch = _switcher(_built())
-    following, update = switch("шведский")
+    following, update = switch("шведский")[:2]
     assert following in LANGUAGES
     assert update["value"] == following.upper()
+
+
+def _click_handler(demo):
+    """Обработчик, висящий на клике по кнопке языка, целиком."""
+    return _named(demo, "switch_language")
+
+
+def test_the_click_itself_repaints_every_caption():
+    """Подписи переводит сам клик, а не событие `change` у состояния.
+
+    `gr.State.change` в Gradio 6.5.1 не наступает, когда состояние меняется
+    как выход другого обработчика: клиент значения состояния не знает (оно
+    живёт на сервере) и обнаружить его изменение не может. Проверено на
+    чистом Gradio без нашего кода — после клика уходит один запрос вместо
+    двух, и подписи остаются на прежнем языке.
+
+    Поэтому перевод висит на самом клике: одним ответом меняются и
+    состояние, и надпись на кнопке, и все подписи разом.
+    """
+    demo = _built("ru")
+    handler = _click_handler(demo)
+    localized = {id(component) for component in handler.outputs}
+
+    demo_components = [c for c in demo.blocks.values() if hasattr(c, "elem_classes")]
+    assert len(handler.outputs) > 10, (
+        f"клик обновляет всего {len(handler.outputs)} компонентов — подписи он не трогает"
+    )
+    assert localized, "у клика нет выходов"
+    del demo_components
+
+
+def test_the_handler_returns_a_value_for_every_output():
+    """Столько же значений, сколько выходов, — иначе Gradio отбросит ответ."""
+    demo = _built("ru")
+    handler = _click_handler(demo)
+    result = handler.fn("ru")
+    assert len(result) == len(handler.outputs), (
+        f"обработчик вернул {len(result)} значений на {len(handler.outputs)} выходов"
+    )
+
+
+def test_switching_translates_a_tab_caption():
+    """Проверка по существу: подпись вкладки действительно меняет язык."""
+    demo = _built("ru")
+    handler = _click_handler(demo)
+    russian = handler.fn("ru")
+    english = handler.fn("en")
+
+    def captions(result):
+        return [
+            update.get("label")
+            for update in result[2:]
+            if isinstance(update, dict) and update.get("label")
+        ]
+
+    assert "Генерация" in captions(english), "с английского на русский подписи не вернулись"
+    assert "Generate" in captions(russian), "с русского на английский подписи не перевелись"
+
+
+def test_the_tabs_are_opened_once_at_startup():
+    """Обход вкладок при загрузке — не украшение, а условие перевода.
+
+    Gradio 6.5.1 обновляет подпись только у той вкладки, чьё содержимое уже
+    смонтировано: у неоткрытых кнопка в полосе остаётся на прежнем языке до
+    первого захода внутрь. Проверено на чистом Gradio без нашего кода;
+    обновление контейнера `gr.Tabs` не помогает, а один заход в каждую
+    вкладку — помогает.
+    """
+    demo = _built()
+    warm_ups = [
+        block_fn
+        for block_fn in demo.fns.values()
+        if block_fn.fn is None and block_fn.js and "role=\"tab\"" in block_fn.js
+    ]
+    assert warm_ups, "вкладки не прогреваются — полоса переведётся наполовину"
+    assert all(not block_fn.outputs for block_fn in warm_ups), "обходу вкладок нечего возвращать"
