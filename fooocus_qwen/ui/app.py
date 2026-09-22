@@ -8,7 +8,7 @@ from pathlib import Path
 import gradio as gr
 
 from .. import config
-from . import tab_edit, tab_gallery, tab_generate, tab_settings
+from . import layout, tab_edit, tab_gallery, tab_generate, tab_settings
 from .i18n import LANGUAGES, Localizer, pick
 from .state import Studio
 
@@ -20,7 +20,7 @@ def build(cfg: config.AppConfig) -> gr.Blocks:
     localizer = Localizer(cfg.lang)
 
     with gr.Blocks(title=pick("app_title", cfg.lang), analytics_enabled=False) as demo:
-        with gr.Row():
+        with gr.Row(elem_classes=[layout.HEADER]):
             localizer.bind(
                 gr.Markdown(f"## {pick('app_title', cfg.lang)}"),
                 value=("## Qwen-Image-2.1 — студия", "## Qwen-Image-2.1 Studio"),

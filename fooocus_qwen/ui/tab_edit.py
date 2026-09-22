@@ -29,6 +29,7 @@ from ..imaging import aspect as aspect_module
 from ..imaging import masking, metadata, outpaint
 from ..prompting import boost as boost_module
 from ..storage import gallery
+from . import layout
 from .i18n import Localizer, pick, say
 from .state import GPU_CONCURRENCY_ID, describe_failure
 
@@ -95,15 +96,15 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     if language is None:
         language = gr.State(lang)
 
-    with gr.Row():
-        with gr.Column(scale=3):
+    with gr.Row(elem_classes=[layout.WORK_ROW]):
+        with gr.Column(scale=3, min_width=layout.CANVAS_MIN_WIDTH):
             editor = localizer.bind(
                 gr.ImageEditor(
                     label=pick("source_image", lang),
                     type="pil",
                     image_mode="RGBA",
                     layers=True,
-                    height=620,
+                    height=layout.CANVAS_HEIGHT,
                     brush=gr.Brush(colors=list(ANNOTATION_COLOURS), default_color="#ff0000", color_mode="fixed"),
                     eraser=gr.Eraser(),
                     sources=("upload", "clipboard"),
@@ -111,7 +112,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 label=("Исходное изображение", "Source image"),
             )
 
-            with gr.Row():
+            with gr.Row(elem_classes=[layout.PROMPT_BAR]):
                 prompt = localizer.bind(
                     gr.Textbox(
                         label=pick("prompt", lang),
@@ -141,14 +142,17 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 )
 
             result = localizer.bind(
-                gr.Gallery(label=pick("result", lang), columns=2, height=400, object_fit="contain", format="png"),
+                gr.Gallery(
+                    label=pick("result", lang), columns=2, height=layout.PREVIEW_HEIGHT,
+                    object_fit="contain", format="png", preview=True,
+                ),
                 label=("Результат", "Result"),
             )
             send_back = localizer.bind(
                 gr.Button(pick("send_to_edit", lang)), value=("Отправить в редактор", "Send to editor")
             )
 
-        with gr.Column(scale=1):
+        with gr.Column(scale=1, min_width=layout.SIDE_MIN_WIDTH):
             mode = localizer.bind(
                 gr.Radio(
                     choices=[(pick(_MODE_KEYS[key], lang), key) for key in _MODE_KEYS],
@@ -169,7 +173,10 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 label=("Качество", "Quality"),
             )
             status = localizer.bind(
-                gr.Textbox(label=pick("status", lang), interactive=False, lines=3),
+                gr.Textbox(
+                    label=pick("status", lang), interactive=False, lines=3,
+                    elem_classes=[layout.STATUS],
+                ),
                 label=("Состояние", "Status"),
             )
 

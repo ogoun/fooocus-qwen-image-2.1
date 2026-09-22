@@ -20,6 +20,7 @@ from ..engine import presets
 from ..imaging import aspect as aspect_module
 from ..imaging import metadata
 from ..storage import gallery
+from . import layout
 from .i18n import Localizer, pick, say
 
 # Порядок обязан совпадать с порядком выходов кнопки «Восстановить» в build():
@@ -111,25 +112,28 @@ def build(studio, localizer: Localizer, generate_components: dict, language=None
     if language is None:
         language = gr.State(lang)
 
-    with gr.Row():
-        with gr.Column(scale=3):
+    with gr.Row(elem_classes=[layout.WORK_ROW]):
+        with gr.Column(scale=3, min_width=layout.CANVAS_MIN_WIDTH):
             history = localizer.bind(
                 gr.Gallery(
                     label=pick("tab_gallery", lang),
                     columns=6,
-                    height=560,
+                    height=layout.BROWSE_HEIGHT,
                     object_fit="contain",
                     value=[str(path) for path in gallery.recent(config.OUTPUT_DIR)],
                 ),
                 label=("Галерея", "Gallery"),
             )
-        with gr.Column(scale=1):
+        with gr.Column(scale=1, min_width=layout.SIDE_MIN_WIDTH):
             refresh = localizer.bind(gr.Button(pick("refresh", lang)), value=("Обновить", "Refresh"))
             open_button = localizer.bind(
                 gr.Button(pick("open_folder", lang)), value=("Открыть папку", "Open folder")
             )
             dropped = localizer.bind(
-                gr.File(label=pick("restore_params", lang), file_types=[".png"]),
+                gr.File(
+                    label=pick("restore_params", lang), file_types=[".png"],
+                    elem_classes=[layout.DROP_ZONE],
+                ),
                 label=("Восстановить параметры из PNG", "Restore parameters from PNG"),
             )
             restore_button = localizer.bind(

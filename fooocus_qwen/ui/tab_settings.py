@@ -16,6 +16,7 @@ import gradio as gr
 
 from .. import config
 from ..llm import LlmError
+from . import layout
 from .i18n import MESSAGES, Localizer, pick, say
 
 _PROMPT_FILES: tuple[str, ...] = (
@@ -60,8 +61,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     if language is None:
         language = gr.State(lang)
 
-    with gr.Row():
-        with gr.Column():
+    with gr.Row(elem_classes=[layout.WORK_ROW]):
+        with gr.Column(min_width=layout.SIDE_MIN_WIDTH):
             endpoint_text = localizer.bind(
                 gr.Textbox(
                     label=pick("llm_endpoint", lang),
@@ -88,7 +89,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 label=("Состояние", "Status"),
             )
 
-        with gr.Column():
+        with gr.Column(min_width=layout.SIDE_MIN_WIDTH):
             ru_choices = [(pick(_PROMPT_KEYS[name], "ru"), name) for name in _PROMPT_FILES]
             en_choices = [(pick(_PROMPT_KEYS[name], "en"), name) for name in _PROMPT_FILES]
             chosen_file = localizer.bind(

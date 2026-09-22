@@ -23,6 +23,7 @@ from ..imaging import aspect, metadata
 from ..prompting import boost as boost_module
 from ..prompting import library
 from ..storage import gallery
+from . import layout
 from .i18n import Localizer, pick, say
 from .state import GPU_CONCURRENCY_ID, describe_failure
 
@@ -88,21 +89,26 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     references = gr.State([])
 
-    with gr.Row():
-        with gr.Column(scale=3):
+    with gr.Row(elem_classes=[layout.WORK_ROW]):
+        with gr.Column(scale=3, min_width=layout.CANVAS_MIN_WIDTH):
             result = localizer.bind(
                 gr.Gallery(
                     label=pick("result", lang),
                     show_label=True,
                     columns=2,
-                    height=620,
+                    height=layout.CANVAS_HEIGHT,
                     object_fit="contain",
                     format="png",
+                    # Крупный просмотр с лентой миниатюр под ним. Без него
+                    # сетка в две колонки отдавала единственному
+                    # изображению — а это значение по умолчанию — половину
+                    # ширины холста, и вторая половина стояла пустой.
+                    preview=True,
                 ),
                 label=("Результат", "Result"),
             )
 
-            with gr.Row():
+            with gr.Row(elem_classes=[layout.PROMPT_BAR]):
                 prompt = localizer.bind(
                     gr.Textbox(
                         label=pick("prompt", lang),
@@ -140,31 +146,44 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 label=("Переписанный промт", "Rewritten prompt"),
             )
 
-            reference_gallery = localizer.bind(
-                gr.Gallery(
-                    label=pick("references", lang),
-                    columns=5,
-                    height=170,
-                    object_fit="contain",
-                    show_label=True,
-                ),
+            # Референсы обязаны быть видны в главном окне вместе с тегами,
+            # которыми на них ссылаются из промта, — это требование
+            # заказчика. Но пустая лента с областью загрузки отнимала треть
+            # высоты у результата в каждой генерации, а референсы нужны
+            # далеко не в каждой. Поэтому секция закрыта, пока референсов
+            # нет, и раскрывается сама, как только первый добавлен: видно
+            # ровно тогда, когда есть что показывать.
+            reference_box = localizer.bind(
+                gr.Accordion(pick("references", lang), open=False),
                 label=("Референсы", "References"),
             )
-            with gr.Row():
-                reference_upload = localizer.bind(
-                    gr.File(
-                        label=pick("reference_add", lang),
-                        file_count="multiple",
-                        file_types=["image"],
+            with reference_box:
+                reference_gallery = localizer.bind(
+                    gr.Gallery(
+                        label=pick("references", lang),
+                        columns=5,
+                        height=layout.STRIP_HEIGHT,
+                        object_fit="contain",
+                        show_label=False,
                     ),
-                    label=("Добавить референсы", "Add references"),
+                    label=("Референсы", "References"),
                 )
-                reference_clear = localizer.bind(
-                    gr.Button(pick("reference_clear", lang)),
-                    value=("Очистить референсы", "Clear references"),
-                )
+                with gr.Row():
+                    reference_upload = localizer.bind(
+                        gr.File(
+                            label=pick("reference_add", lang),
+                            file_count="multiple",
+                            file_types=["image"],
+                            elem_classes=[layout.DROP_ZONE],
+                        ),
+                        label=("Добавить референсы", "Add references"),
+                    )
+                    reference_clear = localizer.bind(
+                        gr.Button(pick("reference_clear", lang)),
+                        value=("Очистить референсы", "Clear references"),
+                    )
 
-        with gr.Column(scale=1):
+        with gr.Column(scale=1, min_width=layout.SIDE_MIN_WIDTH):
             quality = localizer.bind(
                 gr.Radio(
                     choices=list(presets.NAMES),
@@ -191,7 +210,10 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 label=("Количество изображений", "Image number"),
             )
             status = localizer.bind(
-                gr.Textbox(label=pick("status", lang), interactive=False, lines=3),
+                gr.Textbox(
+                    label=pick("status", lang), interactive=False, lines=3,
+                    elem_classes=[layout.STATUS],
+                ),
                 label=("Состояние", "Status"),
             )
 
@@ -303,12 +325,20 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
         images = [PILImage.open(item.name).convert("RGB") for item in (files or [])[:MAX_REFERENCES]]
         captioned = list(zip(images, _captions(images, lang)))
-        return images, captioned, say("references_counted", lang, count=len(images), total=MAX_REFERENCES)
+        # Секция раскрывается сама, когда есть что показать: подписи с
+        # тегами `<imageN>` бесполезны, если до них надо доклацаться.
+        return (
+            images,
+            captioned,
+            gr.update(open=bool(images)),
+            say("references_counted", lang, count=len(images), total=MAX_REFERENCES),
+        )
 
     def clear_references(lang):
         # Сбрасываем и сам виджет: иначе следующее добавление файла принесёт
         # с собой прежний набор, который виджет продолжает хранить внутри себя.
-        return [], [], None, say("references_cleared", lang)
+        # Секция закрывается: показывать в ней больше нечего.
+        return [], [], None, gr.update(open=False), say("references_cleared", lang)
 
     def rewrite(prompt_text, current_references, ratio_value, lang):
         mode = boost_module.MODE_EDIT if current_references else boost_module.MODE_T2I
@@ -453,10 +483,14 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         return gr.update(choices=library.list_prompts(config.PROMPT_DIR), value=None), message
 
     reference_upload.change(
-        add_references, [reference_upload, language], [references, reference_gallery, status]
+        add_references,
+        [reference_upload, language],
+        [references, reference_gallery, reference_box, status],
     )
     reference_clear.click(
-        clear_references, language, [references, reference_gallery, reference_upload, status]
+        clear_references,
+        language,
+        [references, reference_gallery, reference_upload, reference_box, status],
     )
     boost_now.click(rewrite, [prompt, references, ratio, language], [boosted, ratio, status])
 
@@ -494,5 +528,6 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         "result": result,
         "references": references,
         "reference_gallery": reference_gallery,
+        "reference_box": reference_box,
         "advanced": advanced,
     }
