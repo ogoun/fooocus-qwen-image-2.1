@@ -158,12 +158,19 @@ def test_use_utf8_console_survives_streams_without_reconfigure(monkeypatch):
 def test_every_tool_prepares_the_console_before_parsing_arguments():
     """Правило распространяется на все точки входа, а не на ту, где заметили.
 
-    Сломалось это одинаково во всех трёх инструментах сразу, и починка в
-    одном ничего не говорит про остальные. Проверяем текстом исходника:
-    вызов обязан стоять выше первого обращения к argparse.
+    Сломалось это одинаково во всех инструментах сразу, и починка в одном
+    ничего не говорит про остальные. Проверяются **все** скрипты в
+    ``tools/`` и его подкаталогах, а не только те, что разбирают аргументы:
+    ``fetch_styles.py`` и ``fetch_system_prompts.py`` argparse не
+    используют, печатают по-русски и ровно поэтому выпали из первой
+    редакции этой проверки, оставшись сломанными. Там, где argparse есть,
+    вызов обязан стоять ещё и выше него: справка ``--help`` печатается до
+    первой строки ``main()``.
     """
+    # rglob, а не glob: опытные скрипты лежат в подкаталоге ``experiments``,
+    # и при переезде туда гарантия для них молча исчезла бы.
     tools = config.PROJECT_ROOT / "tools"
-    scripts = sorted(tools.glob("*.py"))
+    scripts = sorted(tools.rglob("*.py"))
     assert scripts, "инструменты не найдены — проверка выродилась бы в пустую"
 
     for script in scripts:
@@ -176,8 +183,6 @@ def test_every_tool_prepares_the_console_before_parsing_arguments():
             and isinstance(node.func, ast.Attribute)
             and node.func.attr == "ArgumentParser"
         ]
-        if not parses:
-            continue
         prepares = [
             node.lineno
             for node in ast.walk(tree)
@@ -190,7 +195,8 @@ def test_every_tool_prepares_the_console_before_parsing_arguments():
         # теста искала подстроку и спокойно проходила с отключённой починкой —
         # проверено диверсией.
         assert prepares, f"{script.name}: консоль не подготовлена"
-        assert min(prepares) < min(parses), (
-            f"{script.name}: подготовка консоли (строка {min(prepares)}) стоит ниже "
-            f"разбора аргументов (строка {min(parses)})"
-        )
+        if parses:
+            assert min(prepares) < min(parses), (
+                f"{script.name}: подготовка консоли (строка {min(prepares)}) стоит ниже "
+                f"разбора аргументов (строка {min(parses)})"
+            )

@@ -11,6 +11,14 @@ import sys
 import urllib.request
 from pathlib import Path
 
+# Корень проекта в sys.path: инструменты запускают по пути, и тогда туда
+# попадает каталог скрипта, а не корень.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from fooocus_qwen.logging_setup import use_utf8_console
+
+use_utf8_console()  # эти скрипты печатают по-русски; cp1252 их бы уронил
+
 BASE = "https://raw.githubusercontent.com/lllyasviel/Fooocus/main/sdxl_styles"
 FILES = (
     "sdxl_styles_fooocus.json",

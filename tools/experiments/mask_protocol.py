@@ -19,7 +19,7 @@ r"""Опыт: как заставить модель уважать маску, 
 снаружи. Чем оно выше, тем точнее модель попала в заданную область.
 
 Запуск:
-    .venv\Scripts\python tools\experiment_mask_protocol.py
+    .venv\Scripts\python tools\experiments\mask_protocol.py
 """
 
 from __future__ import annotations
@@ -27,7 +27,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fooocus_qwen.logging_setup import use_utf8_console
 

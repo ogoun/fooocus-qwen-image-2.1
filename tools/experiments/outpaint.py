@@ -35,7 +35,7 @@ naturally» описывает **операцию**, а не сцену, и ни
 процентов, — уже брак, потому что исходник непрозрачен.
 
 Запуск:
-    .venv\Scripts\python tools\experiment_outpaint.py
+    .venv\Scripts\python tools\experiments\outpaint.py
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fooocus_qwen.logging_setup import use_utf8_console
 

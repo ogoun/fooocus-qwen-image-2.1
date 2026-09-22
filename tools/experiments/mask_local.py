@@ -1,6 +1,6 @@
 r"""Опыт второго круга: локальная правка, где маска действительно решает.
 
-Первый круг (`experiment_mask_protocol.py`) просил «сделать волосы белыми» и
+Первый круг (`mask_protocol.py`) просил «сделать волосы белыми» и
 тем себя обесценил: волосы выходят за маску, и перекрасить их целиком —
 правильный ответ модели, а не промах. Отношение «внутри к снаружи» для такой
 задачи ничего не измеряет.
@@ -26,7 +26,7 @@ r"""Опыт второго круга: локальная правка, где 
   ``none``  — без маски вовсе, опорная точка.
 
 Запуск:
-    .venv\Scripts\python tools\experiment_mask_local.py
+    .venv\Scripts\python tools\experiments\mask_local.py
 """
 
 from __future__ import annotations
@@ -34,7 +34,7 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 from fooocus_qwen.logging_setup import use_utf8_console
 
