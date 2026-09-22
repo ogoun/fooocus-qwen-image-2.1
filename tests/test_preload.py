@@ -132,3 +132,43 @@ def test_building_the_ui_still_does_not_touch_the_model(monkeypatch):
 def test_preload_can_be_switched_off():
     assert config.AppConfig().preload is True
     assert config.AppConfig(preload=False).preload is False
+
+
+def test_preload_starts_only_after_the_server_passed_its_checks(monkeypatch):
+    """Веса читаются после того, как Gradio проверил доступность localhost.
+
+    Gradio заканчивает запуск контрольным ``HEAD`` на собственный адрес и с
+    таймаутом в три секунды (`gradio/networking.py`, ``url_ok``); не дождался —
+    решает, что localhost недоступен, и валит запуск требованием ``share=True``.
+    Греющий поток в этот момент читает тридцать три гигабайта весов и отнимает
+    у сервера и диск, и GIL: на прогретом файловом кэше проверка успевает, на
+    холодном — нет, и запуск падает через раз (см.
+    `docs/research/2026-09-22-zapusk-padal-na-proverke-localhost.md`).
+
+    Лечится не таймаутом, а порядком: ``prevent_thread_lock=True`` возвращает
+    управление сразу после всех проверок, греем мы уже потом, а поток держим
+    сами тем же ``block_thread``, что позвал бы и сам Gradio.
+    """
+    events: list[tuple] = []
+
+    class _Demo:
+        def queue(self, **_kwargs):
+            return self
+
+        def launch(self, **kwargs):
+            events.append(("launch", kwargs.get("prevent_thread_lock")))
+
+        def block_thread(self):
+            events.append(("block", None))
+
+    class _Studio:
+        def preload_in_background(self):
+            events.append(("preload", None))
+
+    from fooocus_qwen.ui import app
+
+    monkeypatch.setattr(app, "build", lambda cfg, return_studio=False: (_Demo(), _Studio()))
+    app.launch(config.AppConfig())
+
+    assert [name for name, _ in events] == ["launch", "preload", "block"]
+    assert events[0][1] is True, "Gradio должен вернуть управление до прогрева"

@@ -101,10 +101,6 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
 
 def launch(cfg: config.AppConfig) -> None:
     demo, studio = build(cfg, return_studio=True)
-    if cfg.preload:
-        # Пока пользователь открывает браузер и набирает промт, модель
-        # успевает загрузиться: эти секунды больше не его.
-        studio.preload_in_background()
     demo.queue(default_concurrency_limit=1)
     # В Gradio 6 параметр css переехал из конструктора Blocks в launch() — передача
     # его в конструктор всё ещё работает, но с предупреждением об устаревании.
@@ -113,4 +109,26 @@ def launch(cfg: config.AppConfig) -> None:
     # В Gradio 6.5.1 параметра show_api больше нет ни в Blocks, ни в launch() —
     # он был убран выше по течению. Ссылку «Use via API» и так прячет footer
     # в style.css, так что отдельно отключать нечего.
-    demo.launch(server_name=cfg.host, server_port=cfg.port, inbrowser=False, css=css)
+    # ``prevent_thread_lock`` — не косметика, а условие корректного старта.
+    # Gradio заканчивает запуск контрольным ``HEAD`` на собственный адрес с
+    # таймаутом в три секунды (``gradio/networking.py``, ``url_ok``); не
+    # дождавшись ответа, он объявляет localhost недоступным и валит запуск
+    # требованием ``share=True``. Пока прогрев шёл до ``launch``, греющий поток
+    # читал тридцать три гигабайта весов ровно в эти секунды и отнимал у
+    # собственного сервера и диск, и GIL: на прогретом файловом кэше проверка
+    # успевала, на холодном — нет, и запуск падал через раз. Лечит это не
+    # таймаут, а порядок — сначала сервер отвечает на проверку, потом греем.
+    demo.launch(
+        server_name=cfg.host,
+        server_port=cfg.port,
+        inbrowser=False,
+        css=css,
+        prevent_thread_lock=True,
+    )
+    if cfg.preload:
+        # Пока пользователь открывает браузер и набирает промт, модель
+        # успевает загрузиться: эти секунды больше не его.
+        studio.preload_in_background()
+    # Поток держим сами — тем же ``block_thread``, который позвал бы Gradio,
+    # не попроси мы управление обратно. Он же ловит Ctrl+C и закрывает сервер.
+    demo.block_thread()
