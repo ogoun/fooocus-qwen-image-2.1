@@ -172,6 +172,19 @@ MESSAGES: dict[str, tuple[str, str]] = {
         "The rewritten prompt was made from different text: it was sent, not what is now "
         "in the “Prompt” field. Press “Rewrite now” or clear the field.",
     ),
+    # Стадии до первого шага денойзинга. Прогресс приходит из обратного
+    # вызова пайплайна, то есть **после** шага, а до него успевают пройти
+    # загрузка модели (около пятидесяти секунд на первом запуске) и
+    # кодирование промта с условными изображениями. Всё это время интерфейс
+    # молчал, и отличить работу от зависания было нельзя.
+    "stage_loading": (
+        "Загружаю модель в память — это разовая минута на первом запуске…",
+        "Loading the model into memory — a one-off minute on first run…",
+    ),
+    "stage_preparing": (
+        "Готовлю: кодирую промт и условные изображения. Первый шаг дольше остальных…",
+        "Preparing: encoding the prompt and condition images. The first step takes longest…",
+    ),
     "references_cleared": ("Референсы очищены", "References cleared"),
     "reference_scale_chosen": (
         "детальность референсов {scale} (выбрано автоматически)",

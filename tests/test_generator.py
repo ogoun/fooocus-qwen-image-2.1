@@ -503,16 +503,60 @@ def test_the_scale_never_exceeds_the_preset():
     assert gen.resolve_reference_scale(request(preset=low, reference_scale=4096)) == 1024
 
 
-def test_editing_without_references_stays_at_full_scale():
-    """Масштаб общий для всех условных изображений, включая исходник.
+def test_editing_is_capped_too_because_the_source_is_a_condition_image():
+    """Исходник при правке считается наравне с референсом.
 
-    Поэтому автоматика смотрит только на референсы: у правки без них
-    детальность исходника и решает качество, урезать её нельзя.
+    Первая редакция правила исключала правку: «у правки детальность
+    исходника решает качество». Рассуждение верное, вывод неверный —
+    замер показал, что правка на среднем пресете при полном масштабе
+    **не помещается в карту вовсе** (CUDA out of memory), а при масштабе
+    1024 идёт 6.3 с на шаг при пике 18.1 ГиБ и кадре полных 1536x1536.
+    Детальность, которой нет, ничего не решает, если кадр не считается.
     """
     middle = presets.get("MiddleQuality")
-    edited = request(preset=middle, source=image((512, 512)), mask=image((512, 512)),
-                     mask_mode=gen.MASK_MASK)
-    assert gen.resolve_reference_scale(edited) == middle.output_resolution
+
+    without_mask = request(preset=middle, source=image((512, 512)))
+    assert gen.resolve_reference_scale(without_mask) == 1024
+
+    # С маской условных изображений два, и урезание глубже.
+    with_mask = request(preset=middle, source=image((512, 512)), mask=image((512, 512)),
+                        mask_mode=gen.MASK_MASK)
+    assert gen.resolve_reference_scale(with_mask) == 768
+
+
+def test_plain_generation_is_not_touched():
+    # Без условных изображений урезать нечего: последовательность короткая,
+    # и полный масштаб пресета измеренно помещается (17.0 ГиБ, 5.8 с/шаг).
+    middle = presets.get("MiddleQuality")
+    assert gen.resolve_reference_scale(request(preset=middle)) == middle.output_resolution
+
+
+def test_the_count_matches_what_the_model_will_actually_see():
+    """``condition_count`` обязан совпадать с ``condition_slots``.
+
+    Считать без построения изображений нужно ради памяти: копия маски в
+    полный размер исходника на каждом запросе — не мелочь. Но два свода
+    правил вместо одного разошлись бы молча, и первым это заметил бы
+    пользователь по нехватке памяти.
+    """
+    cases = [
+        request(),
+        request(source=image()),
+        request(source=image(), mask=image(), mask_mode=gen.MASK_MASK),
+        request(source=image(), mask=image(), mask_mode=gen.MASK_REGION),
+        request(source=image(), mask=image(), mask_mode=gen.MASK_ANNOTATION),
+        request(source=image(), mask=image(), mask_mode=gen.MASK_NONE),
+        request(references=tuple(image() for _ in range(3))),
+        request(source=image(), references=tuple(image() for _ in range(2))),
+        request(source=image(), mask=image(), mask_mode=gen.MASK_MASK,
+                references=tuple(image() for _ in range(4))),
+    ]
+    for case in cases:
+        assert gen.condition_count(case) == len(gen.build_conditions(case)), (
+            f"расхождение при source={case.source is not None}, "
+            f"mask={case.mask is not None}, mode={case.mask_mode}, "
+            f"референсов {len(case.references)}"
+        )
 
 
 def test_the_frame_does_not_shrink_together_with_the_references():

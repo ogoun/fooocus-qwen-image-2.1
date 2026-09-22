@@ -419,6 +419,12 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     desc=say("progress_image", lang, index=index + 1, total=int(count)),
                 )
 
+            # Стадия до первого шага: прогресс из пайплайна приходит только
+            # после шага, а загрузка модели и кодирование промта идут раньше
+            # и молча. Отличить работу от зависания пользователь не мог.
+            progress(0, desc=say(
+                "stage_loading" if not studio.model_loaded else "stage_preparing", lang
+            ))
             produced, failure = studio.run_generation(request, lang, progress=report)
             if failure is not None:
                 return [], f"{message} {failure}".strip()

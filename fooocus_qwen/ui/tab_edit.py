@@ -19,6 +19,7 @@ from PIL import Image
 from .. import config
 from ..engine import presets
 from ..engine.generator import (
+    resolve_reference_scale,
     MASK_ANNOTATION,
     MASK_MASK,
     MASK_NONE,
@@ -309,9 +310,24 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             keep_outside=bool(keep_value),
         )
 
+        # Автоматически урезанный масштаб условных изображений обязан быть
+        # виден и здесь: исходник при правке — такое же условное
+        # изображение, как референс, и на среднем пресете полный масштаб не
+        # помещается в карту вовсе. Молчать о подмене значило бы оставить
+        # необъяснимую потерю детальности исходника.
+        chosen = resolve_reference_scale(request)
+        if chosen != request.preset.output_resolution:
+            message = f"{message} {say('reference_scale_chosen', lang, scale=chosen)}".strip()
+
         def report(index: int, step: int, total: int) -> None:
             progress((step, total), desc=say("progress_edit", lang))
 
+        # Стадия до первого шага: прогресс из пайплайна приходит только
+        # после шага, а загрузка модели и кодирование промта идут раньше
+        # и молча. Отличить работу от зависания пользователь не мог.
+        progress(0, desc=say(
+            "stage_loading" if not studio.model_loaded else "stage_preparing", lang
+        ))
         produced, failure = studio.run_generation(request, lang, progress=report)
         if failure is not None:
             return [], f"{message} {failure}".strip()
