@@ -20,14 +20,32 @@ def build(cfg: config.AppConfig) -> gr.Blocks:
     localizer = Localizer(cfg.lang)
 
     with gr.Blocks(title=pick("app_title", cfg.lang), analytics_enabled=False) as demo:
-        with gr.Row(elem_classes=[layout.HEADER]):
-            localizer.bind(
-                gr.Markdown(f"## {pick('app_title', cfg.lang)}"),
-                value=("## Qwen-Image-2.1 — студия", "## Qwen-Image-2.1 Studio"),
-            )
-            language = gr.Dropdown(
-                choices=list(LANGUAGES), value=cfg.lang, label="RU / EN", scale=0, min_width=120
-            )
+        # Заголовка на странице нет намеренно. Название приложения стоит в
+        # заголовке окна браузера (`title=` у Blocks), и повторять его строкой
+        # в сто пикселей высотой, которую пользователь читает один раз в
+        # жизни, — расточительство: эту высоту отнимали у холста каждый раз.
+        #
+        # Язык живёт в состоянии, а не в виджете: значение нужно каждому
+        # обработчику как последний вход, а выпадающий список с подписью
+        # «RU / EN» занимал отдельную строку ради двух букв. Видимое
+        # управление — одна кнопка в правом верхнем углу, поверх полосы
+        # вкладок и без собственной высоты (позиционирование в style.css).
+        language = gr.State(cfg.lang)
+        language_button = gr.Button(
+            cfg.lang.upper(), size="sm", elem_classes=[layout.LANG], scale=0, min_width=0
+        )
+
+        def switch_language(current: str) -> tuple[str, dict]:
+            """Переключает язык по кругу и переписывает надпись на кнопке.
+
+            По кругу, а не «включить английский»: языков два, и кнопка
+            показывает тот, что сейчас выбран, — так же, как это делают
+            переключатели языка в браузерах и почтовых клиентах.
+            """
+            order = list(LANGUAGES)
+            following = order[(order.index(current) + 1) % len(order)] if current in order else order[0]
+            return following, gr.update(value=following.upper())
+
 
         with gr.Tabs():
             # Заголовок вкладки — такая же переводимая подпись, как и всё
@@ -67,6 +85,9 @@ def build(cfg: config.AppConfig) -> gr.Blocks:
         # пользователю: сообщения собираются в момент ответа, а не при сборке
         # интерфейса, поэтому строка состояния говорит на текущем языке, а не
         # на языке запуска.
+        language_button.click(
+            switch_language, language, [language, language_button], queue=False
+        )
         language.change(localizer.updates, language, localizer.components, queue=False)
 
     return demo

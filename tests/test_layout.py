@@ -26,7 +26,7 @@ SOURCES = sorted((config.PROJECT_ROOT / "fooocus_qwen" / "ui").glob("*.py"))
 
 CLASS_NAMES = {
     name: getattr(layout, name)
-    for name in ("HEADER", "WORK_ROW", "PROMPT_BAR", "DROP_ZONE", "STATUS")
+    for name in ("LANG", "WORK_ROW", "PROMPT_BAR", "DROP_ZONE", "STATUS")
 }
 HEIGHTS = {
     name: getattr(layout, name)

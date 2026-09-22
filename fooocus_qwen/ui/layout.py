@@ -42,7 +42,10 @@ SIDE_MIN_WIDTH = 340
 CANVAS_MIN_WIDTH = 480
 
 # Классы для style.css.
-HEADER = "qs-header"
+# Переключатель языка висит в правом верхнем углу поверх полосы вкладок и
+# не занимает собственной высоты: отдельная строка ради двух букв — роскошь,
+# которой заголовок уже обошёлся.
+LANG = "qs-lang"
 WORK_ROW = "qs-work"
 PROMPT_BAR = "qs-bar"
 DROP_ZONE = "qs-drop"

@@ -18,16 +18,35 @@
     margin-right: auto !important;
     padding-left: 16px !important;
     padding-right: 16px !important;
+    /* Точка отсчёта для переключателя языка: он висит в углу абсолютно. */
+    position: relative !important;
 }
 
 footer { display: none !important; }
 
-/* --- шапка -------------------------------------------------------------- */
+/* --- переключатель языка ------------------------------------------------ */
 
-/* Заголовок и переключатель языка на одной линии по вертикали: без этого
-   выпадающий список висел выше строки заголовка. */
-.qs-header { align-items: center !important; }
-.qs-header h2 { margin: 0 !important; }
+/* Правый верхний угол поверх полосы вкладок. Собственной высоты не
+   занимает: заголовок и строка с выпадающим списком отнимали её вдвоём
+   больше сотни пикселей ни за что. Точка отсчёта задана выше, у самого
+   контейнера. */
+.qs-lang {
+    position: absolute !important;
+    top: 10px !important;
+    right: 18px !important;
+    z-index: 20 !important;
+    width: auto !important;
+    min-width: 0 !important;
+    flex: 0 0 auto !important;
+    padding: 2px 12px !important;
+    font-weight: 600 !important;
+}
+
+/* На узком окне полоса вкладок переносится и может уехать под кнопку —
+   там она становится обычным элементом потока. */
+@media (max-width: 720px) {
+    .qs-lang { position: static !important; margin-left: auto !important; }
+}
 
 /* --- переносы раскладки ------------------------------------------------- */
 
