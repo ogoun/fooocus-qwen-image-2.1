@@ -15,12 +15,23 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Инструменты запускают по пути (`python tools\x.py`), и тогда в sys.path
+# попадает каталог скрипта, а не корень проекта: без этой строки любой из них
+# падает с ModuleNotFoundError ещё до первой полезной работы.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from fooocus_qwen.logging_setup import use_utf8_console
+
+use_utf8_console()  # русская справка --help не должна падать на cp1252
+
 import argparse
 import json
 import statistics
 import time
 from datetime import date
-from pathlib import Path
 
 import torch
 from PIL import Image
@@ -35,7 +46,6 @@ PROMPT = (
     "warm afternoon light through a window"
 )
 MULTI_PROMPT = "combine <image1> and <image2> into one quiet still life on a table"
-
 
 def reference_images(count: int) -> tuple[Image.Image, ...]:
     """Синтетические референсы: важен их объём в токенах, а не содержание."""
@@ -130,6 +140,9 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Бенчмарк пресетов и числа референсов")
     parser.add_argument("--repeats", type=int, default=3, help="замеров после прогревочного")
     parser.add_argument("--references", type=int, nargs="*", default=[0, 1, 5, 10])
+    parser.add_argument("--skip-presets", action="store_true", help="не перемерять пресеты")
+    parser.add_argument("--carry", type=str, default=None,
+                        help="json с уже измеренными пресетами, чтобы дописать к ним референсы")
     args = parser.parse_args()
 
     logging_setup.setup_logging(False)
@@ -141,7 +154,29 @@ def main() -> int:
 
     report: dict = {"presets": {}, "references": {}, "load_seconds": load_seconds}
 
-    for name in presets.NAMES:
+    if args.carry:
+        carried = json.loads(Path(args.carry).read_text(encoding="utf-8"))
+        report["presets"] = carried.get("presets", {})
+        report["references"] = carried.get("references", {})
+        report["load_seconds"] = carried.get("load_seconds", load_seconds)
+
+    def flush() -> None:
+        """Сохраняет промежуточный результат.
+
+        Прогон идёт десятками минут, и обрыв на середине не должен уносить
+        всё измеренное: один раз уже унёс.
+        """
+        report.setdefault("cache", {"hits": cache.hits, "misses": cache.misses})
+        report["cache"] = {"hits": cache.hits, "misses": cache.misses}
+        report["residency"] = residency.stats()
+        (config.LOG_DIR / "benchmark.json").write_text(
+            json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        (config.PROJECT_ROOT / "docs" / "BENCHMARK.md").write_text(
+            render(report, torch.cuda.get_device_name(0)), encoding="utf-8"
+        )
+
+    for name in ([] if args.skip_presets else presets.NAMES):
         request = GenerationRequest(prompt=PROMPT, preset=presets.get(name))
         try:
             result = measure(engine, request, args.repeats)
@@ -150,6 +185,7 @@ def main() -> int:
             torch.cuda.empty_cache()
         report["presets"][name] = result
         print(f"{name}: {result}", flush=True)
+        flush()
 
     for count in args.references:
         request = GenerationRequest(
@@ -164,6 +200,7 @@ def main() -> int:
             torch.cuda.empty_cache()
         report["references"][str(count)] = result
         print(f"референсов {count}: {result}", flush=True)
+        flush()
 
     report["cache"] = {"hits": cache.hits, "misses": cache.misses}
     report["residency"] = residency.stats()

@@ -39,6 +39,22 @@ def _configure_console_stream(stream):
     return stream
 
 
+def use_utf8_console() -> None:
+    """Готовит стандартные потоки к русскому тексту до первой же печати.
+
+    ``setup_logging`` чинит только тот поток, который отдаёт логгеру, и делает
+    это внутри себя — а инструменты в ``tools/`` печатают по-русски раньше:
+    argparse выводит справку ``--help`` ещё до того, как что-либо настроено, и
+    на консоли Windows в cp1252 падает с UnicodeEncodeError, не показав ни
+    строчки помощи. Поэтому вход публичный и зовётся первым делом.
+
+    Настраиваются оба потока: ошибка уходит в stderr, и толку от читаемой
+    справки мало, если сообщение о сбое всё равно нечитаемо.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        _configure_console_stream(stream)
+
+
 def setup_logging(verbose: bool = False) -> None:
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = config.LOG_DIR / f"{datetime.now():%Y-%m-%d_%H-%M-%S}.log"
@@ -46,7 +62,8 @@ def setup_logging(verbose: bool = False) -> None:
     level = logging.DEBUG if verbose else logging.INFO
     formatter = logging.Formatter(_FORMAT)
 
-    console = logging.StreamHandler(_configure_console_stream(sys.stdout))
+    use_utf8_console()
+    console = logging.StreamHandler(sys.stdout)
     console.setFormatter(formatter)
 
     file_handler = logging.FileHandler(log_file, encoding="utf-8")

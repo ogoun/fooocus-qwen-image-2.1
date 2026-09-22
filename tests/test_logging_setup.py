@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import ast
 import io
 import logging
 
@@ -113,3 +114,83 @@ def test_console_handler_stream_is_configured_for_utf8(tmp_path, monkeypatch, is
     if hasattr(stream, "reconfigure"):
         assert stream.encoding.lower() == "utf-8"
         assert stream.errors == "replace"
+
+
+# --- публичный вход для точек входа без логгера --------------------------
+
+
+def test_use_utf8_console_configures_both_standard_streams(monkeypatch):
+    """Оба потока, а не только stdout.
+
+    Инструменты в ``tools/`` печатают по-русски раньше, чем существует
+    логгер: argparse выводит справку ``--help`` до первой строки кода
+    ``main()``. Поэтому вход публичный и зовётся первым делом. Стандартная
+    ошибка настраивается вместе со стандартным выводом: от читаемой справки
+    мало толку, если сообщение о сбое всё равно нечитаемо.
+    """
+    out = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    err = io.TextIOWrapper(io.BytesIO(), encoding="cp1252", errors="strict")
+    monkeypatch.setattr("sys.stdout", out)
+    monkeypatch.setattr("sys.stderr", err)
+
+    logging_setup.use_utf8_console()
+
+    for stream, name in ((out, "stdout"), (err, "stderr")):
+        assert stream.encoding.lower() == "utf-8", f"{name} остался в {stream.encoding}"
+        stream.write("Генерация завершена\n")  # не должно бросить
+
+
+def test_use_utf8_console_survives_streams_without_reconfigure(monkeypatch):
+    # Под некоторыми перехватчиками вывода у потока нет reconfigure(); это не
+    # повод падать до вывода справки — именно там вызов и стоит.
+    class _Plain:
+        encoding = "cp1252"
+
+        def write(self, _text: str) -> int:
+            return 0
+
+    monkeypatch.setattr("sys.stdout", _Plain())
+    monkeypatch.setattr("sys.stderr", _Plain())
+
+    logging_setup.use_utf8_console()  # отсутствие исключения и есть проверка
+
+
+def test_every_tool_prepares_the_console_before_parsing_arguments():
+    """Правило распространяется на все точки входа, а не на ту, где заметили.
+
+    Сломалось это одинаково во всех трёх инструментах сразу, и починка в
+    одном ничего не говорит про остальные. Проверяем текстом исходника:
+    вызов обязан стоять выше первого обращения к argparse.
+    """
+    tools = config.PROJECT_ROOT / "tools"
+    scripts = sorted(tools.glob("*.py"))
+    assert scripts, "инструменты не найдены — проверка выродилась бы в пустую"
+
+    for script in scripts:
+        source = script.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        parses = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "ArgumentParser"
+        ]
+        if not parses:
+            continue
+        prepares = [
+            node.lineno
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "use_utf8_console"
+        ]
+        # Разбор дерева, а не поиск подстроки: закомментированный вызов текст
+        # содержит, а выполнять его никто не будет. Первая редакция этого
+        # теста искала подстроку и спокойно проходила с отключённой починкой —
+        # проверено диверсией.
+        assert prepares, f"{script.name}: консоль не подготовлена"
+        assert min(prepares) < min(parses), (
+            f"{script.name}: подготовка консоли (строка {min(prepares)}) стоит ниже "
+            f"разбора аргументов (строка {min(parses)})"
+        )

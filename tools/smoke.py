@@ -13,10 +13,21 @@
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+
+# Инструменты запускают по пути (`python tools\x.py`), и тогда в sys.path
+# попадает каталог скрипта, а не корень проекта: без этой строки любой из них
+# падает с ModuleNotFoundError ещё до первой полезной работы.
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
+from fooocus_qwen.logging_setup import use_utf8_console
+
+use_utf8_console()  # русская справка --help не должна падать на cp1252
+
 import argparse
 import threading
 import time
-from pathlib import Path
 
 import numpy as np
 import torch
@@ -38,7 +49,6 @@ from fooocus_qwen.prompting.styles import load_styles
 OUT = config.LOG_DIR / "smoke"
 RESULTS: list[tuple[str, str, str]] = []
 
-
 def record(point: str, verdict: str, note: str = "") -> None:
     RESULTS.append((point, verdict, note))
     print(f"  [{verdict}] {point}" + (f" — {note}" if note else ""), flush=True)
@@ -58,6 +68,22 @@ def one(engine: Generator, **kwargs) -> Image.Image | None:
 
 
 # --- сценарии ---------------------------------------------------------------
+
+
+def opaque_share(image: Image.Image, where: np.ndarray | None = None) -> float:
+    """Доля непрозрачных пикселей — в процентах, в заданной области.
+
+    Проверка появилась после того, как прогон засчитал заведомо испорченную
+    дорисовку полей. Модель объявила всю новую площадь прозрачной, под альфой
+    остался пурпур декодера, а скрипт смотрел только на размер кадра и
+    рапортовал «ок». Качество картинки скрипт судить не может — а вот
+    непрозрачность обязан: это не вкус, а число.
+    """
+    if image.mode != "RGBA":
+        return 100.0
+    alpha = np.asarray(image)[..., 3]
+    selected = alpha if where is None else alpha[where]
+    return float((selected >= 250).mean() * 100) if selected.size else 100.0
 
 
 def scenario_presets(engine: Generator) -> None:
@@ -183,6 +209,16 @@ def scenario_edit_mask(engine: Generator, source: Image.Image) -> None:
         "ок" if identical else "ПРОВАЛ",
         f"изменено {changed_share:.1%} кадра -> {path.name}",
     )
+    # Исходник непрозрачен, значит и правка обязана остаться непрозрачной.
+    # Без этой проверки прозрачность, которую модель принимает за смысл маски,
+    # прошла бы незамеченной — так и случилось с дорисовкой полей.
+    inside = np.asarray(refined) > 0
+    opaque = opaque_share(image, inside)
+    record(
+        "правка по маске осталась непрозрачной",
+        "ок" if opaque >= 99.0 else "ПРОВАЛ",
+        f"непрозрачно внутри маски {opaque:.1f} %",
+    )
 
 
 def scenario_annotation(engine: Generator, source: Image.Image) -> None:
@@ -224,13 +260,18 @@ def scenario_annotation(engine: Generator, source: Image.Image) -> None:
 def scenario_region(engine: Generator, source: Image.Image) -> None:
     print("\n== пункт 10: точная область на мелкой детали ==")
     width, height = source.size
+    # Область и просьба обязаны совпадать. В первой редакции маска лежала на
+    # лбу (y от 0.22 до 0.34), а промт просил серьги — уши совсем в другом
+    # месте, модель разумно не сделала ничего заметного, и пункт «проходил»,
+    # ничего по существу не проверив. Теперь пятно на лбу и просьба про
+    # украшение на лбу.
     mask = Image.new("L", source.size, 0)
     ImageDraw.Draw(mask).ellipse(
-        (int(width * 0.42), int(height * 0.22), int(width * 0.58), int(height * 0.34)), fill=255
+        (int(width * 0.45), int(height * 0.20), int(width * 0.55), int(height * 0.27)), fill=255
     )
     image = one(
         engine,
-        prompt="add round golden earrings",
+        prompt="a small round golden bindi jewel on her forehead",
         preset=presets.get("LowQuality"),
         aspect=aspect.FOLLOW_REFERENCE,
         source=source,
@@ -243,11 +284,22 @@ def scenario_region(engine: Generator, source: Image.Image) -> None:
         record("точная область", "ПРОВАЛ", "нет изображения")
         return
     path = save(image, "region")
-    same_size = image.size == source.size
+    # Совпадения размера мало: при неудачно поставленной маске кадр вернётся
+    # того же размера и байт в байт исходным, и пункт «пройдёт», не проверив
+    # ничего. Правка обязана произойти внутри области и не выйти за неё.
+    refined = masking.refine(mask, grow=8, feather=12)
+    inside = np.asarray(refined) > 0
+    before = np.asarray(source.convert("RGB")).astype(np.float32)
+    after = np.asarray(image.convert("RGB")).astype(np.float32)
+    delta = np.abs(before - after).mean(axis=2)
+    changed_inside = float(delta[inside].mean())
+    changed_outside = float(delta[~inside].max())
+    good = image.size == source.size and changed_inside > 1.0 and changed_outside == 0.0
     record(
         "точная область",
-        "ок" if same_size else "ПРОВАЛ",
-        f"размер {image.size} (исходный {source.size}) -> {path.name}",
+        "ок" if good else "ПРОВАЛ",
+        f"размер {image.size}, среднее изменение внутри {changed_inside:.1f}, "
+        f"максимум снаружи {changed_outside:.1f} -> {path.name}",
     )
 
 
@@ -272,10 +324,14 @@ def scenario_outpaint(engine: Generator, source: Image.Image) -> None:
             continue
         path = save(image, f"outpaint-{tag}")
         grew = image.size == plan.canvas_size
+        new_area = np.asarray(mask.resize(image.size, Image.NEAREST)) > 127
+        opaque = opaque_share(image, new_area)
+        good = grew and opaque >= 99.0
         record(
             f"расширение {tag}",
-            "ок" if grew else "ПРОВАЛ",
-            f"{source.size} -> {image.size} -> {path.name}",
+            "ок" if good else "ПРОВАЛ",
+            f"{source.size} -> {image.size}, непрозрачно в новой площади {opaque:.1f} % "
+            f"-> {path.name}",
         )
 
 
@@ -285,11 +341,16 @@ def scenario_references(engine: Generator) -> None:
                (80, 180, 190), (230, 120, 70), (110, 110, 110), (180, 60, 140), (60, 200, 130)]
     refs = tuple(Image.new("RGB", (768, 768), colour) for colour in palette)
 
+    # Пресет намеренно быстрый, а не средний: замеры показали, что уже один
+    # референс на MiddleQuality поднимает пик до 21 ГиБ из 24, а пять уводят
+    # карту в деградацию с вытеснением в оперативную память и тринадцатью
+    # минутами на кадр. Проверяем работоспособность десяти референсов, а не
+    # терпение — цифры про память живут в docs/BENCHMARK.md.
     try:
         image = one(
             engine,
             prompt="a tidy shelf holding ten coloured boxes",
-            preset=presets.get("MiddleQuality"),
+            preset=presets.get("LowQuality"),
             references=refs,
             seed=77,
         )
