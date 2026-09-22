@@ -61,6 +61,46 @@ def test_condition_mask_is_white_where_the_edit_goes():
     assert tuple(array[2, 2]) == (0, 0, 0)
 
 
+def test_the_model_never_sees_a_grey_edge_on_the_mask():
+    """Только 0 и 255 — ни одного промежуточного значения.
+
+    Модель читает серый ореол как альфа-матовку и делает область
+    прозрачной: на дорисовке полей это давало пурпур вместо продолжения
+    сцены (измерения — docs/research/2026-09-22-maska-kak-alfa.md).
+    Растушёвка остаётся у склейки, где она и нужна.
+    """
+    mask = masking.mask_from_editor(editor_value((64, 64), (20, 20, 44, 44)))
+    feathered = masking.refine(mask, grow=4, feather=8)
+    assert set(np.unique(np.asarray(feathered))) - {0, 255}, (
+        "растушёвка не дала полутонов — проверка выродилась бы в пустую"
+    )
+
+    condition = np.asarray(masking.as_condition(feathered))
+    assert set(np.unique(condition)) <= {0, 255}, (
+        f"модели ушли полутона: {sorted(set(np.unique(condition)) - {0, 255})[:5]}"
+    )
+
+
+def test_the_blend_still_gets_the_soft_edge():
+    """Бинаризация касается только модели, а не склейки.
+
+    Обе стороны обслуживает одна и та же маска, но представления у них
+    разные; если бы бинаризация протекла в склейку, вернулась бы резкая
+    граница вклейки, ради устранения которой растушёвка и существует.
+    """
+    mask = masking.mask_from_editor(editor_value((64, 64), (20, 20, 44, 44)))
+    feathered = masking.refine(mask, grow=4, feather=8)
+    masking.as_condition(feathered)  # не должна испортить исходную маску
+
+    array = np.asarray(feathered)
+    assert set(np.unique(array)) - {0, 255}, "склейка осталась без полутонов"
+
+    base = Image.new("RGB", (64, 64), (0, 0, 0))
+    patch = Image.new("RGB", (64, 64), (255, 255, 255))
+    blended = np.asarray(masking.blend(base, patch, feathered))[..., 0]
+    assert set(np.unique(blended)) - {0, 255}, "склейка дала резкий край"
+
+
 def test_grow_expands_the_mask():
     mask = masking.mask_from_editor(editor_value((64, 64), (28, 28, 36, 36)))
     grown = np.asarray(masking.refine(mask, grow=6, feather=0))

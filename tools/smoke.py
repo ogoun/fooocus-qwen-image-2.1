@@ -310,7 +310,18 @@ def scenario_outpaint(engine: Generator, source: Image.Image) -> None:
         canvas, mask = outpaint.expand(source, plan)
         image = one(
             engine,
-            prompt="continue the scene naturally",
+            # Описание сцены, а не действия. «Continue the scene naturally»
+            # стояло здесь в первой редакции и давало прозрачную заливку во
+            # всей новой площади: модель принимала задачу за вырезание
+            # наклейки. Та же дорисовка с описанием картины даёт сто
+            # процентов непрозрачности — измерено, см.
+            # docs/research/2026-09-22-maska-kak-alfa.md.
+            prompt=(
+                "a full photograph of a woman with long dark hair, bare shoulders, "
+                "looking at the camera, standing against a plain light grey studio "
+                "backdrop, soft even studio lighting, the whole frame filled with "
+                "the studio wall"
+            ),
             preset=presets.get("LowQuality"),
             aspect=aspect.FOLLOW_REFERENCE,
             source=canvas,

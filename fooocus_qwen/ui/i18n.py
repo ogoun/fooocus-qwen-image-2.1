@@ -161,7 +161,21 @@ MESSAGES: dict[str, tuple[str, str]] = {
     # вкладка «Редактирование»
     "upload_first": ("Сначала загрузите изображение", "Upload an image first"),
     "choose_a_side": ("Выберите хотя бы одну сторону", "Choose at least one side"),
-    "canvas_expanded": ("Холст расширен до {width}×{height}", "Canvas expanded to {width}×{height}"),
+    # Подсказка в этом сообщении — не украшение. Измерения показали, что при
+    # дорисовке полей промт, описывающий операцию («продолжи сцену»,
+    # «расширь фон»), уводит модель в вырезание наклейки: новая площадь
+    # выходит прозрачной целиком. Описание желаемой сцены то же самое
+    # расширение делает безупречно — непрозрачность 100 % против нуля.
+    # См. docs/research/2026-09-22-maska-kak-alfa.md.
+    "canvas_expanded": (
+        "Холст расширен до {width}×{height}. В промте опишите всю желаемую картину "
+        "целиком, а не действие: «продолжи сцену» даст прозрачную заливку. "
+        "Кнопка «Описать изображение» составит описание за вас.",
+        "Canvas expanded to {width}×{height}. In the prompt, describe the whole "
+        "picture you want, not the action: “continue the scene” yields a "
+        "transparent fill. The “Describe image” button will write the "
+        "description for you.",
+    ),
     "edit_interrupted": ("Правка прервана", "Edit interrupted"),
     "edit_done": ("Готово. {memory}", "Done. {memory}"),
     "nothing_to_send": ("Нечего отправлять", "Nothing to send"),
