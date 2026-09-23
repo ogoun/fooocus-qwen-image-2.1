@@ -143,6 +143,46 @@ T: dict[str, tuple[str, str]] = {
 }
 
 
+# Тексты кисти маски. Отдельная таблица, потому что читает её не Python, а
+# клиентский скрипт компонента: он получает обе половины разом и переключает
+# язык сам, по свойству ``lang``, без обращения к серверу за каждой подписью.
+# Сочетания клавиш стоят прямо в подсказках — иначе о них не узнать.
+PAINTER: dict[str, tuple[str, str]] = {
+    "painter_brush": ("Кисть (B)", "Brush (B)"),
+    "painter_eraser": ("Ластик (E); правая кнопка мыши стирает всегда",
+                       "Eraser (E); the right mouse button always erases"),
+    "painter_size": ("Размер", "Size"),
+    "painter_undo": ("Отменить (Ctrl+Z)", "Undo (Ctrl+Z)"),
+    "painter_redo": ("Повторить (Ctrl+Y)", "Redo (Ctrl+Y)"),
+    "painter_invert": ("Инвертировать разметку", "Invert the marks"),
+    "painter_clear": ("Стереть всю разметку", "Clear all marks"),
+    "painter_toggle": ("Показать или скрыть разметку (H)", "Show or hide the marks (H)"),
+    "painter_fit": ("Вписать в окно (F)", "Fit to view (F)"),
+    "painter_open": ("Открыть изображение", "Open an image"),
+    "painter_remove": ("Убрать изображение", "Remove the image"),
+    "painter_stage": ("Холст разметки", "Marking canvas"),
+    "painter_empty_title": ("Перетащите изображение сюда", "Drop an image here"),
+    "painter_empty_hint": ("или нажмите, чтобы выбрать файл; Ctrl+V вставляет из буфера обмена",
+                           "or click to choose a file; Ctrl+V pastes from the clipboard"),
+    "painter_busy": ("Загрузка…", "Loading…"),
+    "painter_hint": ("Колесо — масштаб · Пробел или средняя кнопка — сдвиг · "
+                     "Shift+колесо или [ ] — размер кисти · X — кисть или ластик",
+                     "Wheel — zoom · Space or middle button — pan · "
+                     "Shift+wheel or [ ] — brush size · X — brush or eraser"),
+    "painter_not_image": ("Это не изображение", "This is not an image"),
+    "painter_upload_failed": ("Не удалось передать изображение на сервер",
+                              "Could not send the image to the server"),
+    "painter_load_failed": ("Не удалось открыть изображение", "Could not open the image"),
+    "painter_region_none": ("В режиме «Без области» правится весь кадр — разметка не используется",
+                            "In “No region” mode the whole frame is edited — the marks are not used"),
+}
+
+
+def painter_labels() -> dict[str, list[str]]:
+    """Тексты кисти в форме, которую ждёт клиентский скрипт: ключ → [ru, en]."""
+    return {key: list(pair) for key, pair in PAINTER.items()}
+
+
 # Сообщения, которые пользователь читает по ходу работы. Формат подстановок —
 # ``str.format`` с ИМЕНОВАННЫМИ полями: позиционные ``{}`` в переводе легко
 # переставить местами, а именованные переживают любой порядок слов.
@@ -298,6 +338,10 @@ MESSAGES: dict[str, tuple[str, str]] = {
         "File not found: {error}. Check that the model weights are in place.",
     ),
     "failure_io": ("Ошибка ввода-вывода: {error}", "Input/output error: {error}"),
+    "painter_bad_value": (
+        "Не удалось прочитать изображение из редактора: {error}",
+        "Could not read the image from the editor: {error}",
+    ),
     "failure_other": ("Сбой: {kind}: {error}", "Failure: {kind}: {error}"),
 }
 

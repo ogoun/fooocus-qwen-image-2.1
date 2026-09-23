@@ -233,13 +233,25 @@ def test_generate_handler_reports_a_model_failure_in_the_status_line(monkeypatch
     assert "model_index.json" in status
 
 
+def _painter_value(monkeypatch, tmp_path, background, layer=None):
+    """Значение кисти, собранное так же, как его собирает сервер.
+
+    Каталог загрузок подменяется временным: разбор принимает пути только
+    оттуда, и проверяется настоящий разбор, а не подставной.
+    """
+    from fooocus_qwen.ui.painter import payload
+
+    monkeypatch.setattr(payload, "upload_root", lambda: tmp_path)
+    return payload.encode(background, layer)
+
+
 def test_edit_handler_reports_a_model_failure_in_the_status_line(monkeypatch, tmp_path):
     from PIL import Image
 
     studio, handlers = _handlers(monkeypatch, tmp_path, tab_edit)
     studio._generator = _ExplodingGenerator(RuntimeError("денойзинг не удался"))
 
-    value = {"background": Image.new("RGBA", (64, 64), "red"), "layers": [], "composite": None}
+    value = _painter_value(monkeypatch, tmp_path, Image.new("RGBA", (64, 64), "red"))
     images, status = handlers["run"](
         value, "убрать фон", False, "none", presets.DEFAULT, 8, 12, True, -1, "ru",
         progress=lambda *args, **kwargs: None,

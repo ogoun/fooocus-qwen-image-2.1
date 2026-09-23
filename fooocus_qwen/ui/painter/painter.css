@@ -1,0 +1,227 @@
+/* Стили кисти маски. Живут в теневом корне компонента: снаружи сюда не
+   просачиваются стили Gradio, отсюда не утекают наши. Цвета и скругления —
+   переменные темы Gradio: пользовательские свойства CSS наследуются сквозь
+   границу теневого корня, поэтому кисть выглядит частью интерфейса и сама
+   переходит в тёмную тему вместе с ним. */
+
+:host {
+    display: block;
+    height: 100%;
+    min-height: 0;
+}
+
+/* Атрибут hidden обязан побеждать: у заставки, палитры и подсказки есть
+   собственный display, и без этого правила он перебивал hidden — заставка
+   «Загрузка…» висела поверх картинки, а палитра аннотации была видна и в
+   режиме маски. */
+[hidden] { display: none !important; }
+
+.qp {
+    --qp-border: var(--border-color-primary, #e5e7eb);
+    --qp-text: var(--body-text-color, #1f2937);
+    --qp-muted: var(--body-text-color-subdued, #6b7280);
+    --qp-panel: var(--background-fill-primary, #ffffff);
+    --qp-well: var(--background-fill-secondary, #f3f4f6);
+    --qp-button: var(--button-secondary-background-fill, #f3f4f6);
+    --qp-button-hover: var(--button-secondary-background-fill-hover, #e5e7eb);
+    --qp-accent: var(--color-accent, #f97316);
+    --qp-radius: var(--radius-md, 6px);
+    --qp-stage: #26272b;
+
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    height: 100%;
+    color: var(--qp-text);
+    font: var(--text-sm, 13px) / 1.4 var(--font, system-ui, sans-serif);
+    border: 1px solid var(--qp-border);
+    border-radius: var(--radius-lg, 8px);
+    overflow: hidden;
+    background: var(--qp-panel);
+}
+
+/* --- панель инструментов ------------------------------------------------- */
+
+.qp-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 10px;
+    padding: 6px 8px;
+    border-bottom: 1px solid var(--qp-border);
+    background: var(--qp-panel);
+}
+
+.qp-group { display: flex; align-items: center; gap: 2px; }
+.qp-spacer { flex: 1 1 auto; }
+
+.qp[data-state="empty"] [data-needs-image] { display: none; }
+
+.qp-btn {
+    display: inline-grid;
+    place-items: center;
+    width: 32px;
+    height: 32px;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: var(--qp-radius);
+    background: transparent;
+    color: var(--qp-text);
+    cursor: pointer;
+}
+.qp-btn svg { width: 18px; height: 18px; fill: currentColor; }
+.qp-btn:hover:not(:disabled) { background: var(--qp-button-hover); }
+.qp-btn[aria-pressed="true"] {
+    background: var(--qp-button);
+    border-color: var(--qp-border);
+    color: var(--qp-accent);
+}
+.qp-btn:disabled { opacity: 0.35; cursor: default; }
+.qp-btn:focus-visible,
+.qp-swatch:focus-visible,
+.qp-size-range:focus-visible,
+.qp-stage:focus-visible,
+.qp-empty:focus-visible {
+    outline: 2px solid var(--qp-accent);
+    outline-offset: 1px;
+}
+
+.qp-size { display: flex; align-items: center; gap: 6px; color: var(--qp-muted); }
+.qp-size-range { width: 120px; accent-color: var(--qp-accent); }
+.qp-size-value {
+    min-width: 3.5em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--qp-text);
+}
+.qp-zoom {
+    min-width: 3.5em;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+    color: var(--qp-muted);
+}
+
+.qp-swatch {
+    width: 22px;
+    height: 22px;
+    margin: 0 1px;
+    padding: 0;
+    border: 2px solid var(--qp-panel);
+    border-radius: 50%;
+    background: var(--swatch);
+    box-shadow: 0 0 0 1px var(--qp-border);
+    cursor: pointer;
+}
+.qp-swatch[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--qp-accent); }
+
+/* --- сцена --------------------------------------------------------------- */
+
+.qp-stage {
+    position: relative;
+    overflow: hidden;
+    background: var(--qp-stage);
+    /* Жесты браузера на сцене выключены: палец и перо рисуют, а не
+       прокручивают страницу. */
+    touch-action: none;
+    user-select: none;
+    outline: none;
+}
+.qp-stage[data-tool="brush"],
+.qp-stage[data-tool="eraser"] { cursor: none; }
+.qp-stage[data-tool="pan"] { cursor: grab; }
+.qp-stage[data-drop="true"] { box-shadow: inset 0 0 0 3px var(--qp-accent); }
+.qp[data-state="empty"] .qp-stage { cursor: default; }
+
+.qp-view {
+    position: absolute;
+    left: 0;
+    top: 0;
+    transform-origin: 0 0;
+    will-change: transform;
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4), 0 4px 18px rgba(0, 0, 0, 0.35);
+}
+.qp[data-state="empty"] .qp-view { display: none; }
+.qp-view canvas { position: absolute; left: 0; top: 0; width: 100%; height: 100%; }
+.qp-view[data-pixelated="true"] canvas { image-rendering: pixelated; }
+.qp-layer { transition: opacity 120ms ease; }
+
+.qp-cursor {
+    position: absolute;
+    left: 0;
+    top: 0;
+    border-radius: 50%;
+    pointer-events: none;
+    /* Двойное кольцо видно и на светлом, и на тёмном фоне. */
+    border: 1px solid rgba(255, 255, 255, 0.95);
+    box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.75), inset 0 0 0 1px rgba(0, 0, 0, 0.35);
+}
+.qp-cursor[data-tool="eraser"] { border-style: dashed; }
+
+.qp-empty {
+    position: absolute;
+    inset: 16px;
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    border: 2px dashed rgba(255, 255, 255, 0.28);
+    border-radius: var(--radius-lg, 8px);
+    background: transparent;
+    color: #e5e7eb;
+    font: inherit;
+    cursor: pointer;
+}
+.qp[data-state="empty"] .qp-empty { display: flex; }
+.qp-empty:hover { border-color: var(--qp-accent); }
+.qp-empty-title { font-size: 1.1em; font-weight: 600; }
+.qp-empty-hint { color: #9ca3af; }
+
+.qp-notice {
+    position: absolute;
+    left: 50%;
+    top: 10px;
+    transform: translateX(-50%);
+    max-width: calc(100% - 24px);
+    padding: 4px 10px;
+    border-radius: 999px;
+    background: rgba(17, 17, 17, 0.72);
+    color: #f3f4f6;
+    font-size: var(--text-xs, 12px);
+    pointer-events: none;
+}
+
+.qp-busy {
+    position: absolute;
+    inset: 0;
+    display: grid;
+    place-items: center;
+    background: rgba(17, 17, 17, 0.35);
+    color: #f9fafb;
+    font-weight: 600;
+}
+
+/* --- строка состояния ---------------------------------------------------- */
+
+.qp-status {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 4px 10px;
+    border-top: 1px solid var(--qp-border);
+    color: var(--qp-muted);
+    font-size: var(--text-xs, 12px);
+    min-height: 1.6em;
+}
+.qp-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qp-message { white-space: nowrap; }
+.qp-message[data-error="true"] { color: var(--error-text-color, #dc2626); }
+.qp[data-state="empty"] .qp-hint { visibility: hidden; }
+
+@media (max-width: 640px) {
+    .qp-size-range { width: 80px; }
+    .qp-hint { display: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .qp-layer { transition: none; }
+}

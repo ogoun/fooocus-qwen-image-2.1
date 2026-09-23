@@ -372,3 +372,24 @@ def test_blend_of_an_empty_mask_returns_the_original_untouched():
     generated = Image.new("RGB", (32, 32), (200, 200, 200))
     blended = masking.blend(original, generated, Image.new("L", (32, 32), 0))
     assert np.array_equal(np.asarray(blended), np.asarray(original.convert("RGBA")))
+
+
+def test_a_faint_antialiased_fringe_is_not_a_mark():
+    """Кайма от сглаживания — не пометка.
+
+    Ластик того же размера, что и кисть, оставляет по краю мазка бледную
+    кайму. Без порога она делала почти пустую маску непустой, и правка шла по
+    маске, в которой ничего нет.
+    """
+    background = Image.new("RGBA", (32, 32), (0, 0, 0, 255))
+    faint = Image.new("RGBA", (32, 32), (255, 0, 0, 60))
+    value = {"background": background, "layers": [faint], "composite": None}
+    assert masking.is_empty(masking.mask_from_editor(value))
+
+
+def test_a_mostly_opaque_mark_counts_in_full():
+    background = Image.new("RGBA", (32, 32), (0, 0, 0, 255))
+    layer = Image.new("RGBA", (32, 32), (0, 0, 0, 0))
+    layer.paste((255, 0, 0, 200), (8, 8, 16, 16))
+    mask = np.asarray(masking.mask_from_editor({"background": background, "layers": [layer]}))
+    assert mask[12, 12] == 255 and mask[2, 2] == 0

@@ -30,14 +30,17 @@ from ..imaging import aspect as aspect_module
 from ..imaging import masking, metadata, outpaint
 from ..prompting import boost as boost_module
 from ..storage import gallery
-from . import layout
-from .i18n import Localizer, pick, say
+from . import layout, painter
+from .i18n import Localizer, painter_labels, pick, say
 from .state import GPU_CONCURRENCY_ID, describe_failure
 
 LOGGER = logging.getLogger(__name__)
 
 # Цвета из примера в блоге: три области, три инструкции в одном промте.
 ANNOTATION_COLOURS: tuple[str, ...] = ("#ff0000", "#0000ff", "#00ff00", "#ffff00", "#ffffff")
+
+# По этому имени скрипты кнопок находят кисть на странице.
+PAINTER_ID = "qs-edit-painter"
 
 _MODE_KEYS = {
     MASK_NONE: "mask_mode_none",
@@ -83,6 +86,20 @@ def collect(value, mode: str) -> tuple[Image.Image | None, Image.Image | None]:
     return background.convert("RGBA"), mask
 
 
+def read_painter(raw, lang: str) -> tuple[dict | None, str | None]:
+    """Значение кисти → словарь формы ``gr.ImageEditor`` и сообщение об ошибке.
+
+    Ошибка разбора — это строка состояния, а не исключение: значение пришло
+    из браузера, и испорченное или подделанное значение не должно ронять
+    обработчик.
+    """
+    try:
+        return painter.decode(raw).as_editor_value(), None
+    except painter.PayloadError as error:
+        LOGGER.warning("Значение кисти отклонено: %s", error)
+        return None, say("painter_bad_value", lang, error=error)
+
+
 # Доля кадра вне маски, начиная с которой шов виден и о нём стоит сказать.
 # Ниже — обычная точечная правка, где обрезать почти нечего.
 CLIPPED_WARNING_PCT = 25.0
@@ -105,22 +122,19 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             # видны разом, и на широком мониторе для этого есть место.
             with gr.Row(elem_classes=[layout.BOARDS_ROW]):
                 with gr.Column(min_width=layout.CANVAS_MIN_WIDTH):
+                    # Своя кисть вместо gr.ImageEditor: у того стоимость
+                    # движения мыши растёт с длиной мазка, и на крупном кадре
+                    # кисть заметно отстаёт от руки (см. ui/painter).
                     editor = localizer.bind(
-                        gr.ImageEditor(
-                            label=pick("source_image", lang),
-                            type="pil",
-                            image_mode="RGBA",
-                            layers=True,
-                            elem_classes=[layout.BOARD],
-                            brush=gr.Brush(
-                                colors=list(ANNOTATION_COLOURS),
-                                default_color="#ff0000",
-                                color_mode="fixed",
-                            ),
-                            eraser=gr.Eraser(),
-                            sources=("upload", "clipboard"),
+                        painter.MaskPainter(
+                            lang=lang,
+                            region=MASK_MASK,
+                            labels=painter_labels(),
+                            palette=list(ANNOTATION_COLOURS),
+                            elem_id=PAINTER_ID,
+                            elem_classes=[layout.BOARD, layout.PAINTER],
                         ),
-                        label=("Исходное изображение", "Source image"),
+                        lang=("ru", "en"),
                     )
 
                 with gr.Column(min_width=layout.CANVAS_MIN_WIDTH):
@@ -246,7 +260,10 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     # --- обработчики ---
 
-    def expand_canvas(value, chosen_sides, ratio_amount, lang):
+    def expand_canvas(raw, chosen_sides, ratio_amount, lang):
+        value, failure = read_painter(raw, lang)
+        if failure:
+            return gr.update(), MASK_MASK, failure
         source, _ = collect(value, MASK_NONE)
         if source is None:
             return gr.update(), MASK_MASK, say("upload_first", lang)
@@ -262,12 +279,15 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         layer.paste(painted, (0, 0), mask)
 
         return (
-            {"background": canvas, "layers": [layer], "composite": None},
+            painter.encode(canvas, layer),
             MASK_MASK,
             say("canvas_expanded", lang, width=canvas.size[0], height=canvas.size[1]),
         )
 
-    def describe(value, lang):
+    def describe(raw, lang):
+        value, failure = read_painter(raw, lang)
+        if failure:
+            return gr.update(), failure
         source, _ = collect(value, MASK_NONE)
         if source is None:
             return gr.update(), say("upload_first", lang)
@@ -275,7 +295,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         return (text or gr.update()), message
 
     def run(
-        value, prompt_text, use_boost, mode_value, quality_name,
+        raw, prompt_text, use_boost, mode_value, quality_name,
         grow_value, feather_value, keep_value, seed_value, lang,
         progress=gr.Progress(),
     ):
@@ -283,7 +303,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         # генерации: сбой модели обязан стать строкой состояния.
         try:
             return _apply(
-                value, prompt_text, use_boost, mode_value, quality_name,
+                raw, prompt_text, use_boost, mode_value, quality_name,
                 grow_value, feather_value, keep_value, seed_value, lang, progress,
             )
         except Exception as error:  # noqa: BLE001
@@ -291,9 +311,12 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             return [], describe_failure(error, lang)
 
     def _apply(
-        value, prompt_text, use_boost, mode_value, quality_name,
+        raw, prompt_text, use_boost, mode_value, quality_name,
         grow_value, feather_value, keep_value, seed_value, lang, progress,
     ):
+        value, failure = read_painter(raw, lang)
+        if failure:
+            return [], failure
         source, mask = collect(value, mode_value)
         if source is None:
             return [], say("upload_first", lang)
@@ -375,21 +398,28 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             return gr.update(), say("nothing_to_send", lang)
         first = produced[0]
         path = first[0] if isinstance(first, (list, tuple)) else first
-        image = Image.open(path).convert("RGBA")
-        return (
-            {"background": image, "layers": [], "composite": None},
-            say("sent_to_editor", lang),
-        )
+        with Image.open(path) as opened:
+            image = opened.convert("RGBA")
+        return painter.encode(image), say("sent_to_editor", lang)
+
+    def show_region(mode_value):
+        # Режим области меняет вид кисти: в «маске» пометки полупрозрачные и
+        # одного цвета, в «аннотации» — палитра и полная непрозрачность.
+        return gr.update(region=mode_value)
 
     def stop(lang):
         if studio.model_loaded:
             studio.generator.interrupt()
         return say("stopping", lang)
 
+    # Каждое событие, которому нужна маска, сначала забирает у кисти свежее
+    # значение: синхронизация со страницы отложенная, и без этого последний
+    # мазок перед нажатием мог не успеть. Кисть — первый вход у всех трёх.
+    flush = painter.flush_js(PAINTER_ID)
     expand_button.click(
-        expand_canvas, [editor, sides, amount, language], [editor, mode, status]
+        expand_canvas, [editor, sides, amount, language], [editor, mode, status], js=flush
     )
-    describe_button.click(describe, [editor, language], [prompt, status])
+    describe_button.click(describe, [editor, language], [prompt, status], js=flush)
     run_button.click(
         run,
         [editor, prompt, boost_enabled, mode, quality, grow, feather, keep_outside, seed,
@@ -397,8 +427,10 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         [result, status],
         # Та же группа очереди, что и у «Сгенерировать»: видеокарта одна.
         concurrency_id=GPU_CONCURRENCY_ID,
+        js=flush,
     )
     stop_button.click(stop, language, status, queue=False)
     send_back.click(take_back, [result, language], [editor, status])
+    mode.change(show_region, mode, editor, queue=False)
 
     return {"editor": editor, "result": result, "prompt": prompt, "status": status}

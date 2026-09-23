@@ -41,3 +41,21 @@ def never_open_a_browser(monkeypatch):
     opened: list[str] = []
     monkeypatch.setattr(app.webbrowser, "open", lambda url, *_a, **_k: opened.append(url) or True)
     return opened
+
+
+@pytest.fixture
+def painter_value(tmp_path, monkeypatch):
+    """Собирает значение кисти так, как его собрал бы сервер.
+
+    Каталог загрузок Gradio подменяется временным: разбор значения принимает
+    пути только оттуда, и тест проверяет именно этот, настоящий разбор, а не
+    подставной. Файлы ложатся в ``tmp_path`` и исчезают вместе с ним.
+    """
+    from fooocus_qwen.ui.painter import payload
+
+    monkeypatch.setattr(payload, "upload_root", lambda: tmp_path)
+
+    def make(background, layer=None):
+        return payload.encode(background, layer)
+
+    return make

@@ -149,6 +149,22 @@ footer { display: none !important; }
     height: 100% !important;
 }
 
+/* Кисть маски рисует себя сама, в теневом корне. Снаружи её цепочка узлов
+   должна просто занять холст целиком — рамку и отступы она ставит свои. */
+.qs-painter {
+    /* Ширина явная: блок Gradio центрируется авто-отступами, и при заданной
+       пропорции его ширина выводилась из высоты — кисть на FHD сжималась до
+       567 px посреди колонки в 1351. */
+    width: 100% !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+}
+
+.qs-painter > div > div {
+    height: 100% !important;
+}
+
 .qs-browse {
     height: var(--qs-browse-height) !important;
 }

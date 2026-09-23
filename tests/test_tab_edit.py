@@ -20,7 +20,7 @@ gr = pytest.importorskip("gradio")
 from fooocus_qwen import config
 from fooocus_qwen.engine import generator as gen
 from fooocus_qwen.imaging import aspect as aspect_module
-from fooocus_qwen.ui import tab_edit
+from fooocus_qwen.ui import painter, tab_edit
 from fooocus_qwen.ui.i18n import Localizer
 from fooocus_qwen.ui.state import Studio
 
@@ -46,21 +46,13 @@ def _build_handlers(studio=None):
     return handlers, studio
 
 
-def _editor_value(size=(64, 64), painted=None):
-    """Значение редактора; при ``painted`` в первом слое закрашен прямоугольник.
-
-    Совпадает по форме со вспомогательной функцией ``editor()`` из
-    ``test_edit_collect.py``, но не переиспользует её напрямую — так каждый
-    тестовый модуль остаётся самодостаточным (собственный приём проекта: ту же
-    независимость видно у ``test_tab_generate.py`` и ``test_outpaint.py``).
-    """
+def _editor_images(size=(64, 64), painted=None):
+    """Исходник и слой пометок; при ``painted`` в слое закрашен прямоугольник."""
     background = Image.new("RGBA", size, (10, 20, 30, 255))
     layer = Image.new("RGBA", size, (0, 0, 0, 0))
     if painted:
         layer.paste((255, 0, 0, 255), painted)
-    composite = background.copy()
-    composite.alpha_composite(layer)
-    return {"background": background, "layers": [layer], "composite": composite}
+    return background, layer
 
 
 class _FakeGenerator:
@@ -117,7 +109,7 @@ class _NoLoadStudio(Studio):
     ],
 )
 def test_run_reconstructs_mask_mode_from_what_collect_actually_returned(
-    mode_value, painted, expected_mode, expect_mask
+    mode_value, painted, expected_mode, expect_mask, painter_value
 ):
     fake = _FakeGenerator()
     studio = _NoLoadStudio(config.AppConfig(), fake)
@@ -126,7 +118,7 @@ def test_run_reconstructs_mask_mode_from_what_collect_actually_returned(
     assert studio.model_loaded is False  # модель ещё не грузилась до вызова run()
 
     paths, _message = handlers["run"](
-        _editor_value(painted=painted), "prompt", False, mode_value,
+        painter_value(*_editor_images(painted=painted)), "prompt", False, mode_value,
         config.AppConfig().preset, 8, 12, True, -1, "ru",
     )
 
@@ -142,11 +134,14 @@ def test_run_reconstructs_mask_mode_from_what_collect_actually_returned(
     assert request.aspect == aspect_module.FOLLOW_REFERENCE
 
 
-def test_expand_canvas_enlarges_the_background_and_marks_only_the_new_area():
+def test_expand_canvas_enlarges_the_background_and_marks_only_the_new_area(painter_value):
     handlers, _studio = _build_handlers()
 
-    new_value, mode, message = handlers["expand_canvas"](_editor_value((64, 64)), ["right"], 0.5, "ru")
+    raw, mode, message = handlers["expand_canvas"](painter_value(*_editor_images((64, 64))), ["right"], 0.5, "ru")
 
+    # Ответ — значение кисти, как его разберёт сервер при следующем нажатии:
+    # проверяется весь круг «кодирование → разбор», а не промежуточный словарь.
+    new_value = painter.decode(raw).as_editor_value()
     background = new_value["background"]
     assert background.size[0] > 64
     assert background.size[1] == 64
@@ -169,9 +164,9 @@ def test_expand_canvas_without_source_asks_to_upload_first():
     assert message  # сообщение непустое — просит сначала загрузить изображение
 
 
-def test_expand_canvas_without_sides_asks_to_choose_one():
+def test_expand_canvas_without_sides_asks_to_choose_one(painter_value):
     handlers, _studio = _build_handlers()
 
-    update, mode, message = handlers["expand_canvas"](_editor_value(), [], 0.5, "ru")
+    update, mode, message = handlers["expand_canvas"](painter_value(*_editor_images()), [], 0.5, "ru")
     assert mode == gen.MASK_MASK
     assert message

@@ -59,6 +59,10 @@ def _mismatches(localizer: Localizer) -> list[str]:
         for name, translations in fields.items():
             expected = translations[index]
             actual = getattr(component, name, None)
+            # Наследники gr.HTML (кисть маски) держат собственные свойства не
+            # в атрибутах, а в словаре props — там их и надо сверять.
+            if actual is None and isinstance(getattr(component, "props", None), dict):
+                actual = component.props.get(name)
             if actual != expected:
                 problems.append(
                     f"{type(component).__name__}.{name}: на старте {actual!r}, "

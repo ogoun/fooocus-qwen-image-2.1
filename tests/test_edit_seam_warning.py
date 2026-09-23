@@ -45,6 +45,18 @@ class _Generator:
         ]
 
 
+def _painter_value(monkeypatch, tmp_path, background, layer=None):
+    """Значение кисти, собранное так же, как его собирает сервер.
+
+    Каталог загрузок подменяется временным: разбор принимает пути только
+    оттуда, и проверяется настоящий разбор, а не подставной.
+    """
+    from fooocus_qwen.ui.painter import payload
+
+    monkeypatch.setattr(payload, "upload_root", lambda: tmp_path)
+    return payload.encode(background, layer)
+
+
 def _run(monkeypatch, tmp_path, clipped: float, lang: str = "ru"):
     monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path)
     monkeypatch.setattr(config, "PROMPT_DIR", tmp_path)
@@ -60,8 +72,7 @@ def _run(monkeypatch, tmp_path, clipped: float, lang: str = "ru"):
 
     painted = Image.new("RGBA", SIZE, (0, 0, 0, 0))
     painted.paste((255, 0, 0, 255), (0, 0, 32, 32))
-    value = {"background": Image.new("RGBA", SIZE, "black"), "layers": [painted],
-             "composite": None}
+    value = _painter_value(monkeypatch, tmp_path, Image.new("RGBA", SIZE, "black"), painted)
     return handlers["run"](
         value, "сделать волосы платиновыми", False, "mask", presets.DEFAULT,
         8, 12, True, -1, lang, progress=lambda *args, **kwargs: None,
@@ -124,8 +135,7 @@ def _capture(monkeypatch, tmp_path, mode: str):
 
     painted = Image.new("RGBA", SIZE, (0, 0, 0, 0))
     painted.paste((255, 0, 0, 255), (0, 0, 32, 32))
-    value = {"background": Image.new("RGBA", SIZE, "black"), "layers": [painted],
-             "composite": None}
+    value = _painter_value(monkeypatch, tmp_path, Image.new("RGBA", SIZE, "black"), painted)
     _images, status = handlers["run"](
         value, "убрать фон", False, mode, "MiddleQuality", 8, 12, True, -1, "ru",
         progress=lambda *a, **k: None,

@@ -20,6 +20,9 @@ from PIL import Image
 
 from .aspect import MULTIPLE
 
+# Граница маски: пиксель помечен, если непрозрачен хотя бы наполовину.
+MASK_THRESHOLD = 128
+
 
 def mask_from_editor(value: Mapping[str, Any] | Image.Image) -> Image.Image:
     """Собирает маску из значения ``gr.ImageEditor`` или из готового изображения.
@@ -43,7 +46,13 @@ def mask_from_editor(value: Mapping[str, Any] | Image.Image) -> Image.Image:
         alpha = np.asarray(layer.convert("RGBA").resize(size, Image.NEAREST))[..., 3]
         combined = np.maximum(combined, alpha)
 
-    return Image.fromarray(combined, mode="L")
+    # Край мазка сглажен, и ластик того же размера оставляет по нему бледную
+    # кайму. Без порога такая кайма считалась пометкой: после стирания маска
+    # выглядела непустой, и правка шла по маске, в которой ничего нет.
+    # Порог — тот же, что у ``as_condition``: граница маски по смыслу там,
+    # где непрозрачности половина, и кайма ниже неё в условие всё равно не
+    # попадает.
+    return Image.fromarray(np.where(combined >= MASK_THRESHOLD, 255, 0).astype(np.uint8), mode="L")
 
 
 def is_empty(mask: Image.Image) -> bool:
@@ -94,7 +103,7 @@ def as_condition(mask: Image.Image) -> Image.Image:
     функцию.
     """
     array = np.asarray(mask.convert("L"))
-    binary = np.where(array >= 128, 255, 0).astype(np.uint8)
+    binary = np.where(array >= MASK_THRESHOLD, 255, 0).astype(np.uint8)
     return Image.fromarray(np.repeat(binary[..., None], 3, axis=2), mode="RGB")
 
 

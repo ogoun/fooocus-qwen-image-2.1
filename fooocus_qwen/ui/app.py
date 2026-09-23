@@ -57,6 +57,10 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
         analytics_enabled=False,
         fill_width=True,
         fill_height=True,
+        # Уборка временных файлов: раз в час удаляется всё, что старше суток.
+        # Кисть маски кладёт исходники и подготовленные сервером слои в
+        # каталог загрузок Gradio, и без уборки он рос бы с каждой правкой.
+        delete_cache=(3600, 86400),
     ) as demo:
         # Заголовка на странице нет намеренно. Название приложения стоит в
         # заголовке окна браузера (`title=` у Blocks), и повторять его строкой
@@ -204,8 +208,18 @@ def open_in_browser(url: str) -> bool:
     return opened
 
 
-def launch(cfg: config.AppConfig) -> None:
+def start(cfg: config.AppConfig, prepare=None) -> tuple[gr.Blocks, Studio]:
+    """Собирает интерфейс и поднимает сервер, не блокируя поток.
+
+    Отдельно от ``launch`` потому, что поднимать интерфейс нужно не только
+    для работы: ``tools/ui_check.py`` проверяет его в настоящем браузере с
+    подставным генератором — и обязан пройти ровно той же дорогой, что и
+    боевой запуск, иначе он проверял бы не то приложение. ``prepare``
+    получает состояние до подъёма сервера — там и подменяется генератор.
+    """
     demo, studio = build(cfg, return_studio=True)
+    if prepare is not None:
+        prepare(studio)
     demo.queue(default_concurrency_limit=1)
     # В Gradio 6 параметр css переехал из конструктора Blocks в launch() — передача
     # его в конструктор всё ещё работает, но с предупреждением об устаревании.
@@ -230,6 +244,11 @@ def launch(cfg: config.AppConfig) -> None:
         css=css,
         prevent_thread_lock=True,
     )
+    return demo, studio
+
+
+def launch(cfg: config.AppConfig) -> None:
+    demo, studio = start(cfg)
     if cfg.open_browser:
         # Именно здесь, а не в run.ps1: скрипт оболочки не знает, когда
         # сервер поднялся, а Python с torch и diffusers стартует секунды.
