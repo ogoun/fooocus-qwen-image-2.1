@@ -227,8 +227,8 @@ MESSAGES: dict[str, tuple[str, str]] = {
     ),
     "references_cleared": ("Референсы очищены", "References cleared"),
     "reference_scale_chosen": (
-        "детальность референсов {scale} (выбрано автоматически)",
-        "reference detail {scale} (chosen automatically)",
+        "Детальность референсов: {scale} (выбрано автоматически).",
+        "Reference detail: {scale} (chosen automatically).",
     ),
     "generation_interrupted": ("Генерация прервана", "Generation interrupted"),
     "generation_done": ("Готово. Сиды: {seeds}. {memory}", "Done. Seeds: {seeds}. {memory}"),
@@ -287,10 +287,10 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "progress_edit": ("правка", "editing"),
     # вкладка «Галерея»: ключи словаря gr.JSON тоже видны пользователю
     "png_without_parameters": (
-        "в этом PNG нет наших параметров",
-        "this PNG carries none of our parameters",
+        "В этом PNG нет наших параметров",
+        "This PNG carries none of our parameters",
     ),
-    "parameters_not_found": ("параметры не найдены", "parameters not found"),
+    "parameters_not_found": ("В файле нет параметров генерации", "The file carries no generation parameters"),
     # вкладка «Настройки»
     "prompt_file_missing": (
         "# Файл {name} не найден. Запустите tools/fetch_system_prompts.py\n",
@@ -305,9 +305,9 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "llm_no_model_named": ("сервер не назвал ни одной", "the server named none"),
     "prompt_file_saved": ("Файл {name} сохранён", "File {name} saved"),
     # состояние приложения
-    "model_not_loaded": ("модель ещё не загружена", "the model is not loaded yet"),
+    "model_not_loaded": ("Модель ещё не загружена", "The model is not loaded yet"),
     "memory_report": (
-        "видеопамять: {allocated:.1f} ГиБ занято, {reserved:.1f} ГиБ зарезервировано; "
+        "Видеопамять: {allocated:.1f} ГиБ занято, {reserved:.1f} ГиБ зарезервировано; "
         "перестановок энкодера: {swaps}; кэш промтов: {hits} попаданий / {misses} промахов",
         "GPU memory: {allocated:.1f} GiB allocated, {reserved:.1f} GiB reserved; "
         "encoder swaps: {swaps}; prompt cache: {hits} hits / {misses} misses",
