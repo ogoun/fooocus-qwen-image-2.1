@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # Запуск оболочки в окружении проекта. Все аргументы уходят приложению как есть.
+#
+# Браузер открывает само приложение, когда сервер готов отдавать страницу:
+# скрипт момента готовности не знает, а Python с torch стартует секунды.
+# Отключается ключом --no-open-browser.
 set -euo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -21,4 +25,6 @@ if [ "$("$python" -c 'import torch; print("cuda" if torch.cuda.is_available() el
 fi
 
 cd "$root"
-exec "$python" -m fooocus_qwen "$@"
+# Ключ первым: --no-open-browser из аргументов пользователя окажется после
+# него и победит, argparse берёт последнее значение.
+exec "$python" -m fooocus_qwen --open-browser "$@"

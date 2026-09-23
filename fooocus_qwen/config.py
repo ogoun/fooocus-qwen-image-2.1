@@ -42,6 +42,7 @@ class AppConfig:
     preload: bool = True
     preset: str = "MiddleQuality"
     verbose: bool = False
+    open_browser: bool = False
     model_dir: Path = MODEL_DIR
 
 
@@ -74,6 +75,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="не загружать модель в фоне при старте (первая генерация будет дольше)",
     )
     parser.set_defaults(preload=True)
+    # Браузер открывают скрипты запуска (run.ps1, run.sh), а не сам модуль:
+    # при отладке и в дымовом прогоне лишнее окно только мешает.
+    parser.add_argument(
+        "--open-browser",
+        dest="open_browser",
+        action="store_true",
+        help="открыть интерфейс в браузере, когда сервер будет готов",
+    )
+    # Пара к предыдущему: скрипты запуска ставят --open-browser первым, и
+    # этот ключ, пришедший от пользователя следом, его перебивает —
+    # argparse берёт последнее значение.
+    parser.add_argument(
+        "--no-open-browser",
+        dest="open_browser",
+        action="store_false",
+        help="не открывать браузер при запуске",
+    )
+    parser.set_defaults(open_browser=False)
     parser.add_argument("--prompt", help="сгенерировать одно изображение без интерфейса и выйти")
     parser.add_argument("--out", help="куда сохранить результат режима --prompt")
     parser.add_argument("--selftest", action="store_true", help="проверить готовность окружения и выйти")
@@ -106,4 +125,5 @@ def parse_args(argv: list[str] | None = None) -> AppConfig:
         preload=args.preload,
         preset=args.preset,
         verbose=args.verbose,
+        open_browser=args.open_browser,
     )

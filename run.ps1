@@ -9,6 +9,12 @@
 
     Все аргументы передаются приложению как есть.
 
+    Браузер открывается сам, когда сервер готов отдавать страницу. Открывает
+    его приложение, а не этот скрипт: скрипт момента готовности не знает, а
+    Python с torch и diffusers стартует секунды — окно, открытое сразу,
+    упёрлось бы в «не удаётся подключиться». Отключается ключом
+    --no-open-browser.
+
 .EXAMPLE
     .\run.ps1
 
@@ -44,9 +50,13 @@ if ($check -ne 'cuda') {
     Write-Host '    .venv\Scripts\python -m pip install --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128' -ForegroundColor Cyan
 }
 
+# Ключ идёт первым, чтобы --no-open-browser из аргументов пользователя
+# оказался после него и победил: argparse берёт последнее значение.
+$launchArguments = @('--open-browser') + $Arguments
+
 Push-Location $root
 try {
-    & $python -m fooocus_qwen @Arguments
+    & $python -m fooocus_qwen @launchArguments
     exit $LASTEXITCODE
 } finally {
     Pop-Location

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import webbrowser
 from pathlib import Path
 
 import gradio as gr
@@ -176,6 +177,39 @@ def stylesheet() -> str:
     return text
 
 
+def browser_url(cfg: config.AppConfig) -> str:
+    """Адрес, по которому открывать интерфейс на этой же машине.
+
+    ``0.0.0.0`` и ``::`` — это «слушать на всех адресах», а не адрес, по
+    которому можно постучаться; для браузера они превращаются в петлю.
+
+    Петля записана числом, а не именем: ``localhost`` на машине заказчика
+    разрешается сначала в ``::1``, где сервер не слушает (он на IPv4), и
+    каждое обращение платит 4.4 секунды до отката на IPv4 — на старте это
+    заметно (docs/research/2026-09-22-zapusk-padal-na-proverke-localhost.md).
+    """
+    host = cfg.host if cfg.host not in ("0.0.0.0", "::", "") else "127.0.0.1"
+    return f"http://{host}:{cfg.port}"
+
+
+def open_in_browser(url: str) -> bool:
+    """Открывает страницу. Неудача — не повод ронять запуск.
+
+    Оболочку запускают и по SSH, и из планировщика, где открывать нечем:
+    уронить работающий сервер из-за ненайденного браузера значило бы
+    поменять местами главное и второстепенное.
+    """
+    LOGGER.info("Открываю интерфейс в браузере: %s", url)
+    try:
+        opened = bool(webbrowser.open(url, new=2))
+    except Exception as error:  # noqa: BLE001 — причина важна, тип нет
+        LOGGER.warning("Не удалось открыть браузер (%s). Откройте вручную: %s", error, url)
+        return False
+    if not opened:
+        LOGGER.warning("Браузер не открылся. Откройте вручную: %s", url)
+    return opened
+
+
 def launch(cfg: config.AppConfig) -> None:
     demo, studio = build(cfg, return_studio=True)
     demo.queue(default_concurrency_limit=1)
@@ -202,6 +236,15 @@ def launch(cfg: config.AppConfig) -> None:
         css=css,
         prevent_thread_lock=True,
     )
+    if cfg.open_browser:
+        # Именно здесь, а не в run.ps1: скрипт оболочки не знает, когда
+        # сервер поднялся, а Python с torch и diffusers стартует секунды.
+        # К этой строке Gradio уже достучался до собственного сервера, то
+        # есть страницу точно отдадут — окно не встретит «не удаётся
+        # подключиться». И до прогрева весов: интерфейс открывается сразу,
+        # модель догружается, пока человек набирает первый промт.
+        open_in_browser(browser_url(cfg))
+
     if cfg.preload:
         # Пока пользователь открывает браузер и набирает промт, модель
         # успевает загрузиться: эти секунды больше не его.

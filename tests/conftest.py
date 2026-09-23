@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from fooocus_qwen.ui import tab_gallery
+from fooocus_qwen.ui import app, tab_gallery
 
 
 @pytest.fixture(autouse=True)
@@ -25,4 +25,19 @@ def never_open_a_file_manager(monkeypatch):
     """
     opened: list = []
     monkeypatch.setattr(tab_gallery, "_open_folder", opened.append)
+    return opened
+
+
+@pytest.fixture(autouse=True)
+def never_open_a_browser(monkeypatch):
+    """Запрещает тестам открывать окно браузера.
+
+    Та же защита, что и у файлового менеджера, и по той же причине: запуск
+    оболочки умеет открывать страницу сам, и набору тестов достаточно один
+    раз позвать ``launch`` без подмены, чтобы прогон распахнул вкладку.
+    Записываются адреса — тест, которому нужно убедиться, что страницу
+    открывали, проверит их.
+    """
+    opened: list[str] = []
+    monkeypatch.setattr(app.webbrowser, "open", lambda url, *_a, **_k: opened.append(url) or True)
     return opened
