@@ -111,7 +111,6 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                             type="pil",
                             image_mode="RGBA",
                             layers=True,
-                            height=layout.CANVAS_HEIGHT,
                             elem_classes=[layout.BOARD],
                             brush=gr.Brush(
                                 colors=list(ANNOTATION_COLOURS),
@@ -129,7 +128,6 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         gr.Gallery(
                             label=pick("result", lang),
                             columns=1,
-                            height=layout.PREVIEW_HEIGHT,
                             object_fit="contain",
                             format="png",
                             preview=True,

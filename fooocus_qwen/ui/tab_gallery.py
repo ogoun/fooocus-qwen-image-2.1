@@ -118,7 +118,6 @@ def build(studio, localizer: Localizer, generate_components: dict, language=None
                 gr.Gallery(
                     label=pick("tab_gallery", lang),
                     columns=6,
-                    height=layout.BROWSE_HEIGHT,
                     elem_classes=[layout.BROWSE],
                     object_fit="contain",
                     value=[str(path) for path in gallery.recent(config.OUTPUT_DIR)],

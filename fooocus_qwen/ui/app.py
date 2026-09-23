@@ -163,18 +163,12 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
 
 
 def stylesheet() -> str:
-    """Читает стиль и подставляет высоты из ``layout``.
+    """Читает файл стиля.
 
-    Высоты нужны и Python (параметр ``height`` компонента), и CSS (нижняя
-    граница для пустого холста). Держать их в двух местах — значит однажды
-    поправить одно и забыть другое, поэтому значение живёт в ``layout.py``,
-    а стиль получает его подстановкой по имени в двойных фигурных скобках.
+    Вся геометрия живёт в нём: подстановка значений из Python больше не
+    нужна — размеры перестали дублироваться между модулем и стилем.
     """
-    text = (Path(__file__).parent / "style.css").read_text(encoding="utf-8")
-    for name, value in vars(layout).items():
-        if name.endswith("_HEIGHT") and isinstance(value, str):
-            text = text.replace("{{" + name + "}}", value)
-    return text
+    return (Path(__file__).parent / "style.css").read_text(encoding="utf-8")
 
 
 def browser_url(cfg: config.AppConfig) -> str:

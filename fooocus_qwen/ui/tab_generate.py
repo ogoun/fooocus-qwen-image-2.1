@@ -100,7 +100,6 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     label=pick("result", lang),
                     show_label=True,
                     columns=2,
-                    height=layout.CANVAS_HEIGHT,
                     elem_classes=[layout.BOARD],
                     object_fit="contain",
                     format="png",
@@ -167,7 +166,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     gr.Gallery(
                         label=pick("references", lang),
                         columns=5,
-                        height=layout.STRIP_HEIGHT,
+                        elem_classes=[layout.STRIP],
                         object_fit="contain",
                         show_label=False,
                     ),
