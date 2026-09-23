@@ -94,7 +94,12 @@ gr = pytest.importorskip("gradio")
 
 from fooocus_qwen import config  # noqa: E402
 from fooocus_qwen.engine import presets  # noqa: E402
-from fooocus_qwen.ui import tab_edit, tab_gallery, tab_generate, tab_settings  # noqa: E402
+from fooocus_qwen.ui import (  # noqa: E402
+    tab_edit,
+    tab_gallery,
+    tab_generate,
+    tab_settings,
+)
 from fooocus_qwen.ui.i18n import Localizer  # noqa: E402
 from fooocus_qwen.ui.state import Studio  # noqa: E402
 

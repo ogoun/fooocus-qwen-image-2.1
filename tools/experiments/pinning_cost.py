@@ -57,6 +57,7 @@ def main() -> int:
     OUT.mkdir(parents=True, exist_ok=True)
 
     from diffusers import QwenImage21Pipeline  # noqa: F401 — прогрев импортов
+
     from fooocus_qwen.engine.pipeline import QwenImage21StudioPipeline, assert_contract
     from fooocus_qwen.engine.residency import ResidencyManager
 

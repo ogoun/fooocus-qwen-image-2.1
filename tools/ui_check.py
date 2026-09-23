@@ -151,7 +151,10 @@ def image_rect(page) -> dict:
 def stroke(page, points: list[tuple[float, float]], steps: int = 25, button: str = "left") -> None:
     """Мазок по долям картинки: (0,0) — левый верхний угол, (1,1) — правый нижний."""
     rect = image_rect(page)
-    to_screen = lambda fx, fy: (rect["x"] + rect["width"] * fx, rect["y"] + rect["height"] * fy)
+
+    def to_screen(fx: float, fy: float) -> tuple[float, float]:
+        return rect["x"] + rect["width"] * fx, rect["y"] + rect["height"] * fy
+
     page.mouse.move(*to_screen(*points[0]))
     page.mouse.down(button=button)
     for point in points[1:]:
@@ -351,6 +354,33 @@ def scenario_latency(browser, url, report: Report, samples: Path) -> None:
     page.close()
 
 
+def scenario_paste(browser, url, report: Report) -> None:
+    """Ctrl+V над кистью открывает картинку из буфера обмена.
+
+    Пустой холст обещает это подсказкой, так что обещание проверяется.
+    Событие создаётся из скрипта: доверенность ему не нужна, в отличие от
+    движений мыши, — обработчик читает только ``clipboardData``.
+    """
+    print("вставка из буфера:")
+    page, errors = fresh_page(browser, url)
+    open_tab(page, 1)
+    page.locator(f"#{PAINTER}").hover()
+    page.evaluate("""async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 320; canvas.height = 200;
+        canvas.getContext('2d').fillRect(0, 0, 320, 200);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        const data = new DataTransfer();
+        data.items.add(new File([blob], 'pasted.png', { type: 'image/png' }));
+        document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data, bubbles: true }));
+    }""")
+    page.wait_for_function(f"() => {API}.state().width === 320 && !{API}.state().uploading", timeout=20000)
+    state = painter_state(page)
+    report.check(state["height"] == 200 and bool(state["source"]), f"картинка вставлена и передана: {state['width']}x{state['height']}")
+    report.check(not errors, "без ошибок страницы" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
 def scenario_gallery(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
     """Карточка вместо JSON и действия с переходом на нужную вкладку."""
     print("галерея:")
@@ -380,9 +410,12 @@ def scenario_gallery(browser, url, report: Report, fake: FakeGenerator, samples:
     active = page.locator('button[role="tab"][aria-selected="true"]').inner_text()
     report.check(active == "Редактирование", f"переход на правку: {active}")
 
+    # Выбор переживает уход с вкладки: карточка на месте, кликать снова не
+    # нужно. И нельзя: галерея открыта в режиме просмотра, где клик по
+    # крупному кадру листает на следующий, — сценарий выбирал бы чужой файл.
     open_tab(page, 2)
-    page.locator(".qs-browse img").first.click()
-    page.wait_for_timeout(800)
+    card = page.locator(".block.qs-card").inner_text()
+    report.check("a lighthouse at dawn" in card, "выбор сохранился после ухода с вкладки")
     click_text(page, "Повторить параметры")
     page.wait_for_timeout(1500)
     active = page.locator('button[role="tab"][aria-selected="true"]').inner_text()
@@ -415,7 +448,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Проверка интерфейса в браузере")
     parser.add_argument("--port", type=int, default=7899)
     parser.add_argument("--only", nargs="*", default=None,
-                        help="layout language painter annotation outpaint latency gallery secret")
+                        help="layout language painter annotation outpaint latency paste gallery secret")
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
@@ -445,6 +478,7 @@ def main() -> int:
         "annotation": lambda b, r: scenario_annotation(b, url, r, fake, samples),
         "outpaint": lambda b, r: scenario_outpaint(b, url, r, fake, samples),
         "latency": lambda b, r: scenario_latency(b, url, r, samples),
+        "paste": lambda b, r: scenario_paste(b, url, r),
         "gallery": lambda b, r: scenario_gallery(b, url, r, fake, samples),
         "secret": lambda b, r: scenario_secret(b, url, r),
     }

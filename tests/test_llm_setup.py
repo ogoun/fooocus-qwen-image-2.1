@@ -12,8 +12,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from fooocus_qwen.llm import endpoint as ep
 from fooocus_qwen.llm import setup
 

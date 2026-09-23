@@ -43,3 +43,10 @@ def test_urls_are_built_without_double_slashes():
     result = ep.parse_endpoint_file("http://host:8000/\n")
     assert result.chat_url == "http://host:8000/v1/chat/completions"
     assert result.models_url == "http://host:8000/v1/models"
+
+
+def test_the_token_never_appears_in_repr():
+    """Объект адреса попадает в журналы — токен не должен уехать вместе с ним."""
+    endpoint = ep.parse_endpoint_file("192.0.2.10:8000\ntoken=repr-secret\n")
+    assert endpoint.token == "repr-secret"
+    assert "repr-secret" not in repr(endpoint) and "repr-secret" not in str(endpoint)

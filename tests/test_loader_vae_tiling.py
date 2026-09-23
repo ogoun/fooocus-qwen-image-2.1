@@ -17,8 +17,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from fooocus_qwen.engine import loader
 
 

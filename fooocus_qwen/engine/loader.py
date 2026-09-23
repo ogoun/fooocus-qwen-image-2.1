@@ -8,10 +8,10 @@ from pathlib import Path
 
 import torch
 
+from . import vae_tiling
 from .embeds_cache import EmbedsCache
 from .pipeline import QwenImage21StudioPipeline, assert_contract
 from .residency import ResidencyManager
-from . import vae_tiling
 
 LOGGER = logging.getLogger(__name__)
 

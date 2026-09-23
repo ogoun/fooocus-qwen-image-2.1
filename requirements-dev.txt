@@ -5,3 +5,6 @@
 # и видны они только в браузере. После установки нужен сам Chromium:
 #     .venv\Scripts\python -m playwright install chromium
 playwright>=1.47
+
+# Линтер; правила — в ruff.toml. Проверка: .venv\Scripts\python -m ruff check .
+ruff>=0.6

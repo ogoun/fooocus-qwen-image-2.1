@@ -39,7 +39,7 @@ def to_readable(parameters: dict[str, Any]) -> str:
         f"Seed: {parameters.get('seed')}",
         f"Size: {width}x{height}",
         f"CFG scale: {parameters.get('true_cfg_scale')}",
-        f"Model: Qwen-Image-2.1",
+        "Model: Qwen-Image-2.1",
     ]
     styles = parameters.get("styles") or []
     if styles:

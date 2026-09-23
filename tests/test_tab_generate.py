@@ -15,7 +15,6 @@ from fooocus_qwen.ui import tab_generate
 from fooocus_qwen.ui.i18n import Localizer
 from fooocus_qwen.ui.state import Studio
 
-
 # --- подписи миниатюр референсов ---
 
 

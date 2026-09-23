@@ -19,12 +19,12 @@ from PIL import Image
 from .. import config
 from ..engine import presets
 from ..engine.generator import (
-    resolve_reference_scale,
     MASK_ANNOTATION,
     MASK_MASK,
     MASK_NONE,
     MASK_REGION,
     GenerationRequest,
+    resolve_reference_scale,
 )
 from ..imaging import aspect as aspect_module
 from ..imaging import masking, metadata, outpaint
@@ -41,6 +41,10 @@ ANNOTATION_COLOURS: tuple[str, ...] = ("#ff0000", "#0000ff", "#00ff00", "#ffff00
 
 # По этому имени скрипты кнопок находят кисть на странице.
 PAINTER_ID = "qs-edit-painter"
+
+# Доля кадра вне маски, начиная с которой шов виден и о нём стоит сказать.
+# Ниже — обычная точечная правка, где обрезать почти нечего.
+CLIPPED_WARNING_PCT = 25.0
 
 _MODE_KEYS = {
     MASK_NONE: "mask_mode_none",
@@ -99,10 +103,6 @@ def read_painter(raw, lang: str) -> tuple[dict | None, str | None]:
         LOGGER.warning("Значение кисти отклонено: %s", error)
         return None, say("painter_bad_value", lang, error=error)
 
-
-# Доля кадра вне маски, начиная с которой шов виден и о нём стоит сказать.
-# Ниже — обычная точечная правка, где обрезать почти нечего.
-CLIPPED_WARNING_PCT = 25.0
 
 def build(studio, localizer: Localizer, language=None) -> dict:
     """Собирает вкладку.

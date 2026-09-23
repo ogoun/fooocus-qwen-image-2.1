@@ -8,7 +8,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 _TOKEN_LINE = re.compile(r"^(token|api_key|key)\s*[=:]\s*(\S+)$", re.IGNORECASE)
@@ -25,7 +25,9 @@ class LlmEndpoint:
     """Реквизиты доступа к OpenAI-совместимому серверу."""
 
     base_url: str
-    token: str | None = None
+    # Вне repr: объект адреса попадает в журналы и сообщения об ошибках,
+    # а токен не должен оказаться ни там, ни там.
+    token: str | None = field(default=None, repr=False)
     backend: str = ""
 
     @property

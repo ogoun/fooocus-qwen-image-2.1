@@ -43,14 +43,13 @@ use_utf8_console()
 import argparse
 import json
 import time
+from dataclasses import replace as _replace
 
 import torch
 from PIL import Image
 
 from fooocus_qwen import config, logging_setup
 from fooocus_qwen.engine import loader, presets
-from dataclasses import replace as _replace
-
 from fooocus_qwen.engine.generator import (
     MASK_MASK,
     MASK_NONE,

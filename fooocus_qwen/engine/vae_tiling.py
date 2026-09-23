@@ -27,7 +27,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 import torch
 
@@ -221,7 +221,9 @@ class SeamlessTiledVae:
         self.clear_cache()
 
         if self.config.patch_size is not None:
-            from diffusers.models.autoencoders.autoencoder_kl_qwenimage21 import _unpatchify
+            from diffusers.models.autoencoders.autoencoder_kl_qwenimage21 import (
+                _unpatchify,
+            )
 
             decoded = _unpatchify(decoded, patch_size=self.config.patch_size)
 

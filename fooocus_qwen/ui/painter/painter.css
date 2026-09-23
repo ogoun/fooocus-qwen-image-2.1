@@ -19,7 +19,10 @@
 .qp {
     --qp-border: var(--border-color-primary, #e5e7eb);
     --qp-text: var(--body-text-color, #1f2937);
-    --qp-muted: var(--body-text-color-subdued, #6b7280);
+    /* Приглушённый — от основного цвета текста, а не subdued темы: у Gradio
+       он в светлой теме так бледен, что подсказки под холстом и подпись
+       «Размер» было не прочесть. Смешение держит контраст в обеих темах. */
+    --qp-muted: color-mix(in srgb, var(--qp-text) 72%, transparent);
     --qp-panel: var(--background-fill-primary, #ffffff);
     --qp-well: var(--background-fill-secondary, #f3f4f6);
     --qp-button: var(--button-secondary-background-fill, #f3f4f6);
@@ -174,7 +177,7 @@
 .qp[data-state="empty"] .qp-empty { display: flex; }
 .qp-empty:hover { border-color: var(--qp-accent); }
 .qp-empty-title { font-size: 1.1em; font-weight: 600; }
-.qp-empty-hint { color: #9ca3af; }
+.qp-empty-hint { color: #b4b8c0; }
 
 .qp-notice {
     position: absolute;
@@ -209,7 +212,7 @@
     padding: 4px 10px;
     border-top: 1px solid var(--qp-border);
     color: var(--qp-muted);
-    font-size: var(--text-xs, 12px);
+    font-size: var(--text-sm, 13px);
     min-height: 1.6em;
 }
 .qp-hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

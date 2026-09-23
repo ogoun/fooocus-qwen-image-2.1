@@ -1,7 +1,6 @@
 """Разбор ответа переписывателя промтов и сборка сообщения пользователя."""
 
-from pathlib import Path
-
+import pytest
 from PIL import Image
 
 from fooocus_qwen.prompting import boost
@@ -133,8 +132,5 @@ def test_boost_raises_file_not_found_for_missing_prompt(tmp_path):
     client = RecordingClient()
 
     # tmp_path пуст, системные промты не существуют
-    try:
+    with pytest.raises(FileNotFoundError, match="system_prompt_t2i"):
         boost.boost(client, "a cat", mode=boost.MODE_T2I, prompt_dir=tmp_path)
-        assert False, "Expected FileNotFoundError"
-    except FileNotFoundError as e:
-        assert "system_prompt_t2i.txt" in str(e)

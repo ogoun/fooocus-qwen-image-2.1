@@ -13,8 +13,8 @@ from __future__ import annotations
 
 import getpass
 import logging
+from collections.abc import Callable, Sequence
 from pathlib import Path
-from typing import Callable, Sequence
 
 from .endpoint import LlmEndpoint, load_endpoint, parse_endpoint_file
 
