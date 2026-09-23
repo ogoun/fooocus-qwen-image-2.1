@@ -174,14 +174,17 @@ def test_every_status_line_a_user_can_reach_without_the_model_is_english(monkeyp
     _assert_english(handlers["take_back"](None, "en")[1], "пустая отправка в редактор")
 
     # вкладка «Настройки»
-    _assert_english(handlers["store_endpoint"]("x\n", "en"), "сохранение адреса")
+    _assert_english(handlers["store_endpoint"]("192.0.2.10:8000", "", "en")[1], "сохранение адреса")
+    _assert_english(handlers["store_endpoint"]("", "", "en")[1], "сохранение без адреса")
+    _assert_english(handlers["forget_token"]("en"), "удаление токена")
     # Здесь цитируется текст исключения — проверяем рамку, см. _assert_english_frame.
     _assert_english_frame(handlers["check_connection"]("en"), "No connection:", "проверка связи")
     _assert_english(handlers["store_prompt_file"]("system_prompt_t2i.txt", "text", "en"), "сохранение промта")
     _assert_english(handlers["memory_report"]("en"), "отчёт о памяти")
 
     # вкладка «Галерея»: у gr.JSON переводимы и ключи словаря
-    _assert_english(handlers["restore"](None, None, "en")[-1], "восстановление без источника")
+    _assert_english(handlers["restore"](None, "en")[-1], "повтор без выбора")
+    _assert_english(tab_gallery.describe(None, None, "en"), "пустая карточка")
     _assert_english(handlers["open_outputs"]("en"), "открытие каталога")
 
 

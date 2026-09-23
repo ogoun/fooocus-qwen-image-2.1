@@ -40,6 +40,7 @@ import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 
 import numpy as np
 from PIL import Image
@@ -350,13 +351,71 @@ def scenario_latency(browser, url, report: Report, samples: Path) -> None:
     page.close()
 
 
+def scenario_gallery(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
+    """Карточка вместо JSON и действия с переходом на нужную вкладку."""
+    print("галерея:")
+    from fooocus_qwen.imaging import metadata
+    from fooocus_qwen.storage import gallery
+
+    # Галерея читает каталоги дат, как их пишет генерация; дата из будущего
+    # ставит образец первым, что бы ни сохранили сценарии до этого.
+    target = gallery.next_path(config.OUTPUT_DIR, datetime(2099, 1, 1, 23, 59, 59))
+    target.parent.mkdir(parents=True, exist_ok=True)
+
+    metadata.save_png(Image.open(sample_image(samples, 640, 480)), target,
+                      {"prompt": "a lighthouse at dawn", "seed": 777, "preset": "LowQuality",
+                       "width": 640, "height": 480, "aspect": "4:3", "true_cfg_scale": 1.0})
+    page, errors = fresh_page(browser, url)
+    open_tab(page, 2)
+    page.wait_for_timeout(800)
+    thumbs = page.locator(".qs-browse img")
+    report.check(thumbs.count() >= 1, f"галерея обновилась при открытии: {thumbs.count()} картинок")
+    thumbs.first.click()
+    page.wait_for_timeout(1200)
+    card = page.locator(".block.qs-card").inner_text()
+    report.check("a lighthouse at dawn" in card and "777" in card and "{" not in card, "карточка — читаемый текст")
+
+    click_text(page, "Открыть в редакторе")
+    page.wait_for_function(f"() => {API}.state().width === 640", timeout=20000)
+    active = page.locator('button[role="tab"][aria-selected="true"]').inner_text()
+    report.check(active == "Редактирование", f"переход на правку: {active}")
+
+    open_tab(page, 2)
+    page.locator(".qs-browse img").first.click()
+    page.wait_for_timeout(800)
+    click_text(page, "Повторить параметры")
+    page.wait_for_timeout(1500)
+    active = page.locator('button[role="tab"][aria-selected="true"]').inner_text()
+    prompt = page.locator("textarea").first.input_value()
+    report.check(active == "Генерация" and prompt == "a lighthouse at dawn", f"повтор: вкладка {active}, промт {prompt!r}")
+    report.check(not errors, "без ошибок страницы" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
+def scenario_secret(browser, url, report: Report) -> None:
+    """Токен языковой модели не попадает на страницу ни в каком виде."""
+    print("секрет:")
+    config.ENDPOINT_FILE.write_text(
+        "\n".join(["llama.cpp", "192.0.2.10:8000", "token=ui-check-secret", ""]), encoding="utf-8"
+    )
+    page, errors = fresh_page(browser, url)
+    open_tab(page, 3)
+    page.wait_for_timeout(800)
+    html = page.content()
+    fields = " ".join(t.input_value() for t in page.locator("textarea, input").all() if t.is_visible())
+    report.check("ui-check-secret" not in html and "ui-check-secret" not in fields, "токена нет ни в разметке, ни в полях")
+    report.check("192.0.2.10" in fields, "адрес при этом виден")
+    report.check(not errors, "без ошибок страницы" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
 # --- запуск --------------------------------------------------------------------
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Проверка интерфейса в браузере")
     parser.add_argument("--port", type=int, default=7899)
     parser.add_argument("--only", nargs="*", default=None,
-                        help="layout language painter annotation outpaint latency")
+                        help="layout language painter annotation outpaint latency gallery secret")
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
@@ -367,6 +426,9 @@ def main() -> int:
     # Результаты подставного генератора не должны попасть в галерею человека.
     config.OUTPUT_DIR = work / "outputs"
     config.PROMPT_DIR = work / "prompts"
+    # Адрес языковой модели тоже подменяется: сценарий секрета пишет туда
+    # поддельный токен, и настоящий файл человека трогать нельзя.
+    config.ENDPOINT_FILE = work / "llm_endpoint.txt"
     config.ensure_directories()
 
     fake = FakeGenerator()
@@ -383,6 +445,8 @@ def main() -> int:
         "annotation": lambda b, r: scenario_annotation(b, url, r, fake, samples),
         "outpaint": lambda b, r: scenario_outpaint(b, url, r, fake, samples),
         "latency": lambda b, r: scenario_latency(b, url, r, samples),
+        "gallery": lambda b, r: scenario_gallery(b, url, r, fake, samples),
+        "secret": lambda b, r: scenario_secret(b, url, r),
     }
     chosen = args.only or list(scenarios)
     report = Report()

@@ -1,5 +1,13 @@
 """Вкладка настроек: адрес языковой модели, системные промты, память видеокарты.
 
+Токен языковой модели в браузер не отправляется никогда. Раньше адрес
+правился одним текстовым полем с содержимым файла целиком — вместе с
+токеном открытым текстом, а интерфейс слушает ``0.0.0.0``: токен читал
+любой в локальной сети, открывший вкладку. Теперь адрес — обычное поле,
+токен — поле пароля, которое сервер не заполняет; пустое при сохранении
+значит «оставить прежний», для удаления есть отдельная кнопка. Файл пишет
+тот же ``llm.setup.render``, что и установка, — формат один на оба пути.
+
 Системные промты правятся прямо здесь и перечитываются заново при каждом
 обращении к языковой модели (см. ``prompting.boost``), а адрес — при каждом
 ``Studio.llm_client()``: оболочку не нужно перезапускать, чтобы подхватить
@@ -15,7 +23,8 @@ from __future__ import annotations
 import gradio as gr
 
 from .. import config
-from ..llm import LlmError
+from ..llm import LlmError, load_endpoint, parse_endpoint_file
+from ..llm import setup as llm_setup
 from . import layout
 from .i18n import MESSAGES, Localizer, pick, say
 
@@ -35,13 +44,21 @@ _PROMPT_KEYS: dict[str, str] = {
 }
 
 
-def _read_endpoint(lang: str) -> str:
+def _current_endpoint():
+    """Настроенный адрес или ``None``, если настройки нет или она не читается."""
     try:
-        return config.ENDPOINT_FILE.read_text(encoding="utf-8")
-    except OSError:
-        # Заглушка — не содержимое файла, а обращение к пользователю, поэтому
-        # она переводится, хотя и оформлена комментарием внутри текстового поля.
-        return say("endpoint_file_missing", lang)
+        return load_endpoint(config.ENDPOINT_FILE)
+    except (OSError, ValueError):
+        return None
+
+
+def describe_endpoint(lang: str) -> str:
+    """Что настроено сейчас — без токена: о нём говорится только, есть ли он."""
+    endpoint = _current_endpoint()
+    if endpoint is None:
+        return say("endpoint_not_configured", lang)
+    token = say("token_set" if endpoint.token else "token_unset", lang)
+    return say("endpoint_current", lang, url=endpoint.base_url, token=token)
 
 
 def _read_prompt(name: str, lang: str) -> str:
@@ -63,18 +80,27 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     with gr.Row(elem_classes=[layout.WORK_ROW]):
         with gr.Column(min_width=layout.SIDE_MIN_WIDTH, elem_classes=[layout.FORM_COL]):
-            endpoint_text = localizer.bind(
+            current = _current_endpoint()
+            address = localizer.bind(
                 gr.Textbox(
-                    label=pick("llm_endpoint", lang),
-                    placeholder=pick("llm_endpoint_placeholder", lang),
-                    lines=5,
-                    value=_read_endpoint(lang),
+                    label=pick("llm_address", lang),
+                    placeholder=pick("llm_address_placeholder", lang),
+                    value=current.base_url if current else "",
                 ),
-                label=("Адрес языковой модели", "Language model endpoint"),
-                placeholder=(
-                    "имя бэкенда, адрес хоста:порт, token=…",
-                    "backend name, host:port, token=…",
+                label=("Адрес сервера языковой модели", "Language model server address"),
+                placeholder=("192.168.1.10:8000 или https://…", "192.168.1.10:8000 or https://…"),
+            )
+            # Поле пароля и всегда пустое: сервер токен не показывает — ни
+            # здесь, ни где-либо ещё в интерфейсе.
+            token = localizer.bind(
+                gr.Textbox(
+                    label=pick("llm_token", lang),
+                    placeholder=pick("llm_token_placeholder", lang),
+                    type="password",
+                    value="",
                 ),
+                label=("Токен", "Token"),
+                placeholder=("Пусто — оставить прежний", "Empty keeps the current one"),
             )
             with gr.Row():
                 save_endpoint = localizer.bind(
@@ -84,8 +110,15 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     gr.Button(pick("llm_check", lang), variant="primary"),
                     value=("Проверить связь", "Check connection"),
                 )
+            forget = localizer.bind(
+                gr.Button(pick("llm_forget_token", lang), size="sm"),
+                value=("Убрать токен", "Remove the token"),
+            )
             endpoint_status = localizer.bind(
-                gr.Textbox(label=pick("status", lang), interactive=False, lines=2),
+                gr.Textbox(
+                    label=pick("status", lang), interactive=False, lines=2,
+                    value=describe_endpoint(lang),
+                ),
                 label=("Состояние", "Status"),
             )
 
@@ -141,9 +174,30 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 gr.Button(pick("refresh", lang)), value=("Обновить", "Refresh")
             )
 
-    def store_endpoint(text, lang):
+    def store_endpoint(address_text, token_text, lang):
+        address_text = (address_text or "").strip()
+        if not address_text:
+            return "", say("endpoint_need_address", lang)
+        current = _current_endpoint()
+        # Пустое поле токена — «оставить прежний»: сервер токен не показывает,
+        # и заставлять вводить его заново при каждой правке адреса нельзя.
+        new_token = (token_text or "").strip() or (current.token if current else None)
+        text = llm_setup.render(address_text, new_token, current.backend if current else "")
+        try:
+            parse_endpoint_file(text)
+        except ValueError as error:
+            return "", say("endpoint_bad_address", lang, error=error)
         config.ENDPOINT_FILE.write_text(text, encoding="utf-8")
-        return say("endpoint_saved", lang)
+        return "", say("endpoint_saved", lang) + " " + describe_endpoint(lang)
+
+    def forget_token(lang):
+        current = _current_endpoint()
+        if current is None or not current.token:
+            return describe_endpoint(lang)
+        config.ENDPOINT_FILE.write_text(
+            llm_setup.render(current.base_url, None, current.backend), encoding="utf-8"
+        )
+        return say("token_forgotten", lang) + " " + describe_endpoint(lang)
 
     def check_connection(lang):
         # load_endpoint бросает FileNotFoundError (файла нет — обычное дело
@@ -159,16 +213,24 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         )
 
     def load_prompt_file(name, lang):
+        if name not in _PROMPT_FILES:
+            return say("prompt_file_missing", lang, name=name)
         return _read_prompt(name, lang)
 
     def store_prompt_file(name, text, lang):
+        # Имя пришло из браузера и ложится в путь записи. Gradio и сам сверяет
+        # значение списка с вариантами, но граница, на которой стоит запись
+        # файла, не должна держаться на чужой проверке.
+        if name not in _PROMPT_FILES:
+            return say("prompt_file_missing", lang, name=name)
         (config.SYSTEM_PROMPT_DIR / name).write_text(text, encoding="utf-8")
         return say("prompt_file_saved", lang, name=name)
 
     def memory_report(lang):
         return studio.memory_report(lang)
 
-    save_endpoint.click(store_endpoint, [endpoint_text, language], endpoint_status)
+    save_endpoint.click(store_endpoint, [address, token, language], [token, endpoint_status])
+    forget.click(forget_token, language, endpoint_status)
     check.click(check_connection, language, endpoint_status)
     chosen_file.change(load_prompt_file, [chosen_file, language], prompt_text)
     save_prompt_button.click(
@@ -176,4 +238,17 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     )
     memory_refresh.click(memory_report, language, memory)
 
-    return {"memory": memory, "endpoint_status": endpoint_status, "prompt_status": prompt_status}
+    def refresh(lang):
+        # Вкладка перечитывает настройку при каждом открытии: иначе она
+        # показывала бы состояние на момент запуска процесса — и отставала,
+        # если адрес поменяли из другого окна или руками в файле.
+        current = _current_endpoint()
+        return (current.base_url if current else ""), describe_endpoint(lang), studio.memory_report(lang)
+
+    return {
+        "memory": memory,
+        "endpoint_status": endpoint_status,
+        "prompt_status": prompt_status,
+        "address": address,
+        "refresh": refresh,
+    }

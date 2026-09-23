@@ -1,5 +1,13 @@
 """Вкладка галереи: история генераций и возврат к их параметрам.
 
+Выбранная картинка описывается карточкой, а не сырым JSON: человеку нужны
+промт, размер, сид и качество, а не ключи словаря. Из карточки два
+действия — «Повторить параметры» (поля вкладки генерации заполняются, и
+интерфейс сам переходит на неё) и «Открыть в редакторе» (картинка уходит в
+кисть маски, переход на правку). Раньше до обоих было не дотянуться:
+параметры восстанавливались только из перетащенного файла, а в редактор
+картинку из галереи было не отправить вовсе.
+
 Параметры генерации живут внутри самих PNG (см. ``imaging.metadata``), поэтому
 история переживает и перезапуск оболочки, и перенос файлов результатов на
 другую машину — отдельная база для этого не нужна: любой наш PNG сам себе
@@ -15,12 +23,14 @@ from pathlib import Path
 
 import gradio as gr
 
+from PIL import Image
+
 from .. import config
 from ..engine import presets
 from ..imaging import aspect as aspect_module
 from ..imaging import metadata
 from ..storage import gallery
-from . import layout
+from . import layout, painter
 from .i18n import Localizer, pick, say
 
 # Порядок обязан совпадать с порядком выходов кнопки «Восстановить» в build():
@@ -100,13 +110,67 @@ def _open_folder(path: Path) -> None:
         subprocess.run(["xdg-open", str(path)], check=False)
 
 
-def build(studio, localizer: Localizer, generate_components: dict, language=None) -> dict:
+def _escape(text: str) -> str:
+    """Текст пользователя в Markdown карточки — как есть, без разметки.
+
+    Промт пишет человек, и звёздочка или подчёркивание в нём — не курсив.
+    """
+    return "".join(f"\\{char}" if char in "\\`*_{}[]<>()#+-.!|" else char for char in text)
+
+
+def describe(parameters: dict | None, path: Path | None, lang: str) -> str:
+    """Карточка выбранной картинки в Markdown."""
+    if path is None:
+        return say("gallery_pick", lang)
+    if not parameters:
+        return f"**{_escape(path.name)}**\n\n{say('png_without_parameters', lang)}"
+
+    lines = []
+    if parameters.get("prompt"):
+        lines += [f"**{say('card_prompt', lang)}**", "", _escape(str(parameters["prompt"])), ""]
+    boosted = parameters.get("prompt_boosted")
+    if boosted and boosted != parameters.get("prompt"):
+        lines += [f"**{say('card_boosted', lang)}**", "", _escape(str(boosted)), ""]
+    if parameters.get("negative_prompt"):
+        lines += [f"**{say('card_negative', lang)}**", "", _escape(str(parameters["negative_prompt"])), ""]
+
+    rows = []
+    if parameters.get("width") and parameters.get("height"):
+        rows.append((say("card_size", lang), f"{parameters['width']}×{parameters['height']}"))
+    if "seed" in parameters:
+        rows.append((say("card_seed", lang), str(parameters["seed"])))
+    if parameters.get("preset"):
+        steps = parameters.get("steps")
+        quality = str(parameters["preset"]) + (f" · {say('card_steps', lang, steps=steps)}" if steps else "")
+        rows.append((say("card_quality", lang), quality))
+    if "true_cfg_scale" in parameters:
+        rows.append((say("card_guidance", lang), str(parameters["true_cfg_scale"])))
+    if parameters.get("styles"):
+        rows.append((say("card_styles", lang), ", ".join(map(str, parameters["styles"]))))
+    if parameters.get("seconds") is not None:
+        rows.append((say("card_time", lang), say("card_seconds", lang, seconds=parameters["seconds"])))
+    rows.append((say("card_file", lang), path.name))
+
+    lines += ["| | |", "|---|---|"]
+    lines += [f"| {_escape(key)} | {_escape(value)} |" for key, value in rows]
+    return "\n".join(lines)
+
+
+def build(
+    studio,
+    localizer: Localizer,
+    generate_components: dict,
+    language=None,
+    edit_components: dict | None = None,
+    tabs=None,
+) -> dict:
     """Собирает вкладку.
 
     ``language`` — компонент с текущим языком; см. докстринг
-    ``tab_generate.build``. Здесь он нужен и для содержимого ``gr.JSON``:
-    там переводимы не только значения, но и ключи словаря — пользователь
-    читает и их.
+    ``tab_generate.build``. ``edit_components`` и ``tabs`` нужны для
+    действий, которые уводят с вкладки: «Открыть в редакторе» кладёт картинку
+    в кисть правки, и оба действия переключают вкладку сами. Без них вкладка
+    собирается и работает, только без этих переходов — так её собирают тесты.
     """
     lang = studio.config.lang
     if language is None:
@@ -120,32 +184,36 @@ def build(studio, localizer: Localizer, generate_components: dict, language=None
                     columns=6,
                     elem_classes=[layout.BROWSE],
                     object_fit="contain",
+                    interactive=False,
                     value=[str(path) for path in gallery.recent(config.OUTPUT_DIR)],
                 ),
                 label=("Галерея", "Gallery"),
             )
         with gr.Column(min_width=layout.SIDE_MIN_WIDTH, elem_classes=[layout.SIDE_COL]):
-            refresh = localizer.bind(gr.Button(pick("refresh", lang)), value=("Обновить", "Refresh"))
+            details = gr.Markdown(say("gallery_pick", lang), elem_classes=[layout.CARD])
+            with gr.Row():
+                reuse = localizer.bind(
+                    gr.Button(pick("gallery_reuse", lang), variant="primary"),
+                    value=("Повторить параметры", "Reuse parameters"),
+                )
+                to_editor = localizer.bind(
+                    gr.Button(pick("gallery_to_editor", lang), visible=edit_components is not None),
+                    value=("Открыть в редакторе", "Open in editor"),
+                )
+            # Восстановление из файла — одна кнопка: выбрал PNG, и параметры
+            # уже во вкладке генерации. Раньше это были поле загрузки и
+            # отдельная кнопка с той же подписью, что сбивало с толку.
+            from_file = localizer.bind(
+                gr.UploadButton(pick("gallery_from_file", lang), file_types=[".png"], size="sm"),
+                label=("Параметры из PNG-файла…", "Parameters from a PNG file…"),
+            )
             open_button = localizer.bind(
-                gr.Button(pick("open_folder", lang)), value=("Открыть папку", "Open folder")
+                gr.Button(pick("open_folder", lang), size="sm"),
+                value=("Открыть папку", "Open folder"),
             )
-            dropped = localizer.bind(
-                gr.File(
-                    label=pick("restore_params", lang), file_types=[".png"],
-                    elem_classes=[layout.DROP_ZONE],
-                ),
-                label=("Восстановить параметры из PNG", "Restore parameters from PNG"),
-            )
-            restore_button = localizer.bind(
-                gr.Button(pick("restore_params", lang), variant="primary"),
-                value=("Восстановить параметры из PNG", "Restore parameters from PNG"),
-            )
-            details = localizer.bind(
-                gr.JSON(label=pick("status", lang)), label=("Состояние", "Status")
-            )
+            status = gr.Markdown("", elem_classes=[layout.STATUS])
 
-    # Хранит путь последнего выбранного в галерее файла — кнопка «Восстановить»
-    # должна знать источник, даже если пользователь ничего не перетаскивал.
+    # Путь последней выбранной картинки: действия карточки работают с ним.
     selected = gr.State(None)
 
     def refresh_history():
@@ -154,45 +222,63 @@ def build(studio, localizer: Localizer, generate_components: dict, language=None
     def on_select(lang, event: gr.SelectData):
         value = event.value
         path = Path(value["image"]["path"]) if isinstance(value, dict) else Path(value)
-        parameters = metadata.read_png(path)
-        fallback = {say("field_message", lang): say("png_without_parameters", lang)}
-        return str(path), (parameters or fallback)
+        return str(path), describe(metadata.read_png(path), path, lang)
 
     def open_outputs(lang):
         config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
         _open_folder(config.OUTPUT_DIR)
-        return {say("field_opened_folder", lang): str(config.OUTPUT_DIR)}
+        return say("opened_folder", lang, path=config.OUTPUT_DIR)
 
-    def restore(path, uploaded, lang):
-        # Перетащенный файл важнее выбора в галерее: пользователь явно принёс
-        # новый PNG, значит, речь уже не о том, что было выбрано раньше.
-        source = Path(uploaded) if uploaded else (Path(path) if path else None)
+    def _switch(target: str | None) -> tuple:
+        """Переход на вкладку — только если есть куда: число значений обязано
+        совпадать с числом выходов, иначе Gradio отвергнет ответ целиком."""
+        if tabs is None:
+            return ()
+        return (gr.Tabs(selected=target) if target else gr.update(),)
+
+    def _restore_from(source: Path | None, lang):
         if source is None:
-            return (gr.update(),) * RESTORED_FIELDS + (
-                {say("field_message", lang): say("pick_or_drop_png", lang)},
-            )
-
+            return (gr.update(),) * RESTORED_FIELDS + (say("gallery_pick", lang),) + _switch(None)
         parameters = metadata.read_png(source)
-        missing = {say("field_message", lang): say("parameters_not_found", lang)}
-        return restore_fields(parameters) + (parameters or missing,)
+        if not parameters:
+            return (gr.update(),) * RESTORED_FIELDS + (say("parameters_not_found", lang),) + _switch(None)
+        message = say("parameters_restored", lang, name=source.name)
+        return restore_fields(parameters) + (message,) + _switch(layout.TAB_GENERATE)
 
-    refresh.click(refresh_history, None, history)
-    open_button.click(open_outputs, language, details)
+    def restore(path, lang):
+        return _restore_from(Path(path) if path else None, lang)
+
+    def restore_from_file(uploaded, lang):
+        return _restore_from(Path(uploaded) if uploaded else None, lang)
+
+    def send_to_editor(path, lang):
+        if not path:
+            return (gr.update(), say("gallery_pick", lang)) + _switch(None)
+        with Image.open(path) as opened:
+            image = opened.convert("RGBA")
+        return (painter.encode(image), say("sent_to_editor", lang)) + _switch(layout.TAB_EDIT)
+
+    restore_outputs = [
+        generate_components["prompt"],
+        generate_components["boosted"],
+        generate_components["negative"],
+        generate_components["styles"],
+        generate_components["quality"],
+        generate_components["seed"],
+        generate_components["cfg"],
+        generate_components["ratio"],
+        status,
+    ]
+    switch_output = [tabs] if tabs is not None else []
+
+    open_button.click(open_outputs, language, status)
     history.select(on_select, language, [selected, details])
-    restore_button.click(
-        restore,
-        [selected, dropped, language],
-        [
-            generate_components["prompt"],
-            generate_components["boosted"],
-            generate_components["negative"],
-            generate_components["styles"],
-            generate_components["quality"],
-            generate_components["seed"],
-            generate_components["cfg"],
-            generate_components["ratio"],
-            details,
-        ],
-    )
+    reuse.click(restore, [selected, language], restore_outputs + switch_output)
+    from_file.upload(restore_from_file, [from_file, language], restore_outputs + switch_output)
+    if edit_components is not None:
+        to_editor.click(
+            send_to_editor, [selected, language],
+            [edit_components["editor"], status] + switch_output,
+        )
 
-    return {"history": history, "details": details, "selected": selected}
+    return {"history": history, "details": details, "selected": selected, "refresh": refresh_history}

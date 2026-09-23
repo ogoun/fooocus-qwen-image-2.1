@@ -121,7 +121,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             # мотал страницу вверх-вниз, держа разницу в голове. Рядом они
             # видны разом, и на широком мониторе для этого есть место.
             with gr.Row(elem_classes=[layout.BOARDS_ROW]):
-                with gr.Column(min_width=layout.CANVAS_MIN_WIDTH):
+                with gr.Column(min_width=layout.CANVAS_MIN_WIDTH, elem_classes=[layout.SLOT_EDITOR]):
                     # Своя кисть вместо gr.ImageEditor: у того стоимость
                     # движения мыши растёт с длиной мазка, и на крупном кадре
                     # кисть заметно отстаёт от руки (см. ui/painter).
@@ -137,7 +137,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         lang=("ru", "en"),
                     )
 
-                with gr.Column(min_width=layout.CANVAS_MIN_WIDTH):
+                with gr.Column(min_width=layout.CANVAS_MIN_WIDTH, elem_classes=[layout.SLOT_RESULT]):
                     result = localizer.bind(
                         gr.Gallery(
                             label=pick("result", lang),
@@ -145,6 +145,10 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                             object_fit="contain",
                             format="png",
                             preview=True,
+                            # Выход, а не вход: без этого Gradio делал поле
+                            # интерактивным (оно же вход «Отправить в
+                            # редактор») и зазывал загрузить в него файл.
+                            interactive=False,
                             elem_classes=[layout.PREVIEW, layout.BOARD],
                         ),
                         label=("Результат", "Result"),
@@ -154,7 +158,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         value=("Отправить в редактор", "Send to editor"),
                     )
 
-            with gr.Row(elem_classes=[layout.PROMPT_BAR]):
+            with gr.Row(elem_classes=[layout.PROMPT_BAR, layout.SLOT_PROMPT]):
                 prompt = localizer.bind(
                     gr.Textbox(
                         label=pick("prompt", lang),
@@ -174,7 +178,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         gr.Button(pick("stop", lang), variant="stop"), value=("Прервать", "Stop")
                     )
 
-            with gr.Row():
+            with gr.Row(elem_classes=[layout.SLOT_ACTIONS]):
                 boost_enabled = localizer.bind(
                     gr.Checkbox(label=pick("boost", lang), value=False),
                     label=("AI буст", "AI boost"),

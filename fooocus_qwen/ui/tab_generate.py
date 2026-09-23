@@ -103,6 +103,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     elem_classes=[layout.BOARD],
                     object_fit="contain",
                     format="png",
+                    # Только для чтения: поле результата — выход, и зазывать
+                    # «перетащить файл сюда» ему незачем.
+                    interactive=False,
                     # Крупный просмотр с лентой миниатюр под ним. Без него
                     # сетка в две колонки отдавала единственному
                     # изображению — а это значение по умолчанию — половину
@@ -169,6 +172,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         elem_classes=[layout.STRIP],
                         object_fit="contain",
                         show_label=False,
+                        interactive=False,
+                        # Пустая лента — только место: видна, когда есть что показать.
+                        visible=False,
                     ),
                     label=("Референсы", "References"),
                 )
@@ -183,7 +189,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         label=("Добавить референсы", "Add references"),
                     )
                     reference_clear = localizer.bind(
-                        gr.Button(pick("reference_clear", lang)),
+                        gr.Button(pick("reference_clear", lang), visible=False),
                         value=("Очистить референсы", "Clear references"),
                     )
 
@@ -295,14 +301,14 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
                 preset_name = localizer.bind(
                     gr.Textbox(label=pick("preset_name", lang)),
-                    label=("Название пресета", "Preset name"),
+                    label=("Имя для сохранения", "Name to save as"),
                 )
                 saved = localizer.bind(
                     gr.Dropdown(
                         choices=library.list_prompts(config.PROMPT_DIR),
                         label=pick("load_prompt", lang),
                     ),
-                    label=("Загрузить промт", "Load prompt"),
+                    label=("Сохранённые промты", "Saved prompts"),
                 )
                 with gr.Row():
                     save_button = localizer.bind(
@@ -333,8 +339,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         # тегами `<imageN>` бесполезны, если до них надо доклацаться.
         return (
             images,
-            captioned,
+            gr.update(value=captioned, visible=bool(images)),
             gr.update(open=bool(images)),
+            gr.update(visible=bool(images)),
             say("references_counted", lang, count=len(images), total=MAX_REFERENCES),
         )
 
@@ -342,7 +349,10 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         # Сбрасываем и сам виджет: иначе следующее добавление файла принесёт
         # с собой прежний набор, который виджет продолжает хранить внутри себя.
         # Секция закрывается: показывать в ней больше нечего.
-        return [], [], None, gr.update(open=False), say("references_cleared", lang)
+        return (
+            [], gr.update(value=[], visible=False), None, gr.update(open=False),
+            gr.update(visible=False), say("references_cleared", lang),
+        )
 
     def rewrite(prompt_text, current_references, ratio_value, lang):
         """Переписывает промт и сразу включает буст.
@@ -515,12 +525,12 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     reference_upload.change(
         add_references,
         [reference_upload, language],
-        [references, reference_gallery, reference_box, status],
+        [references, reference_gallery, reference_box, reference_clear, status],
     )
     reference_clear.click(
         clear_references,
         language,
-        [references, reference_gallery, reference_upload, reference_box, status],
+        [references, reference_gallery, reference_upload, reference_box, reference_clear, status],
     )
     boost_now.click(
         rewrite,

@@ -147,3 +147,25 @@ def test_no_choices_list_carries_untranslated_cyrillic_on_the_english_build():
     assert not offenders, "нетранслированный выбор в choices на английской сборке: " + ", ".join(
         offenders
     )
+
+
+def test_no_translation_is_left_unused():
+    """Перевод, который никто не показывает, — мёртвая строка.
+
+    Такие копятся при каждой переделке: поле ушло, а его подпись осталась в
+    таблице и продолжает переводиться и проверяться вхолостую. Обращение —
+    строковый литерал ключа в коде оболочки или в скрипте кисти.
+    """
+    from pathlib import Path
+
+    from fooocus_qwen.ui import i18n
+
+    root = Path(i18n.__file__).resolve().parents[1]
+    code = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in list(root.rglob("*.py")) + list(root.rglob("*.js"))
+        if path.name != "i18n.py"
+    )
+    for table in (i18n.T, i18n.MESSAGES, i18n.PAINTER):
+        dead = [key for key in table if f'"{key}"' not in code and f"'{key}'" not in code]
+        assert not dead, f"переводы без обращений: {dead}"

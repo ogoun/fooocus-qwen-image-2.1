@@ -103,37 +103,55 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
             return [following, gr.update(value=following.upper()), *localizer.updates(following)]
 
 
-        with gr.Tabs():
+        with gr.Tabs() as tabs:
             # Заголовок вкладки — такая же переводимая подпись, как и всё
             # остальное: без регистрации в localizer он застыл бы на языке
             # запуска и не откликался бы на переключатель RU/EN.
             generate_tab = localizer.bind(
-                gr.Tab(pick("tab_generate", cfg.lang)),
+                gr.Tab(pick("tab_generate", cfg.lang), id=layout.TAB_GENERATE),
                 label=("Генерация", "Generate"),
             )
             with generate_tab:
                 generate_components = tab_generate.build(studio, localizer, language)
 
             edit_tab = localizer.bind(
-                gr.Tab(pick("tab_edit", cfg.lang)),
+                gr.Tab(pick("tab_edit", cfg.lang), id=layout.TAB_EDIT),
                 label=("Редактирование", "Edit"),
             )
             with edit_tab:
-                tab_edit.build(studio, localizer, language)
+                edit_components = tab_edit.build(studio, localizer, language)
 
             gallery_tab = localizer.bind(
-                gr.Tab(pick("tab_gallery", cfg.lang)),
+                gr.Tab(pick("tab_gallery", cfg.lang), id=layout.TAB_GALLERY),
                 label=("Галерея", "Gallery"),
             )
             with gallery_tab:
-                tab_gallery.build(studio, localizer, generate_components, language)
+                gallery_components = tab_gallery.build(
+                    studio, localizer, generate_components, language,
+                    edit_components=edit_components, tabs=tabs,
+                )
+            # Галерея обновляется при каждом открытии: новые картинки видны
+            # сразу, без кнопки «Обновить», о которой надо было помнить.
+            gallery_tab.select(
+                gallery_components["refresh"], None, gallery_components["history"], queue=False
+            )
 
             settings_tab = localizer.bind(
-                gr.Tab(pick("tab_settings", cfg.lang)),
+                gr.Tab(pick("tab_settings", cfg.lang), id=layout.TAB_SETTINGS),
                 label=("Настройки", "Settings"),
             )
             with settings_tab:
-                tab_settings.build(studio, localizer, language)
+                settings_components = tab_settings.build(studio, localizer, language)
+            settings_tab.select(
+                settings_components["refresh"],
+                language,
+                [
+                    settings_components["address"],
+                    settings_components["endpoint_status"],
+                    settings_components["memory"],
+                ],
+                queue=False,
+            )
 
         # Переключатель языка делает две вещи. Явно — перерисовывает подписи
         # уже собранных компонентов. Неявно, но не менее важно — его значение

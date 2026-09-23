@@ -176,7 +176,7 @@ footer { display: none !important; }
 /* Область загрузки референсов по умолчанию занимает высоту в треть экрана
    ради подписи «перетащите файлы». Референсы нужны не в каждой генерации, а
    место они отнимают всегда. */
-.qs-drop { max-height: 120px !important; overflow: auto !important; }
+.qs-drop { max-height: 14rem !important; overflow: auto !important; }
 
 .qs-strip {
     height: var(--qs-strip-height) !important;
@@ -210,12 +210,31 @@ footer { display: none !important; }
 @media (max-width: 2000px) {
     .qs-boards { flex-direction: column !important; }
 
+    /* Порядок в столбец: кисть, промт, действия, результат. Строка двух
+       холстов растворяется в своей колонке (display: contents), и её дети
+       встают в один ряд с промтом — только так им можно задать общий
+       порядок. Без этого на FHD «Применить правку» уезжала за нижний край:
+       под кистью стоял результат, а промт — ещё ниже. */
+    .qs-boards { display: contents !important; }
+    .qs-slot-editor { order: 1 !important; }
+    .qs-slot-prompt { order: 2 !important; }
+    .qs-slot-actions { order: 3 !important; }
+    .qs-slot-result { order: 4 !important; }
+
     .qs-preview.qs-board {
         aspect-ratio: auto !important;
         height: clamp(12rem, 32vh, 26rem) !important;
         max-height: clamp(12rem, 32vh, 26rem) !important;
         min-height: 12rem !important;
     }
+}
+
+/* Карточка выбранной картинки: промт бывает длинным, и карточка обязана
+   прокручиваться сама, а не растягивать панель на весь экран. */
+.qs-card {
+    max-height: calc(100vh - 22rem) !important;
+    overflow-y: auto !important;
+    overflow-wrap: anywhere !important;
 }
 
 /* --- строки и формы -------------------------------------------------------- */
