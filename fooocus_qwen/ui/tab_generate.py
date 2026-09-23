@@ -94,13 +94,14 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     boost_source = gr.State("")
 
     with gr.Row(elem_classes=[layout.WORK_ROW]):
-        with gr.Column(scale=3, min_width=layout.CANVAS_MIN_WIDTH):
+        with gr.Column(min_width=layout.CANVAS_MIN_WIDTH, elem_classes=[layout.CANVAS_COL]):
             result = localizer.bind(
                 gr.Gallery(
                     label=pick("result", lang),
                     show_label=True,
                     columns=2,
                     height=layout.CANVAS_HEIGHT,
+                    elem_classes=[layout.BOARD],
                     object_fit="contain",
                     format="png",
                     # Крупный просмотр с лентой миниатюр под ним. Без него
@@ -187,7 +188,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         value=("Очистить референсы", "Clear references"),
                     )
 
-        with gr.Column(scale=1, min_width=layout.SIDE_MIN_WIDTH):
+        with gr.Column(min_width=layout.SIDE_MIN_WIDTH, elem_classes=[layout.SIDE_COL]):
             quality = localizer.bind(
                 gr.Radio(
                     choices=list(presets.NAMES),

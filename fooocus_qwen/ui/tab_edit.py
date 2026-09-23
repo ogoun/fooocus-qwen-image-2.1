@@ -98,20 +98,49 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         language = gr.State(lang)
 
     with gr.Row(elem_classes=[layout.WORK_ROW]):
-        with gr.Column(scale=3, min_width=layout.CANVAS_MIN_WIDTH):
-            editor = localizer.bind(
-                gr.ImageEditor(
-                    label=pick("source_image", lang),
-                    type="pil",
-                    image_mode="RGBA",
-                    layers=True,
-                    height=layout.CANVAS_HEIGHT,
-                    brush=gr.Brush(colors=list(ANNOTATION_COLOURS), default_color="#ff0000", color_mode="fixed"),
-                    eraser=gr.Eraser(),
-                    sources=("upload", "clipboard"),
-                ),
-                label=("Исходное изображение", "Source image"),
-            )
+        with gr.Column(min_width=layout.CANVAS_MIN_WIDTH, elem_classes=[layout.CANVAS_COL]):
+            # Правка — это сравнение: было и стало. Пока результат лежал под
+            # редактором, одновременно они на экран не помещались, и человек
+            # мотал страницу вверх-вниз, держа разницу в голове. Рядом они
+            # видны разом, и на широком мониторе для этого есть место.
+            with gr.Row(elem_classes=[layout.BOARDS_ROW]):
+                with gr.Column(min_width=layout.CANVAS_MIN_WIDTH):
+                    editor = localizer.bind(
+                        gr.ImageEditor(
+                            label=pick("source_image", lang),
+                            type="pil",
+                            image_mode="RGBA",
+                            layers=True,
+                            height=layout.CANVAS_HEIGHT,
+                            elem_classes=[layout.BOARD],
+                            brush=gr.Brush(
+                                colors=list(ANNOTATION_COLOURS),
+                                default_color="#ff0000",
+                                color_mode="fixed",
+                            ),
+                            eraser=gr.Eraser(),
+                            sources=("upload", "clipboard"),
+                        ),
+                        label=("Исходное изображение", "Source image"),
+                    )
+
+                with gr.Column(min_width=layout.CANVAS_MIN_WIDTH):
+                    result = localizer.bind(
+                        gr.Gallery(
+                            label=pick("result", lang),
+                            columns=1,
+                            height=layout.PREVIEW_HEIGHT,
+                            object_fit="contain",
+                            format="png",
+                            preview=True,
+                            elem_classes=[layout.PREVIEW, layout.BOARD],
+                        ),
+                        label=("Результат", "Result"),
+                    )
+                    send_back = localizer.bind(
+                        gr.Button(pick("send_to_edit", lang)),
+                        value=("Отправить в редактор", "Send to editor"),
+                    )
 
             with gr.Row(elem_classes=[layout.PROMPT_BAR]):
                 prompt = localizer.bind(
@@ -142,18 +171,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     gr.Button(pick("describe", lang)), value=("Описать изображение", "Describe image")
                 )
 
-            result = localizer.bind(
-                gr.Gallery(
-                    label=pick("result", lang), columns=2, height=layout.PREVIEW_HEIGHT,
-                    object_fit="contain", format="png", preview=True,
-                ),
-                label=("Результат", "Result"),
-            )
-            send_back = localizer.bind(
-                gr.Button(pick("send_to_edit", lang)), value=("Отправить в редактор", "Send to editor")
-            )
-
-        with gr.Column(scale=1, min_width=layout.SIDE_MIN_WIDTH):
+        with gr.Column(min_width=layout.SIDE_MIN_WIDTH, elem_classes=[layout.SIDE_COL]):
             mode = localizer.bind(
                 gr.Radio(
                     choices=[(pick(_MODE_KEYS[key], lang), key) for key in _MODE_KEYS],

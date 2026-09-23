@@ -62,7 +62,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         language = gr.State(lang)
 
     with gr.Row(elem_classes=[layout.WORK_ROW]):
-        with gr.Column(min_width=layout.SIDE_MIN_WIDTH):
+        with gr.Column(min_width=layout.SIDE_MIN_WIDTH, elem_classes=[layout.FORM_COL]):
             endpoint_text = localizer.bind(
                 gr.Textbox(
                     label=pick("llm_endpoint", lang),
@@ -89,7 +89,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 label=("Состояние", "Status"),
             )
 
-        with gr.Column(min_width=layout.SIDE_MIN_WIDTH):
+        # Системный промт — единственное место вкладки, где ширина идёт в
+        # дело: это абзацы текста, который правят руками.
+        with gr.Column(min_width=layout.SIDE_MIN_WIDTH, elem_classes=[layout.TEXT_COL]):
             ru_choices = [(pick(_PROMPT_KEYS[name], "ru"), name) for name in _PROMPT_FILES]
             en_choices = [(pick(_PROMPT_KEYS[name], "en"), name) for name in _PROMPT_FILES]
             chosen_file = localizer.bind(
@@ -102,7 +104,10 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 choices=(ru_choices, en_choices),
             )
             prompt_text = gr.Textbox(
-                lines=18, value=_read_prompt(_PROMPT_FILES[0], lang), show_label=False
+                lines=18,
+                value=_read_prompt(_PROMPT_FILES[0], lang),
+                show_label=False,
+                elem_classes=[layout.LONG_TEXT],
             )
             save_prompt_button = localizer.bind(
                 gr.Button(pick("save_prompt", lang)), value=("Сохранить промт", "Save prompt")
@@ -112,23 +117,29 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 label=("Состояние", "Status"),
             )
 
-    with gr.Row():
-        memory = localizer.bind(
-            gr.Textbox(
-                label=pick("memory", lang),
-                interactive=False,
-                lines=2,
-                value=say("model_not_loaded", lang),
-            ),
-            label=("Память видеокарты", "GPU memory"),
-            # Значение поля тоже переводимо: это заглушка «ещё не загружена»,
-            # а не результат измерения. Переключение языка сбрасывает поле к
-            # ней — для снимка, который обновляют кнопкой, это верное
-            # поведение, а вот русская строка вокруг английских подписей —
-            # нет.
-            value=MESSAGES["model_not_loaded"],
-        )
-        memory_refresh = localizer.bind(gr.Button(pick("refresh", lang)), value=("Обновить", "Refresh"))
+        # Память стояла отдельной строкой под обеими колонками и занимала
+        # её целиком ради двух строк текста. Третьей колонкой она и читается
+        # лучше (рядом с тем, что тоже про состояние), и не отнимает высоту
+        # у того, что под ней.
+        with gr.Column(min_width=layout.SIDE_MIN_WIDTH, elem_classes=[layout.FORM_COL]):
+            memory = localizer.bind(
+                gr.Textbox(
+                    label=pick("memory", lang),
+                    interactive=False,
+                    lines=2,
+                    value=say("model_not_loaded", lang),
+                ),
+                label=("Память видеокарты", "GPU memory"),
+                # Значение поля тоже переводимо: это заглушка «ещё не
+                # загружена», а не результат измерения. Переключение языка
+                # сбрасывает поле к ней — для снимка, который обновляют
+                # кнопкой, это верное поведение, а вот русская строка вокруг
+                # английских подписей — нет.
+                value=MESSAGES["model_not_loaded"],
+            )
+            memory_refresh = localizer.bind(
+                gr.Button(pick("refresh", lang)), value=("Обновить", "Refresh")
+            )
 
     def store_endpoint(text, lang):
         config.ENDPOINT_FILE.write_text(text, encoding="utf-8")

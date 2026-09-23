@@ -24,13 +24,19 @@ from fooocus_qwen.ui import layout
 CSS = (config.PROJECT_ROOT / "fooocus_qwen" / "ui" / "style.css").read_text(encoding="utf-8")
 SOURCES = sorted((config.PROJECT_ROOT / "fooocus_qwen" / "ui").glob("*.py"))
 
+# Имена собираются из модуля, а не перечисляются здесь: список, который
+# ведут руками, отстаёт от кода ровно тогда, когда проверка нужнее всего —
+# при добавлении класса. Соглашение простое: все классы раскладки начинаются
+# с ``qs-``, и этого достаточно, чтобы узнать их в модуле.
 CLASS_NAMES = {
-    name: getattr(layout, name)
-    for name in ("LANG", "WORK_ROW", "PROMPT_BAR", "DROP_ZONE", "STATUS")
+    name: value
+    for name, value in vars(layout).items()
+    if isinstance(value, str) and value.startswith("qs-")
 }
 HEIGHTS = {
-    name: getattr(layout, name)
-    for name in ("CANVAS_HEIGHT", "BROWSE_HEIGHT", "PREVIEW_HEIGHT", "STRIP_HEIGHT")
+    name: value
+    for name, value in vars(layout).items()
+    if name.endswith("_HEIGHT") and isinstance(value, str)
 }
 
 
@@ -97,3 +103,43 @@ def test_the_layout_reflows_on_narrow_windows():
     assert f".{layout.WORK_ROW}" in CSS.split("@media", 1)[1], (
         "рабочая строка не участвует в переносе, а именно она и ломается на узком окне"
     )
+
+
+def test_the_stylesheet_gets_every_height_substituted():
+    """Высоты живут в ``layout.py`` и подставляются в стиль при запуске.
+
+    Они нужны в двух местах сразу: параметром ``height`` компонента и нижней
+    границей в CSS, без которой пустой холст схлопывается в полоску. Держать
+    одно и то же число в Python и в стиле — значит однажды поправить одно и
+    забыть другое, поэтому стиль получает значение подстановкой. Незаменённый
+    плейсхолдер браузер молча пропустит, и холст потеряет высоту.
+    """
+    gr = pytest.importorskip("gradio")  # noqa: F841 — app тянет gradio
+    from fooocus_qwen.ui import app
+
+    rendered = app.stylesheet()
+    assert "{{" not in rendered, "в стиле остался незаменённый плейсхолдер"
+    for name, value in HEIGHTS.items():
+        if "{{" + name + "}}" in CSS:
+            assert value in rendered, f"{name} не подставлено в стиль"
+
+
+def test_every_height_placeholder_in_css_comes_from_layout():
+    """Обратная сторона: плейсхолдер под несуществующее имя не заменится."""
+    placeholders = set(re.findall(r"\{\{([A-Z_]+)\}\}", CSS))
+    assert placeholders <= set(HEIGHTS), (
+        f"в стиле есть плейсхолдеры мимо layout.py: {sorted(placeholders - set(HEIGHTS))}"
+    )
+
+
+def test_the_canvas_grows_and_the_side_panel_does_not():
+    """Суть раскладки: ширина достаётся холсту, а не форме.
+
+    Проверяется по самому стилю — правило можно случайно поменять местами,
+    и интерфейс снова начнёт растягивать панель настроек на весь монитор.
+    """
+    canvas = re.search(r"\.qs-canvas\s*\{[^}]*\}", CSS, re.S)
+    side = re.search(r"\.qs-side\s*\{[^}]*\}", CSS, re.S)
+    assert canvas and side, "правила колонок пропали из стиля"
+    assert "flex: 1 1 0" in canvas.group(0), "холст перестал тянуться"
+    assert "flex: 0 0" in side.group(0), "панель снова растягивается вместе с холстом"

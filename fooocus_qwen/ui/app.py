@@ -47,7 +47,16 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
     studio = Studio(cfg)
     localizer = Localizer(cfg.lang)
 
-    with gr.Blocks(title=pick("app_title", cfg.lang), analytics_enabled=False) as demo:
+    # ``fill_width`` и ``fill_height`` — штатный способ Gradio отдать
+    # приложению всё окно. Без первого Blocks центрирует себя и упирается во
+    # внутренний потолок ширины: на мониторе 4K под интерфейс уходило 28 %
+    # экрана, остальное — поля. Без второго холсты не тянутся по высоте.
+    with gr.Blocks(
+        title=pick("app_title", cfg.lang),
+        analytics_enabled=False,
+        fill_width=True,
+        fill_height=True,
+    ) as demo:
         # Заголовка на странице нет намеренно. Название приложения стоит в
         # заголовке окна браузера (`title=` у Blocks), и повторять его строкой
         # в сто пикселей высотой, которую пользователь читает один раз в
@@ -152,12 +161,27 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
     return (demo, studio) if return_studio else demo
 
 
+def stylesheet() -> str:
+    """Читает стиль и подставляет высоты из ``layout``.
+
+    Высоты нужны и Python (параметр ``height`` компонента), и CSS (нижняя
+    граница для пустого холста). Держать их в двух местах — значит однажды
+    поправить одно и забыть другое, поэтому значение живёт в ``layout.py``,
+    а стиль получает его подстановкой по имени в двойных фигурных скобках.
+    """
+    text = (Path(__file__).parent / "style.css").read_text(encoding="utf-8")
+    for name, value in vars(layout).items():
+        if name.endswith("_HEIGHT") and isinstance(value, str):
+            text = text.replace("{{" + name + "}}", value)
+    return text
+
+
 def launch(cfg: config.AppConfig) -> None:
     demo, studio = build(cfg, return_studio=True)
     demo.queue(default_concurrency_limit=1)
     # В Gradio 6 параметр css переехал из конструктора Blocks в launch() — передача
     # его в конструктор всё ещё работает, но с предупреждением об устаревании.
-    css = (Path(__file__).parent / "style.css").read_text(encoding="utf-8")
+    css = stylesheet()
     LOGGER.info("Интерфейс на http://%s:%s", cfg.host, cfg.port)
     # В Gradio 6.5.1 параметра show_api больше нет ни в Blocks, ни в launch() —
     # он был убран выше по течению. Ссылку «Use via API» и так прячет footer

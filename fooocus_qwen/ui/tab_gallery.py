@@ -113,18 +113,19 @@ def build(studio, localizer: Localizer, generate_components: dict, language=None
         language = gr.State(lang)
 
     with gr.Row(elem_classes=[layout.WORK_ROW]):
-        with gr.Column(scale=3, min_width=layout.CANVAS_MIN_WIDTH):
+        with gr.Column(min_width=layout.CANVAS_MIN_WIDTH, elem_classes=[layout.CANVAS_COL]):
             history = localizer.bind(
                 gr.Gallery(
                     label=pick("tab_gallery", lang),
                     columns=6,
                     height=layout.BROWSE_HEIGHT,
+                    elem_classes=[layout.BROWSE],
                     object_fit="contain",
                     value=[str(path) for path in gallery.recent(config.OUTPUT_DIR)],
                 ),
                 label=("Галерея", "Gallery"),
             )
-        with gr.Column(scale=1, min_width=layout.SIDE_MIN_WIDTH):
+        with gr.Column(min_width=layout.SIDE_MIN_WIDTH, elem_classes=[layout.SIDE_COL]):
             refresh = localizer.bind(gr.Button(pick("refresh", lang)), value=("Обновить", "Refresh"))
             open_button = localizer.bind(
                 gr.Button(pick("open_folder", lang)), value=("Открыть папку", "Open folder")
