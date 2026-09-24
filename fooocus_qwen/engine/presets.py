@@ -29,11 +29,14 @@ PRESETS: dict[str, QualityPreset] = {
     "MiddleQuality": QualityPreset("MiddleQuality", output_resolution=1536, num_inference_steps=28),
     # Значения из карточки модели: 2K и сорок шагов.
     "MaxQuality": QualityPreset("MaxQuality", output_resolution=2048, num_inference_steps=40),
-    # Дистиллят на 6 шагов при 1536 px: 24.8 с против 94.7 у MiddleQuality
-    # при сопоставимом качестве (tools/experiments/turbo.py). Правку автор
-    # учил на 1024² и 1536², генерацию — на 1024² и 2048²; 1536 проверено
-    # замером и выглядит не хуже.
-    "Turbo": QualityPreset("Turbo", output_resolution=1536, num_inference_steps=6, turbo=True),
+    # Дистиллят на 6 шагов, площадь 1024²: кадр 1248x832 за ~12 с против ~21
+    # у LowQuality. Выше 1024² дистиллят даёт сетку с периодом 8 px — рисунок
+    # на уровне токенов латента; её энергия в спектре 1.2 на 1024² (как у
+    # полной модели), 2.1 на 1888x1280 и 2.8 на 2528x1696, одинаково на bf16,
+    # INT8 и с SageAttention и в эталонном коде автора без нашего движка
+    # (docs/research/2026-09-24-uskorenie-turbo-sage-int8.md). Доводка
+    # полной моделью сетку ослабляет, но не убирает.
+    "Turbo": QualityPreset("Turbo", output_resolution=1024, num_inference_steps=6, turbo=True),
 }
 
 NAMES: tuple[str, ...] = ("LowQuality", "MiddleQuality", "MaxQuality", "Turbo")

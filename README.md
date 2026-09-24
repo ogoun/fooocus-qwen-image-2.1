@@ -31,7 +31,7 @@ reference images. Everything runs on your own GPU.
 ## Features
 
 - **Text to image** at three quality presets plus **Turbo** (a 6-step distilled
-  model, 2–4× faster), in seven aspect ratios, with 277 Fooocus styles and up
+  model at 1 MP, about 2× faster than LowQuality), in seven aspect ratios, with 277 Fooocus styles and up
   to eight images per run.
 - **Choose speed and memory**: bf16 or INT8 transformer weights (13.3 vs 6.8 GiB
   of VRAM, nearly the same speed) and optional SageAttention (15–25% faster
@@ -214,12 +214,14 @@ The full guide is in Russian: [docs/USAGE.md](docs/USAGE.md). The essentials fol
 | LowQuality | 1024 px | 16 | ~21 s |
 | MiddleQuality | 1536 px | 28 | ~93 s |
 | MaxQuality | 2048 px | 40 | ~283 s |
-| **Turbo** | 1536 px | 6 | ~25 s |
+| **Turbo** | 1024 px | 6 | ~11 s |
 
 **Turbo** uses [Qwen-Image-2.1-viggle-turbo](https://huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo),
-a distilled LoRA for this model: 6 steps without CFG instead of 16–40. It is
-3.8× faster than MiddleQuality at the same resolution with comparable quality,
-and handles generation and editing. The adapter (1.3 GB) downloads the first
+a distilled LoRA for this model: 6 steps without CFG instead of 16–40, for
+generation and editing. It stays at 1 megapixel, the area it was distilled at:
+above it the distilled model draws a fine 8-pixel grid, the same with bf16,
+INT8 and SageAttention and in the authors' own reference code, so Turbo is a
+fast 1 MP preset rather than a faster MiddleQuality. The adapter (1.3 GB) downloads the first
 time you pick the preset. Negative prompt and guidance are ignored in Turbo.
 Its authors have not validated mask editing and transparent (RGBA) output.
 
@@ -229,8 +231,11 @@ On the Settings tab, under *Transformer precision*:
 
 - **bf16** — the original weights, 13.3 GiB of VRAM;
 - **INT8** — [Unsloth's INT8 weights](https://huggingface.co/unsloth/Qwen-Image-2.1-FP8)
-  loaded weight-only: 6.8 GiB, about 5% slower. Unsloth measured LPIPS 0.064
-  against bf16. Use it when references or other programs need the memory.
+  loaded weight-only: 6.8 GiB resident instead of 13.3, about 5% slower.
+  Unsloth measured LPIPS 0.064 against bf16. It frees memory for the denoising
+  phase — where references run out of it — and for other programs; while a
+  new prompt is encoded the text encoder (16.3 GiB) is on the card in both
+  modes, so that brief peak does not change.
 
 *Apply precision* downloads the missing weights (with a progress bar) and
 reloads the model. **SageAttention** switches on the fly; the checkbox is
@@ -312,13 +317,12 @@ Measured on an RTX 3090 (24 GB); median of steady-state runs:
 | MiddleQuality, 1536 px | 93.0 s | 15.2 GiB |
 | MaxQuality, 2048 px | 283.5 s | 16.2 GiB |
 | MiddleQuality + 1 reference | 123.9 s | 21.0 GiB |
-| Turbo, 1888×1280 | 27.0 s | 17.0 GiB |
-| Turbo + SageAttention, 1888×1280 | 22.6 s | 16.9 GiB |
-| Turbo + SageAttention on INT8, 1888×1280 | 23.9 s | **10.4 GiB** |
+| Turbo, 1280×832 | 10.4 s | 16.8 GiB |
+| Turbo + SageAttention on INT8, 1280×832 | 10.0 s | **10.4 GiB** |
 | Model load | 33.8 s | |
 
-Turbo figures include the text-encoder swap for a new prompt; the details are
-in [docs/research/2026-09-24-uskorenie-turbo-sage-int8.md](docs/research/2026-09-24-uskorenie-turbo-sage-int8.md)
+Turbo figures are for a cached prompt; a new prompt adds ~1.5 s and a 17 GiB
+peak while the text encoder runs. The details are in [docs/research/2026-09-24-uskorenie-turbo-sage-int8.md](docs/research/2026-09-24-uskorenie-turbo-sage-int8.md)
 (in Russian).
 
 The compute is close to the card's limit: 53.8 of 71.5 TFLOPS. Full numbers
