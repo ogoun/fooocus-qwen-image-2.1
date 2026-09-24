@@ -23,10 +23,24 @@ from __future__ import annotations
 import gradio as gr
 
 from .. import config
+from .. import settings as settings_module
+from ..engine import attention
 from ..llm import LlmError, load_endpoint, parse_endpoint_file
 from ..llm import setup as llm_setup
 from . import layout
 from .i18n import MESSAGES, Localizer, pick, say, sentences
+from .state import GPU_CONCURRENCY_ID
+
+_PRECISION_CHOICES = {
+    "ru": [
+        ("bf16 — исходная точность, 13.3 ГиБ видеопамяти", settings_module.PRECISION_BF16),
+        ("INT8 — 6.8 ГиБ, скорость почти та же", settings_module.PRECISION_INT8),
+    ],
+    "en": [
+        ("bf16 — original precision, 13.3 GiB of VRAM", settings_module.PRECISION_BF16),
+        ("INT8 — 6.8 GiB, nearly the same speed", settings_module.PRECISION_INT8),
+    ],
+}
 
 _PROMPT_FILES: tuple[str, ...] = (
     "system_prompt_t2i.txt",
@@ -59,6 +73,19 @@ def describe_endpoint(lang: str) -> str:
         return say("endpoint_not_configured", lang)
     token = say("token_set" if endpoint.token else "token_unset", lang)
     return say("endpoint_current", lang, url=endpoint.base_url, token=token)
+
+
+def describe_performance(studio, lang: str) -> str:
+    """Что выбрано сейчас: точность, механизм внимания, готовность turbo."""
+    chosen = settings_module.load()
+    if chosen.sage_attention and attention.sage_available():
+        attention_text = "SageAttention"  # имя собственное, не переводится
+    elif chosen.sage_attention:
+        attention_text = say("perf_attention_missing", lang)
+    else:
+        attention_text = say("perf_attention_native", lang)
+    turbo = say("perf_turbo_ready" if studio.turbo_weights_present() else "perf_turbo_later", lang)
+    return say("perf_current", lang, precision=chosen.precision.upper(), attention=attention_text, turbo=turbo)
 
 
 def _read_prompt(name: str, lang: str) -> str:
@@ -155,6 +182,40 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         # лучше (рядом с тем, что тоже про состояние), и не отнимает высоту
         # у того, что под ней.
         with gr.Column(min_width=layout.SIDE_MIN_WIDTH, elem_classes=[layout.FORM_COL]):
+            # Производительность: точность трансформера и механизм внимания.
+            # Смена точности — это докачка весов и перезагрузка модели, поэтому
+            # отдельная кнопка, а не мгновенная реакция на выбор; внимание
+            # переключается на лету.
+            chosen = settings_module.load()
+            precision = localizer.bind(
+                gr.Radio(
+                    choices=_PRECISION_CHOICES[lang],
+                    value=chosen.precision,
+                    label=pick("perf_precision", lang),
+                ),
+                label=("Точность трансформера", "Transformer precision"),
+                choices=(_PRECISION_CHOICES["ru"], _PRECISION_CHOICES["en"]),
+            )
+            apply_precision_button = localizer.bind(
+                gr.Button(pick("perf_apply", lang)), value=("Применить точность", "Apply precision")
+            )
+            sage = localizer.bind(
+                gr.Checkbox(
+                    label=pick("perf_sage", lang),
+                    value=chosen.sage_attention,
+                    # Без пакета галочка ничего бы не включила — и не обещает.
+                    interactive=attention.sage_available(),
+                ),
+                label=("SageAttention — быстрое внимание", "SageAttention — fast attention"),
+            )
+            performance_status = localizer.bind(
+                gr.Textbox(
+                    label=pick("status", lang), interactive=False, lines=2,
+                    value=describe_performance(studio, lang),
+                ),
+                label=("Состояние", "Status"),
+            )
+
             memory = localizer.bind(
                 gr.Textbox(
                     label=pick("memory", lang),
@@ -229,6 +290,34 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     def memory_report(lang):
         return studio.memory_report(lang)
 
+    def apply_precision(choice, lang, progress=gr.Progress(track_tqdm=True)):
+        if choice not in settings_module.PRECISIONS:
+            return describe_performance(studio, lang)
+        if choice == settings_module.load().precision:
+            return sentences(say("precision_unchanged", lang), describe_performance(studio, lang))
+        progress(0, desc=say("precision_downloading", lang))
+        try:
+            studio.ensure_precision_weights(choice)
+        except Exception as error:  # noqa: BLE001 — сеть и диск: строка состояния, не падение
+            return say("precision_download_failed", lang, error=error)
+        studio.switch_precision(choice)
+        if studio.config.preload:
+            studio.preload_in_background()
+        return sentences(say("precision_switched", lang, precision=choice.upper()), describe_performance(studio, lang))
+
+    def toggle_sage(enabled, lang):
+        studio.set_sage_attention(bool(enabled))
+        return describe_performance(studio, lang)
+
+    # Смена точности выгружает модель — в одной очереди с генерацией, чтобы не
+    # вклиниться в чужую работу видеокарты (замок генератора её всё равно
+    # дождётся, но очередь не выпустит генерацию навстречу перезагрузке).
+    apply_precision_button.click(
+        apply_precision, [precision, language], performance_status, concurrency_id=GPU_CONCURRENCY_ID
+    )
+    # input, а не change: change срабатывает и от программного обновления при
+    # открытии вкладки, и каждое открытие «переключало» бы внимание.
+    sage.input(toggle_sage, [sage, language], performance_status, concurrency_id=GPU_CONCURRENCY_ID)
     save_endpoint.click(store_endpoint, [address, token, language], [token, endpoint_status])
     forget.click(forget_token, language, endpoint_status)
     check.click(check_connection, language, endpoint_status)
@@ -243,12 +332,23 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         # показывала бы состояние на момент запуска процесса — и отставала,
         # если адрес поменяли из другого окна или руками в файле.
         current = _current_endpoint()
-        return (current.base_url if current else ""), describe_endpoint(lang), studio.memory_report(lang)
+        chosen = settings_module.load()
+        return (
+            (current.base_url if current else ""),
+            describe_endpoint(lang),
+            studio.memory_report(lang),
+            chosen.precision,
+            gr.update(value=chosen.sage_attention, interactive=attention.sage_available()),
+            describe_performance(studio, lang),
+        )
 
     return {
         "memory": memory,
         "endpoint_status": endpoint_status,
         "prompt_status": prompt_status,
         "address": address,
+        "precision": precision,
+        "sage": sage,
+        "performance_status": performance_status,
         "refresh": refresh,
     }

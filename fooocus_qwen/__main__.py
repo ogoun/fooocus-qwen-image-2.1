@@ -46,6 +46,25 @@ def selftest() -> int:
         problems.append(f"не найден {index}")
         print(f"[нет] веса модели не найдены: {index}")
 
+    # Производительность: выбор из user/settings.json и то, что ему нужно.
+    from . import settings
+    from .engine import attention, fetch
+
+    chosen = settings.load()
+    if chosen.precision == settings.PRECISION_INT8:
+        if fetch.missing_extra(config.INT8_DIR, (fetch.INT8_FILE,)):
+            problems.append("выбрана точность INT8, но нет её весов — запустите --fetch-model")
+            print(f"[нет] точность INT8: нет {config.INT8_DIR / fetch.INT8_FILE}")
+        else:
+            print("[ок ] точность INT8, веса на месте")
+    else:
+        print("[ок ] точность bf16")
+    if chosen.sage_attention:
+        state = "[ок ] SageAttention включён" if attention.sage_available() else             "[--] SageAttention выбран, но не установлен — работаю штатным вниманием"
+        print(state)
+    turbo_ready = not fetch.missing_extra(config.TURBO_DIR, fetch.TURBO_FILES)
+    print("[ок ] Turbo: веса на месте" if turbo_ready else "[--] Turbo: веса скачаются при первом выборе пресета")
+
     if problems:
         print("\nНе готово к работе:")
         for item in problems:
@@ -90,11 +109,19 @@ def generate_once(args) -> int:
 
 
 def fetch_model() -> int:
-    """Доводит веса до полного состава. Зовётся установкой."""
+    """Доводит веса до полного состава под выбранную точность. Зовётся установкой.
+
+    При INT8 bf16-шарды трансформера (14 ГБ) не качаются: их место занимает
+    INT8-трансформер Unsloth (7.3 ГБ).
+    """
+    from . import settings
     from .engine import fetch
 
+    int8 = settings.load().precision == settings.PRECISION_INT8
     try:
-        downloaded = fetch.ensure_model(config.MODEL_DIR)
+        downloaded = fetch.ensure_model(config.MODEL_DIR, include_transformer=not int8)
+        if int8:
+            downloaded = fetch.ensure_int8(config.INT8_DIR) or downloaded
     except fetch.ModelDownloadError as error:
         print(f"[нет] {error}")
         return 1
@@ -107,6 +134,14 @@ def fetch_model() -> int:
         print(f"[ок ] веса скачаны: {config.MODEL_DIR}")
     else:
         print(f"[ок ] веса на месте: {config.MODEL_DIR}")
+    return 0
+
+
+def setup_performance() -> int:
+    """Спрашивает точность весов и SageAttention. Отказ отвечать — не ошибка."""
+    from .engine import setup
+
+    setup.configure()
     return 0
 
 
@@ -139,6 +174,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.setup_llm:
         return setup_llm()
+
+    if args.setup_performance:
+        return setup_performance()
 
     if args.selftest:
         return selftest()

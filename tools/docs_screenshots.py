@@ -79,6 +79,10 @@ SHOWCASE = [
 def configure() -> None:
     config.OUTPUT_DIR = WORK / "outputs"
     config.PROMPT_DIR = WORK / "prompts"
+    # Настройки производительности — свои: снимки не должны зависеть от выбора
+    # человека и не должны его менять. Каталоги весов — общие: качать их
+    # заново ради снимков незачем.
+    config.SETTINGS_FILE = WORK / "settings.json"
     config.ensure_directories()
     IMAGES.mkdir(parents=True, exist_ok=True)
 

@@ -8,7 +8,7 @@ venv="$root/.venv"
 python="$venv/bin/python"
 torch_index="https://download.pytorch.org/whl/cu128"
 
-step() { printf '\n\033[36m[%s/4] %s\033[0m\n' "$1" "$2"; }
+step() { printf '\n\033[36m[%s/7] %s\033[0m\n' "$1" "$2"; }
 
 cd "$root"
 
@@ -35,13 +35,16 @@ case "$version" in
           "$python" -m pip install --force-reinstall torch torchvision --index-url "$torch_index" ;;
 esac
 
-step 4 "Проверяю веса модели"
+step 4 "Выбираю точность весов и SageAttention"
+"$python" -m fooocus_qwen --setup-performance
+
+step 5 "Проверяю веса модели"
 "$python" -m fooocus_qwen --fetch-model
 
-step 5 "Настраиваю языковую модель для AI-буста промтов"
+step 6 "Настраиваю языковую модель для AI-буста промтов"
 "$python" -m fooocus_qwen --setup-llm
 
-step 6 "Проверяю готовность"
+step 7 "Проверяю готовность"
 "$python" -m fooocus_qwen --selftest
 
 printf '\n\033[32mГотово. Запуск:\033[0m\n    ./run.sh\n'

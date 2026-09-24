@@ -19,6 +19,17 @@ opencv-python-headless>=4.10
 
 gradio==6.5.1
 
+# Пресет Turbo — адаптер LoRA к трансформеру: diffusers подключает его через peft.
+peft>=0.21
+# INT8-трансформер: веса Unsloth сериализованы torchao. Версия закреплена —
+# загрузка идёт через его prototype-API (safetensors_support), который
+# между выпусками меняется.
+torchao==0.18.0
+
+# SageAttention (необязательно) ставит install.ps1 на шаге выбора
+# производительности: под Windows — готовая сборка и triton-windows под версию
+# torch; в requirements его нет, потому что сборка зависит от CUDA и torch.
+
 einops>=0.8
 ftfy>=6.2
 tqdm>=4.66

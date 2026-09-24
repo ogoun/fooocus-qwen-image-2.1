@@ -30,8 +30,13 @@ reference images. Everything runs on your own GPU.
 
 ## Features
 
-- **Text to image** at three quality presets, in seven aspect ratios, with 277
-  Fooocus styles and up to eight images per run.
+- **Text to image** at three quality presets plus **Turbo** (a 6-step distilled
+  model, 2–4× faster), in seven aspect ratios, with 277 Fooocus styles and up
+  to eight images per run.
+- **Choose speed and memory**: bf16 or INT8 transformer weights (13.3 vs 6.8 GiB
+  of VRAM, nearly the same speed) and optional SageAttention (15–25% faster
+  steps). Pick them during installation or switch later in Settings; missing
+  weights download with a progress bar.
 - **Reference images**: up to ten, each addressed in the prompt as
   `<image1>`…`<image10>`.
 - **Instruction-based editing** in four region modes:
@@ -104,9 +109,9 @@ see them, then reuse them on the Generate tab or open the image in the editor.
 
 ### Settings
 
-This tab holds the language model address, the system prompts used by AI boost
-and a GPU memory report. The access token is write-only: the page never shows
-it.
+This tab holds the language model address, the system prompts used by AI boost,
+the **performance** choices (transformer precision and SageAttention) and a GPU
+memory report. The access token is write-only: the page never shows it.
 
 ![Settings tab](docs/images/settings.webp)
 
@@ -147,13 +152,21 @@ The installer:
 1. creates `.venv` with Python 3.12;
 2. installs `torch`/`torchvision` from the PyTorch CUDA index, then the rest of `requirements.txt`;
 3. checks that `torch` really is a CUDA build — some packages quietly swap it for a CPU one;
-4. **downloads the model weights** (`Qwen/Qwen-Image-2.1`, ~33 GB) into `Qwen-Image-2.1/`.
-   It checks the files listed in the model's index, resumes an interrupted
-   download and skips what is already there;
-5. **asks for the language model address and token** for AI boost and tests
+4. **asks about performance**: transformer precision — bf16 (original, 13.3 GiB
+   of VRAM) or INT8 (6.8 GiB, nearly the same speed) — and whether to install
+   SageAttention (15–25% faster; on Windows a prebuilt wheel plus
+   `triton-windows` matching your torch). Press Enter to keep bf16 without
+   SageAttention;
+5. **downloads the model weights** (`Qwen/Qwen-Image-2.1`) into `Qwen-Image-2.1/`:
+   ~33 GB for bf16; for INT8 the bf16 transformer shards are skipped and the
+   INT8 transformer (7.3 GB, `unsloth/Qwen-Image-2.1-FP8`) goes to
+   `Qwen-Image-2.1-INT8/`, ~26 GB in total. It checks the files listed in the
+   model's index, resumes an interrupted download and skips what is already
+   there;
+6. **asks for the language model address and token** for AI boost and tests
    the connection. Press Enter to skip: everything except AI boost and
    *Describe image* works without it;
-6. runs a self-test of the environment.
+7. runs a self-test of the environment.
 
 Useful commands:
 
@@ -162,6 +175,7 @@ Useful commands:
 .venv\Scripts\python -m fooocus_qwen --selftest          # check the environment
 .venv\Scripts\python -m fooocus_qwen --fetch-model       # download / complete the weights
 .venv\Scripts\python -m fooocus_qwen --setup-llm         # set the language model again
+.venv\Scripts\python -m fooocus_qwen --setup-performance # choose precision and SageAttention again
 ```
 
 ## Running
@@ -200,6 +214,28 @@ The full guide is in Russian: [docs/USAGE.md](docs/USAGE.md). The essentials fol
 | LowQuality | 1024 px | 16 | ~21 s |
 | MiddleQuality | 1536 px | 28 | ~93 s |
 | MaxQuality | 2048 px | 40 | ~283 s |
+| **Turbo** | 1536 px | 6 | ~25 s |
+
+**Turbo** uses [Qwen-Image-2.1-viggle-turbo](https://huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo),
+a distilled LoRA for this model: 6 steps without CFG instead of 16–40. It is
+3.8× faster than MiddleQuality at the same resolution with comparable quality,
+and handles generation and editing. The adapter (1.3 GB) downloads the first
+time you pick the preset. Negative prompt and guidance are ignored in Turbo.
+Its authors have not validated mask editing and transparent (RGBA) output.
+
+### Speed and memory: precision and SageAttention
+
+On the Settings tab, under *Transformer precision*:
+
+- **bf16** — the original weights, 13.3 GiB of VRAM;
+- **INT8** — [Unsloth's INT8 weights](https://huggingface.co/unsloth/Qwen-Image-2.1-FP8)
+  loaded weight-only: 6.8 GiB, about 5% slower. Unsloth measured LPIPS 0.064
+  against bf16. Use it when references or other programs need the memory.
+
+*Apply precision* downloads the missing weights (with a progress bar) and
+reloads the model. **SageAttention** switches on the fly; the checkbox is
+active only when the package is installed (choose it in `install.ps1`). On an
+RTX 3090 it makes a step 15–25% faster at 1536 px and above.
 
 ### Reference images
 
@@ -276,7 +312,14 @@ Measured on an RTX 3090 (24 GB); median of steady-state runs:
 | MiddleQuality, 1536 px | 93.0 s | 15.2 GiB |
 | MaxQuality, 2048 px | 283.5 s | 16.2 GiB |
 | MiddleQuality + 1 reference | 123.9 s | 21.0 GiB |
+| Turbo, 1888×1280 | 27.0 s | 17.0 GiB |
+| Turbo + SageAttention, 1888×1280 | 22.6 s | 16.9 GiB |
+| Turbo + SageAttention on INT8, 1888×1280 | 23.9 s | **10.4 GiB** |
 | Model load | 33.8 s | |
+
+Turbo figures include the text-encoder swap for a new prompt; the details are
+in [docs/research/2026-09-24-uskorenie-turbo-sage-int8.md](docs/research/2026-09-24-uskorenie-turbo-sage-int8.md)
+(in Russian).
 
 The compute is close to the card's limit: 53.8 of 71.5 TFLOPS. Full numbers
 and methodology: [docs/BENCHMARK.md](docs/BENCHMARK.md).

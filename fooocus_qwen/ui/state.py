@@ -14,6 +14,7 @@ from typing import Any
 from PIL import Image
 
 from .. import config
+from .. import settings as settings_module
 from ..llm import LlmClient, LlmError, load_endpoint
 from ..prompting import boost
 from ..prompting.styles import Style, load_styles
@@ -107,20 +108,128 @@ class Studio:
 
     @property
     def generator(self):
-        """Возвращает генератор, загрузив модель при первом обращении."""
+        """Возвращает генератор, загрузив модель при первом обращении.
+
+        Точность трансформера и механизм внимания берутся из настроек в
+        момент загрузки (``user/settings.json``): смена точности — это
+        перезагрузка модели (``switch_precision``), а механизм внимания
+        меняется на лету (``set_sage_attention``).
+        """
         if self._generator is None:
             with self._lock:
                 if self._generator is None:
-                    from ..engine import loader
+                    from ..engine import fetch, loader
                     from ..engine.generator import Generator
+                    from ..engine.turbo import TurboAdapter
 
+                    chosen = settings_module.load()
+                    int8_file = None
+                    if chosen.precision == settings_module.PRECISION_INT8:
+                        int8_file = config.INT8_DIR / fetch.INT8_FILE
                     pipe, residency, cache = loader.load(
-                        self.config.model_dir, pin_memory=self.config.pin_memory
+                        self.config.model_dir,
+                        pin_memory=self.config.pin_memory,
+                        int8_file=int8_file,
+                        sage_attention=chosen.sage_attention,
                     )
-                    self._generator = Generator(pipe, residency, cache, self.catalogue)
+                    turbo = TurboAdapter(pipe, residency, config.TURBO_DIR)
+                    # Полосы шагов diffusers в интерфейсе не нужны: ход
+                    # генерации рисует свой обратный вызов, а
+                    # ``gr.Progress(track_tqdm=True)`` (ради полосы скачивания
+                    # весов) подхватил бы и их, перебивая подпись.
+                    pipe.set_progress_bar_config(disable=True)
+                    self._generator = Generator(pipe, residency, cache, self.catalogue, turbo=turbo)
                     self._residency = residency
                     self._cache = cache
         return self._generator
+
+    # --- производительность: точность, внимание, turbo -------------------------
+
+    def weights_for(self, preset, lang: str, progress: Any = None) -> str | None:
+        """Докачивает веса, которых требует пресет. Сообщение об ошибке или None.
+
+        Пресету Turbo нужен адаптер (1.3 ГБ); при первом выборе он качается
+        прямо перед генерацией, и строка прогресса говорит об этом —
+        полосу скачивания рисует ``gr.Progress(track_tqdm=True)``.
+        """
+        if not getattr(preset, "turbo", False) or self.turbo_weights_present():
+            return None
+        if progress is not None:
+            progress(0, desc=say("turbo_downloading", lang))
+        try:
+            self.ensure_turbo_weights()
+        except Exception as error:  # noqa: BLE001 — сеть, диск, Hugging Face: всё это строка состояния
+            LOGGER.exception("Веса turbo не скачались")
+            return say("turbo_download_failed", lang, error=_quote(error))
+        return None
+
+    def ensure_turbo_weights(self) -> bool:
+        """Докачивает веса turbo, если их нет. ``True`` — что-то качалось."""
+        from ..engine import fetch
+
+        return fetch.ensure_turbo(config.TURBO_DIR)
+
+    def turbo_weights_present(self) -> bool:
+        from ..engine import fetch
+
+        return not fetch.missing_extra(config.TURBO_DIR, fetch.TURBO_FILES)
+
+    def ensure_precision_weights(self, precision: str) -> bool:
+        """Докачивает веса выбранной точности. ``True`` — что-то качалось.
+
+        Для INT8 это файл Unsloth; для bf16 — шарды bf16-трансформера,
+        которых нет у того, кто ставил приложение сразу в INT8.
+        """
+        from ..engine import fetch
+
+        if precision == settings_module.PRECISION_INT8:
+            return fetch.ensure_int8(config.INT8_DIR)
+        return fetch.ensure_model(self.config.model_dir, include_transformer=True)
+
+    def switch_precision(self, precision: str) -> None:
+        """Сохраняет выбор точности и выгружает модель: следующая загрузка — в новой.
+
+        Веса выбранной точности обязаны быть на месте заранее
+        (``ensure_precision_weights``): иначе модель выгрузилась бы, а
+        загрузиться обратно не смогла бы.
+        """
+        settings_module.update(precision=precision)
+        self.unload()
+
+    def unload(self) -> None:
+        """Выгружает модель, дождавшись конца текущей генерации."""
+        generator = self._generator
+        if generator is None:
+            return
+        with self._lock, generator.exclusive():
+            self._generator = None
+            self._residency = None
+            self._cache = None
+        del generator
+        import gc
+
+        gc.collect()
+        try:
+            import torch
+
+            torch.cuda.empty_cache()
+        except ImportError:  # pragma: no cover
+            pass
+        LOGGER.info("Модель выгружена")
+
+    def set_sage_attention(self, enabled: bool) -> bool:
+        """Сохраняет выбор и, если модель загружена, применяет его сразу.
+
+        Возвращает, работает ли SageAttention на самом деле: выбор без
+        установленного пакета сохраняется, но внимание остаётся штатным.
+        """
+        from ..engine import attention
+
+        settings_module.update(sage_attention=enabled)
+        if self._generator is None:
+            return enabled and attention.sage_available()
+        with self._generator.exclusive():
+            return attention.apply(self._generator.pipe.transformer, enabled)
 
     def preload_in_background(self) -> None:
         """Начинает загрузку модели, не дожидаясь первого запроса.

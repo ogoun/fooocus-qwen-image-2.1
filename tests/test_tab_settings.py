@@ -177,6 +177,63 @@ def test_opening_the_tab_rereads_the_address(monkeypatch, tmp_path):
     assert components["address"].value == ""
 
     _configure(tmp_path, "192.0.2.10:8000\ntoken=" + SECRET + "\n")
-    address, status, _memory = components["refresh"]("ru")
+    address, status, _memory, _precision, _sage, _performance = components["refresh"]("ru")
     assert "192.0.2.10:8000" in address
     assert "192.0.2.10:8000" in status and SECRET not in status and SECRET not in address
+
+
+# --- производительность: точность и SageAttention ---
+
+
+def _performance(monkeypatch, tmp_path):
+    handlers, studio = _build_handlers(monkeypatch, tmp_path)
+    studio.config = config.AppConfig(preload=False)
+    return handlers, studio
+
+
+def _quiet(*_args, **_kwargs):
+    pass
+
+
+def test_the_same_precision_is_not_reapplied(monkeypatch, tmp_path):
+    handlers, studio = _performance(monkeypatch, tmp_path)
+    monkeypatch.setattr(studio, "ensure_precision_weights", lambda _p: pytest.fail("качать нечего"))
+    message = handlers["apply_precision"]("bf16", "ru", progress=_quiet)
+    assert "уже выбрана" in message
+
+
+def test_switching_precision_fetches_weights_then_unloads(monkeypatch, tmp_path):
+    from fooocus_qwen import settings
+
+    handlers, studio = _performance(monkeypatch, tmp_path)
+    steps = []
+    monkeypatch.setattr(studio, "ensure_precision_weights", lambda p: steps.append(("fetch", p)))
+    monkeypatch.setattr(studio, "unload", lambda: steps.append("unload"))
+    message = handlers["apply_precision"]("int8", "ru", progress=_quiet)
+    assert steps == [("fetch", "int8"), "unload"], "сначала веса, потом выгрузка — иначе загрузиться было бы не из чего"
+    assert settings.load().precision == "int8"
+    assert "INT8" in message
+
+
+def test_a_failed_download_leaves_the_precision_alone(monkeypatch, tmp_path):
+    from fooocus_qwen import settings
+
+    handlers, studio = _performance(monkeypatch, tmp_path)
+
+    def fail(_precision):
+        raise OSError("нет сети")
+
+    monkeypatch.setattr(studio, "ensure_precision_weights", fail)
+    monkeypatch.setattr(studio, "unload", lambda: pytest.fail("выгружать модель без весов нельзя"))
+    message = handlers["apply_precision"]("int8", "ru", progress=_quiet)
+    assert "нет сети" in message and "не изменена" in message
+    assert settings.load().precision == "bf16"
+
+
+def test_the_sage_switch_is_remembered(monkeypatch, tmp_path):
+    from fooocus_qwen import settings
+
+    handlers, _studio = _performance(monkeypatch, tmp_path)
+    status = handlers["toggle_sage"](True, "en")
+    assert settings.load().sage_attention is True
+    assert "Precision: BF16" in status

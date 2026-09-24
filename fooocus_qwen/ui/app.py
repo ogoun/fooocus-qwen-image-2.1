@@ -153,6 +153,9 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
                     settings_components["address"],
                     settings_components["endpoint_status"],
                     settings_components["memory"],
+                    settings_components["precision"],
+                    settings_components["sage"],
+                    settings_components["performance_status"],
                 ],
                 queue=False,
             )

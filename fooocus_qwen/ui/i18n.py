@@ -137,6 +137,9 @@ T: dict[str, tuple[str, str]] = {
     "llm_token": ("Токен", "Token"),
     "llm_token_placeholder": ("Пусто — оставить прежний", "Empty keeps the current one"),
     "llm_forget_token": ("Убрать токен", "Remove the token"),
+    "perf_precision": ("Точность трансформера", "Transformer precision"),
+    "perf_apply": ("Применить точность", "Apply precision"),
+    "perf_sage": ("SageAttention — быстрое внимание", "SageAttention — fast attention"),
     "gallery_reuse": ("Повторить параметры", "Reuse parameters"),
     "gallery_to_editor": ("Открыть в редакторе", "Open in editor"),
     "gallery_from_file": ("Параметры из PNG-файла…", "Parameters from a PNG file…"),
@@ -323,6 +326,35 @@ MESSAGES: dict[str, tuple[str, str]] = {
     ),
     "boost_failed": ("AI буст не выполнен: {error}", "AI boost failed: {error}"),
     "boost_done": ("AI буст выполнен", "AI boost done"),
+    "perf_current": (
+        "Точность: {precision}. Внимание: {attention}. Turbo: {turbo}.",
+        "Precision: {precision}. Attention: {attention}. Turbo: {turbo}.",
+    ),
+    "perf_attention_native": ("штатное", "standard"),
+    "perf_attention_missing": (
+        "штатное (SageAttention не установлен — выберите его при установке: install.ps1)",
+        "standard (SageAttention is not installed — choose it when running install.ps1)",
+    ),
+    "perf_turbo_ready": ("веса на месте", "weights ready"),
+    "perf_turbo_later": ("веса скачаются при первом выборе пресета", "weights download on first use of the preset"),
+    "precision_unchanged": ("Эта точность уже выбрана.", "This precision is already selected."),
+    "precision_downloading": ("Скачиваю веса выбранной точности…", "Downloading the weights for this precision…"),
+    "precision_download_failed": (
+        "Веса не скачались: {error}. Точность не изменена; повторите — докачается только недостающее.",
+        "The weights did not download: {error}. Precision unchanged; retry — only what is missing is fetched.",
+    ),
+    "precision_switched": (
+        "Точность изменена на {precision}; модель перезагружается в фоне.",
+        "Precision set to {precision}; the model reloads in the background.",
+    ),
+    "turbo_downloading": (
+        "Скачиваю веса Turbo (1.3 ГБ) — один раз…",
+        "Downloading the Turbo weights (1.3 GB) — once…",
+    ),
+    "turbo_download_failed": (
+        "Веса Turbo не скачались: {error}. Проверьте сеть и повторите — докачается только недостающее.",
+        "The Turbo weights did not download: {error}. Check the network and retry — only what is missing is fetched.",
+    ),
     "boost_done_text_only": (
         "AI буст выполнен по тексту: языковая модель не читает изображения,"
         " промт переписан без них",

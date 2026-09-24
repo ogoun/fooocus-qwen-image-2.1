@@ -377,7 +377,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         prompt_text, boosted_text, boost_source_text, use_boost, current_references,
         quality_name, ratio_value, count, style_names, negative_text, cfg_value, seed_value,
         kv_value, scale_value, lang,
-        progress=gr.Progress(),
+        progress=gr.Progress(track_tqdm=True),
     ):
         # Обработчик целиком под try: отсутствующие веса, испорченный
         # model_index.json, нехватка видеопамяти и отказ записи PNG — всё это
@@ -428,6 +428,11 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     (step, total),
                     desc=say("progress_image", lang, index=index + 1, total=int(count)),
                 )
+
+            # Пресету Turbo нужен адаптер; при первом выборе он качается здесь.
+            missing = studio.weights_for(request.preset, lang, progress)
+            if missing:
+                return [], sentences(message, missing)
 
             # Стадия до первого шага: прогресс из пайплайна приходит только
             # после шага, а загрузка модели и кодирование промта идут раньше

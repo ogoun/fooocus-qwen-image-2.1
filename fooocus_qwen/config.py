@@ -14,6 +14,11 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 MODEL_DIR = PROJECT_ROOT / "Qwen-Image-2.1"
+# Дополнительные веса — каждое в своём каталоге рядом с основной моделью:
+# INT8-трансформер Unsloth (замена bf16-трансформера, 7.3 ГБ) и адаптер
+# дистиллята turbo (6 шагов вместо 16–40, 1.3 ГБ). Качаются по требованию.
+INT8_DIR = PROJECT_ROOT / "Qwen-Image-2.1-INT8"
+TURBO_DIR = PROJECT_ROOT / "Qwen-Image-2.1-turbo"
 RESOURCES_DIR = PROJECT_ROOT / "resources"
 STYLES_DIR = RESOURCES_DIR / "styles"
 SYSTEM_PROMPT_DIR = RESOURCES_DIR / "prompts"
@@ -24,8 +29,9 @@ PROMPT_DIR = USER_DIR / "prompts"
 
 LOG_DIR = PROJECT_ROOT / "logs"
 ENDPOINT_FILE = PROJECT_ROOT / "llm_endpoint.txt"
+SETTINGS_FILE = USER_DIR / "settings.json"
 
-PRESET_NAMES = ("LowQuality", "MiddleQuality", "MaxQuality")
+PRESET_NAMES = ("LowQuality", "MiddleQuality", "MaxQuality", "Turbo")
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 7865
@@ -105,6 +111,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="fetch_model",
         action="store_true",
         help="скачать недостающие веса модели и выйти",
+    )
+    parser.add_argument(
+        "--setup-performance",
+        dest="setup_performance",
+        action="store_true",
+        help="спросить точность весов (bf16/INT8) и SageAttention, записать выбор и выйти",
     )
     parser.add_argument(
         "--setup-llm",

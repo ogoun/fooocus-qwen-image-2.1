@@ -43,6 +43,22 @@ def never_open_a_browser(monkeypatch):
     return opened
 
 
+@pytest.fixture(autouse=True)
+def isolated_settings_and_weights(tmp_path, monkeypatch):
+    """Настройки производительности и дополнительные веса — во временном каталоге.
+
+    ``user/settings.json`` человека тесты не читают и не пишут: иначе прогон
+    мог бы переключить ему точность весов или SageAttention. Каталоги весов
+    INT8 и turbo подменяются тем же ходом — тест, проверяющий «веса
+    отсутствуют», не должен зависеть от того, скачаны ли они на этой машине.
+    """
+    from fooocus_qwen import config
+
+    monkeypatch.setattr(config, "SETTINGS_FILE", tmp_path / "settings.json")
+    monkeypatch.setattr(config, "INT8_DIR", tmp_path / "int8")
+    monkeypatch.setattr(config, "TURBO_DIR", tmp_path / "turbo")
+
+
 @pytest.fixture
 def painter_value(tmp_path, monkeypatch):
     """Собирает значение кисти так, как его собрал бы сервер.

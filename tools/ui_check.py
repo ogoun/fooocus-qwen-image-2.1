@@ -39,6 +39,7 @@ import statistics
 import tempfile
 import threading
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -72,6 +73,23 @@ class FakeGenerator:
 
     def interrupt(self) -> None:
         pass
+
+    @property
+    def pipe(self):
+        """Пайплайн-заглушка: переключатель внимания ставит механизм трансформеру."""
+        return self
+
+    @property
+    def transformer(self):
+        return self
+
+    def set_attention_backend(self, name: str) -> None:
+        self.attention = name
+
+    @contextmanager
+    def exclusive(self):
+        with self.lock:
+            yield
 
     def wait(self, count: int, timeout: float = 30.0):
         deadline = time.time() + timeout
@@ -456,6 +474,50 @@ def scenario_gallery(browser, url, report: Report, fake: FakeGenerator, samples:
     page.close()
 
 
+def scenario_performance(browser, url, report: Report, fake: FakeGenerator) -> None:
+    """Секция «Производительность»: состояние, точность, SageAttention на лету."""
+    print("производительность:")
+    from fooocus_qwen import settings
+    from fooocus_qwen.engine import attention
+
+    page, errors = fresh_page(browser, url)
+    open_tab(page, 3)
+    page.wait_for_timeout(800)
+    status = " ".join(box.input_value() for box in page.locator("textarea").all())
+    report.check("Точность: BF16" in status, "состояние показывает точность и Turbo")
+    report.check(page.get_by_label("bf16 — исходная точность, 13.3 ГиБ видеопамяти").is_checked(),
+                 "выбрана текущая точность")
+
+    sage = page.get_by_label("SageAttention — быстрое внимание")
+    if not attention.sage_available():
+        report.check(sage.is_disabled(), "без пакета галочка SageAttention недоступна")
+    else:
+        sage.check()
+        # Первое включение подгружает модуль трансформера diffusers — секунды.
+        try:
+            page.wait_for_function(
+                "() => [...document.querySelectorAll('textarea')].some(t => t.value.includes('Внимание: SageAttention'))",
+                timeout=30000,
+            )
+        except Exception:  # noqa: BLE001 — проверка ниже скажет, что не так
+            pass
+        status = " ".join(box.input_value() for box in page.locator("textarea").all())
+        report.check(settings.load().sage_attention and "Внимание: SageAttention" in status,
+                     f"SageAttention включился и записан: {getattr(fake, 'attention', None)}; {status[-120:]!r}")
+        sage.uncheck()
+        try:
+            page.wait_for_function(
+                "() => [...document.querySelectorAll('textarea')].some(t => t.value.includes('Внимание: штатное'))",
+                timeout=30000,
+            )
+        except Exception:  # noqa: BLE001
+            pass
+        report.check(not settings.load().sage_attention and fake.attention == "native",
+                     "и выключился обратно")
+    report.check(not errors, "без ошибок страницы" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
 def scenario_secret(browser, url, report: Report) -> None:
     """Токен языковой модели не попадает на страницу ни в каком виде."""
     print("секрет:")
@@ -479,7 +541,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Проверка интерфейса в браузере")
     parser.add_argument("--port", type=int, default=7899)
     parser.add_argument("--only", nargs="*", default=None,
-                        help="layout language painter annotation outpaint latency paste gallery secret")
+                        help="layout language painter annotation outpaint latency paste gallery performance secret")
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
@@ -497,6 +559,11 @@ def main() -> int:
     # Адрес языковой модели тоже подменяется: сценарий секрета пишет туда
     # поддельный токен, и настоящий файл человека трогать нельзя.
     config.ENDPOINT_FILE = work / "llm_endpoint.txt"
+    # Настройки производительности и дополнительные веса — тоже свои: сценарий
+    # производительности переключает внимание, и выбор человека трогать нельзя.
+    config.SETTINGS_FILE = work / "settings.json"
+    config.INT8_DIR = work / "int8"
+    config.TURBO_DIR = work / "turbo"
     config.ensure_directories()
 
     fake = FakeGenerator()
@@ -515,6 +582,7 @@ def main() -> int:
         "latency": lambda b, r: scenario_latency(b, url, r, samples),
         "paste": lambda b, r: scenario_paste(b, url, r),
         "gallery": lambda b, r: scenario_gallery(b, url, r, fake, samples),
+        "performance": lambda b, r: scenario_performance(b, url, r, fake),
         "secret": lambda b, r: scenario_secret(b, url, r),
     }
     chosen = args.only or list(scenarios)

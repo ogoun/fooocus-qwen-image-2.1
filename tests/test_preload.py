@@ -35,7 +35,14 @@ class _SlowLoad:
             self.calls += 1
         time.sleep(self._delay)
         # Тройка, которую отдаёт loader.load: пайплайн, размещение, кэш.
-        return object(), object(), object()
+        return _Pipe(), object(), object()
+
+
+class _Pipe:
+    """Пайплайн-заглушка: ровно то, что Studio трогает при загрузке."""
+
+    def set_progress_bar_config(self, **_kwargs):
+        pass
 
 
 def _studio(monkeypatch, loader_stub) -> Studio:
@@ -49,7 +56,7 @@ def _studio(monkeypatch, loader_stub) -> Studio:
     monkeypatch.setattr("fooocus_qwen.engine.loader.load", loader_stub)
     monkeypatch.setattr(
         "fooocus_qwen.engine.generator.Generator",
-        lambda pipe, residency, cache, catalogue: pipe,
+        lambda pipe, residency, cache, catalogue, turbo=None: pipe,
     )
     return Studio(config.AppConfig())
 

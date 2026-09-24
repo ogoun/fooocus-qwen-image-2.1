@@ -19,7 +19,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 import torch
@@ -37,6 +37,45 @@ def _named_tensors(module: torch.nn.Module) -> Iterator[tuple[str, torch.Tensor]
         yield f"p:{name}", parameter
     for name, buffer in module.named_buffers(recurse=True):
         yield f"b:{name}", buffer
+
+
+def _place(module: torch.nn.Module, key: str, tensor: torch.Tensor, value: torch.Tensor) -> None:
+    """Ставит на место тензора ``value`` — копию того же тензора на другом устройстве.
+
+    Для обычного тензора это ``tensor.data = value``: объект параметра
+    остаётся прежним, и все, кто держит на него ссылку, видят новое место.
+
+    Для подклассов тензора (INT8-веса torchao, ``Int8Tensor``) так нельзя:
+    присваивание ``.data`` меняет только обёртку — устройство она показывает
+    новое, а сами данные (``qdata``, ``scale``) остаются на старом, и первое
+    же умножение падает на «тензоры на разных устройствах». Такой параметр
+    заменяется новым объектом у модуля-владельца. Ссылок на объекты
+    параметров трансформера никто, кроме самого модуля, не держит: адаптеры
+    LoRA ссылаются на слой, а не на его вес.
+    """
+    if type(tensor) in (torch.Tensor, torch.nn.Parameter):
+        tensor.data = value
+        return
+    kind, name = key.split(":", 1)
+    owner_name, _, attribute = name.rpartition(".")
+    owner = module.get_submodule(owner_name) if owner_name else module
+    if kind == "p":
+        owner._parameters[attribute] = torch.nn.Parameter(value, requires_grad=False)
+    else:
+        owner._buffers[attribute] = value
+
+
+def _nbytes(tensor: torch.Tensor) -> int:
+    """Объём тензора в байтах, в том числе у подкласса с внутренними тензорами.
+
+    У ``Int8Tensor`` ``numel() * element_size()`` считает логический bf16-вес,
+    а хранит он int8 и масштабы — вдвое меньше; сводка памяти врала бы.
+    """
+    inner = getattr(tensor, "__tensor_flatten__", None)
+    if inner is not None and type(tensor) not in (torch.Tensor, torch.nn.Parameter):
+        names, _context = inner()
+        return sum(_nbytes(getattr(tensor, part)) for part in names)
+    return tensor.numel() * tensor.element_size()
 
 
 # Три состояния размещения вместо булева «резидентен».
@@ -74,8 +113,8 @@ class StagedModule:
                     LOGGER.warning("Не удалось закрепить память, продолжаю без неё: %s", error)
                     pin_failed = True
             self._host[name] = host
-            self._nbytes += host.numel() * host.element_size()
-            tensor.data = host
+            self._nbytes += _nbytes(host)
+            _place(module, name, tensor, host)
 
     @property
     def resident(self) -> bool:
@@ -103,7 +142,7 @@ class StagedModule:
         self._placement = _MIXED
         try:
             for name, tensor in _named_tensors(self.module):
-                tensor.data = self._host[name].to(self._device, non_blocking=True)
+                _place(self.module, name, tensor, self._host[name].to(self._device, non_blocking=True))
             if self._device.type == "cuda":
                 # Копирование из закреплённой памяти асинхронное: без синхронизации
                 # первый же вызов модуля прочитал бы наполовину заполненные веса.
@@ -120,7 +159,7 @@ class StagedModule:
 
         self._placement = _MIXED
         for name, tensor in _named_tensors(self.module):
-            tensor.data = self._host[name]
+            _place(self.module, name, tensor, self._host[name])
         self._placement = _HOST
         if self._device.type == "cuda":
             # Кеширующий аллокатор не возвращает освобождённые блоки драйверу
@@ -194,6 +233,25 @@ class ResidencyManager:
             yield
         finally:
             self._restore_placement()
+
+    def restage_transformer(self, change: Callable[[torch.nn.Module], None]) -> None:
+        """Меняет состав параметров трансформера и заново снимает с него копии.
+
+        Перестановка идёт по списку параметров, снятому при ``start()``.
+        Подключение адаптера LoRA добавляет новые (``…base_layer``,
+        ``…lora_A``), и старый список о них не знает: первая же перестановка
+        упала бы на ``KeyError``. Поэтому изменение делается на хосте, а
+        трансформер после него регистрируется заново — уже закреплённые
+        тензоры повторно не копируются (``pin_memory`` у них — тот же тензор).
+        """
+        if self._transformer is None:
+            raise RuntimeError("ResidencyManager.start() не вызывался")
+        self._transformer.to_host()
+        try:
+            change(self._pipe.transformer)
+            self._transformer = StagedModule(self._pipe.transformer, self._device, self._pin_memory)
+        finally:
+            self._transformer.to_device()
 
     def restore(self) -> None:
         """Возвращает штатное размещение: трансформер на устройстве, энкодер на хосте.

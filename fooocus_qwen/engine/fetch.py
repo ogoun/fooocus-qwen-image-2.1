@@ -11,6 +11,20 @@
 недостающее, проверяет контрольные суммы и умеет продолжить прерванное. Тем
 же путём (``local_dir``) файлы ложатся прямо в каталог проекта, а не в общий
 кэш Hugging Face — иначе те же тридцать три гигабайта легли бы на диск дважды.
+
+Кроме основной модели есть два дополнительных набора весов, каждый в своём
+каталоге и каждый качается по требованию:
+
+* **INT8-трансформер** (``unsloth/Qwen-Image-2.1-FP8``, файл
+  ``Qwen-Image-2.1-INT8.safetensors``, 7.3 ГБ) — замена bf16-трансформера.
+  Кто выбрал INT8, bf16-шарды трансформера (14 ГБ) не качает вовсе:
+  ``include_transformer=False``.
+* **Адаптер turbo** (``Viggle/Qwen-Image-2.1-viggle-turbo``, 1.3 ГБ) —
+  дистиллят на 6 шагов, нужен пресету Turbo.
+
+Прогресс скачивания рисует ``tqdm`` внутри ``huggingface_hub``: в консоли
+установки он виден как есть, а интерфейс подхватывает его через
+``gr.Progress(track_tqdm=True)``.
 """
 
 from __future__ import annotations
@@ -25,18 +39,30 @@ LOGGER = logging.getLogger(__name__)
 REPO_ID = "Qwen/Qwen-Image-2.1"
 MARKER = "model_index.json"
 APPROXIMATE_SIZE_GB = 33
+# Шарды bf16-трансформера: без них модель работает на INT8-трансформере.
+# Конфигурация и индекс трансформера качаются всегда — по ним строится модель.
+TRANSFORMER_SHARDS = "transformer/*.safetensors"
+
+INT8_REPO = "unsloth/Qwen-Image-2.1-FP8"
+INT8_FILE = "Qwen-Image-2.1-INT8.safetensors"
+
+TURBO_REPO = "Viggle/Qwen-Image-2.1-viggle-turbo"
+TURBO_LORA = "Qwen-Image-2.1-viggle-turbo-v0.2.1-6step-lora-r256.safetensors"
+TURBO_SCHEDULER = "scheduler/scheduler_config.json"
+TURBO_FILES = (TURBO_LORA, TURBO_SCHEDULER)
 
 
 class ModelDownloadError(RuntimeError):
     """Загрузка закончилась, а весов на месте всё равно нет."""
 
 
-def missing_files(model_dir: Path) -> list[str]:
+def missing_files(model_dir: Path, include_transformer: bool = True) -> list[str]:
     """Возвращает пути недостающих файлов относительно каталога модели.
 
     Пустой список означает, что модель на месте целиком. Файл нулевой длины
     считается отсутствующим: такой остаётся от оборванной записи и весами не
-    является.
+    является. ``include_transformer=False`` — шарды bf16-трансформера не
+    нужны (работа на INT8), их отсутствие не считается.
     """
     model_dir = Path(model_dir)
     if not _present(model_dir / MARKER):
@@ -50,6 +76,8 @@ def missing_files(model_dir: Path) -> list[str]:
             missing.append(index_path.relative_to(model_dir).as_posix())
             continue
         folder = index_path.parent
+        if not include_transformer and folder.name == "transformer":
+            continue
         for shard in sorted(set(weight_map.values())):
             if not _present(folder / shard):
                 missing.append((folder / shard).relative_to(model_dir).as_posix())
@@ -63,14 +91,15 @@ def missing_files(model_dir: Path) -> list[str]:
     return missing
 
 
-def is_complete(model_dir: Path) -> bool:
-    return not missing_files(model_dir)
+def is_complete(model_dir: Path, include_transformer: bool = True) -> bool:
+    return not missing_files(model_dir, include_transformer)
 
 
 def ensure_model(
     model_dir: Path,
     repo_id: str = REPO_ID,
     downloader: Callable[..., object] | None = None,
+    include_transformer: bool = True,
 ) -> bool:
     """Доводит каталог весов до полного состава.
 
@@ -80,7 +109,7 @@ def ensure_model(
     генерацию, где он обойдётся дороже.
     """
     model_dir = Path(model_dir)
-    missing = missing_files(model_dir)
+    missing = missing_files(model_dir, include_transformer)
     if not missing:
         LOGGER.info("Веса на месте: %s", model_dir)
         return False
@@ -95,9 +124,10 @@ def ensure_model(
     )
     download = downloader or _snapshot_download
     model_dir.mkdir(parents=True, exist_ok=True)
-    download(repo_id=repo_id, local_dir=model_dir)
+    ignore = [] if include_transformer else [TRANSFORMER_SHARDS]
+    download(repo_id=repo_id, local_dir=model_dir, ignore=ignore)
 
-    still_missing = missing_files(model_dir)
+    still_missing = missing_files(model_dir, include_transformer)
     if still_missing:
         raise ModelDownloadError(
             "Загрузка весов не довела дело до конца, не хватает "
@@ -116,7 +146,7 @@ def _present(path: Path) -> bool:
         return False
 
 
-def _snapshot_download(*, repo_id: str, local_dir: Path) -> object:
+def _snapshot_download(*, repo_id: str, local_dir: Path, ignore: list[str] | None = None) -> object:
     """Настоящая загрузка. Вынесена отдельно, чтобы тесты её не звали.
 
     ``.git`` репозитория модели не нужен: он удваивает объём, храня в LFS
@@ -127,6 +157,58 @@ def _snapshot_download(*, repo_id: str, local_dir: Path) -> object:
     return snapshot_download(
         repo_id=repo_id,
         local_dir=str(local_dir),
-        ignore_patterns=[".git*"],
+        ignore_patterns=[".git*", *(ignore or [])],
         max_workers=4,
     )
+
+
+# --- дополнительные веса: INT8-трансформер и адаптер turbo ---------------------
+
+
+def missing_extra(directory: Path, files: tuple[str, ...]) -> list[str]:
+    """Недостающие файлы набора — относительные пути внутри каталога."""
+    return [name for name in files if not _present(Path(directory) / name)]
+
+
+def ensure_files(
+    directory: Path,
+    repo_id: str,
+    files: tuple[str, ...],
+    downloader: Callable[..., object] | None = None,
+) -> bool:
+    """Докачивает недостающие файлы набора. ``True`` — что-то качалось.
+
+    Качаются только недостающие файлы: адаптер turbo, скачанный наполовину,
+    не заставит заново тянуть готовую конфигурацию планировщика, и наоборот.
+    """
+    directory = Path(directory)
+    missing = missing_extra(directory, files)
+    if not missing:
+        return False
+    LOGGER.info("Качаю %s из %s в %s", ", ".join(missing), repo_id, directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    download = downloader or _file_download
+    for name in missing:
+        download(repo_id=repo_id, filename=name, local_dir=directory)
+    still_missing = missing_extra(directory, files)
+    if still_missing:
+        raise ModelDownloadError(
+            f"Загрузка не довела дело до конца, не хватает {', '.join(still_missing)}. "
+            "Повторите: докачается только недостающее."
+        )
+    return True
+
+
+def ensure_int8(directory: Path, downloader: Callable[..., object] | None = None) -> bool:
+    return ensure_files(directory, INT8_REPO, (INT8_FILE,), downloader)
+
+
+def ensure_turbo(directory: Path, downloader: Callable[..., object] | None = None) -> bool:
+    return ensure_files(directory, TURBO_REPO, TURBO_FILES, downloader)
+
+
+def _file_download(*, repo_id: str, filename: str, local_dir: Path) -> object:
+    """Один файл репозитория — прямо в каталог, без общего кэша Hugging Face."""
+    from huggingface_hub import hf_hub_download
+
+    return hf_hub_download(repo_id=repo_id, filename=filename, local_dir=str(local_dir))

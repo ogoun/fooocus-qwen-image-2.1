@@ -301,7 +301,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     def run(
         raw, prompt_text, use_boost, mode_value, quality_name,
         grow_value, feather_value, keep_value, seed_value, lang,
-        progress=gr.Progress(),
+        progress=gr.Progress(track_tqdm=True),
     ):
         # Обработчик целиком под try по тем же причинам, что и на вкладке
         # генерации: сбой модели обязан стать строкой состояния.
@@ -371,6 +371,11 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
         def report(index: int, step: int, total: int) -> None:
             progress((step, total), desc=say("progress_edit", lang))
+
+        # Пресету Turbo нужен адаптер; при первом выборе он качается здесь.
+        missing = studio.weights_for(request.preset, lang, progress)
+        if missing:
+            return [], sentences(message, missing)
 
         # Стадия до первого шага: прогресс из пайплайна приходит только
         # после шага, а загрузка модели и кодирование промта идут раньше

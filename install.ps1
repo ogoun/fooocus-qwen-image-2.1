@@ -10,12 +10,16 @@
     2. Остальные зависимости из requirements.txt.
     3. torch закрепляется ещё раз: сторонние пакеты способны подменить
        CUDA-сборку на обычную.
-    4. Веса модели: тридцать три гигабайта, качаются только если их нет.
-    5. Адрес языковой модели для AI-буста промтов — по желанию.
-    6. Самопроверка: «установилось» должно означать «запустится».
+    4. Производительность: точность весов (bf16 или INT8) и SageAttention.
+       От ответа зависит, что качает следующий шаг.
+    5. Веса модели: около тридцати трёх гигабайт при bf16, двадцати шести
+       при INT8; качаются только недостающие.
+    6. Адрес языковой модели для AI-буста промтов — по желанию.
+    7. Самопроверка: «установилось» должно означать «запустится».
 
-    Шаги 4 и 5 делает сам пакет (`--fetch-model`, `--setup-llm`): то же
-    самое, написанное дважды на двух языках оболочки, разъезжается.
+    Шаги 4–6 делает сам пакет (`--setup-performance`, `--fetch-model`,
+    `--setup-llm`): то же самое, написанное дважды на двух языках оболочки,
+    разъезжается.
 
 .EXAMPLE
     .\install.ps1
@@ -38,7 +42,7 @@ $torchIndex = 'https://download.pytorch.org/whl/cu128'
 
 function Step($number, $text) {
     Write-Host ''
-    Write-Host "[$number/6] $text" -ForegroundColor Cyan
+    Write-Host "[$number/7] $text" -ForegroundColor Cyan
 }
 
 Push-Location $root
@@ -77,14 +81,17 @@ try {
         Write-Host "  всё на месте: $version"
     }
 
-    Step 4 'Проверяю веса модели'
+    Step 4 'Выбираю точность весов и SageAttention'
+    & $python -m fooocus_qwen --setup-performance
+
+    Step 5 'Проверяю веса модели'
     & $python -m fooocus_qwen --fetch-model
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось получить веса модели' }
 
-    Step 5 'Настраиваю языковую модель для AI-буста промтов'
+    Step 6 'Настраиваю языковую модель для AI-буста промтов'
     & $python -m fooocus_qwen --setup-llm
 
-    Step 6 'Проверяю готовность'
+    Step 7 'Проверяю готовность'
     & $python -m fooocus_qwen --selftest
     if ($LASTEXITCODE -ne 0) { throw 'Самопроверка не пройдена' }
 

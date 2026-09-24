@@ -14,7 +14,8 @@ import logging
 import random
 import threading
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,7 @@ from PIL import Image
 from .. import __version__
 from ..imaging import aspect, masking
 from ..prompting.styles import Style, apply_styles
+from . import turbo as turbo_module
 from .embeds_cache import EmbedsCache
 from .presets import QualityPreset
 from .residency import ResidencyManager
@@ -255,13 +257,31 @@ class Generator:
         residency: ResidencyManager,
         cache: EmbedsCache,
         catalogue: dict[str, Style],
+        turbo=None,
     ) -> None:
         self._pipe = pipe
         self._residency = residency
         self._cache = cache
         self._catalogue = catalogue
+        # Адаптер turbo (``engine/turbo.py``) или None: без него пресет Turbo
+        # недоступен, остальные работают как всегда.
+        self._turbo = turbo
         self._interrupted = False
         self._lock = threading.Lock()
+
+    @property
+    def pipe(self):
+        return self._pipe
+
+    @contextmanager
+    def exclusive(self) -> Iterator[None]:
+        """Занимает видеокарту так же, как генерация: ждёт конца текущей.
+
+        Для действий, меняющих общее состояние пайплайна вне генерации, —
+        смены механизма внимания, выгрузки модели.
+        """
+        with self._lock:
+            yield
 
     def interrupt(self) -> None:
         """Просит прервать текущую генерацию. Читается циклом денойзинга.
@@ -323,6 +343,13 @@ class Generator:
         self._pipe._interrupt = False
 
         prepared, region_box = self._prepare(request)
+        use_turbo = prepared.preset.turbo
+        if use_turbo and self._turbo is None:
+            raise RuntimeError("Пресет Turbo недоступен: адаптер turbo не подключён")
+        if self._turbo is not None:
+            # Внутри замка генерации: адаптер и планировщик — общее состояние
+            # пайплайна, и переключать их посреди чужого цикла нельзя.
+            self._turbo.activate(use_turbo)
         positive, negative = apply_styles(
             prepared.prompt, prepared.negative_prompt, prepared.styles, self._catalogue
         )
@@ -346,7 +373,7 @@ class Generator:
                     progress(_index, step + 1, prepared.preset.num_inference_steps)
                 return kwargs
 
-            output = self._pipe(
+            arguments = dict(
                 prompt=positive,
                 image=condition,
                 negative_prompt=negative or None,
@@ -359,6 +386,9 @@ class Generator:
                 generator=generator,
                 callback_on_step_end=step_callback,
             )
+            if use_turbo:
+                arguments = turbo_module.call_arguments(arguments)
+            output = self._pipe(**arguments)
 
             if self._interrupted:
                 # Прерванный цикл всё равно декодирует латенты, но это шум.
