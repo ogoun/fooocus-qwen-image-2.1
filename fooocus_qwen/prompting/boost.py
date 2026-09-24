@@ -14,12 +14,12 @@ from __future__ import annotations
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 from PIL import Image
 
-from ..llm import LlmClient
+from ..llm import LlmClient, LlmImagesRejected
 
 LOGGER = logging.getLogger(__name__)
 
@@ -34,6 +34,25 @@ _DESCRIBE_FILE = "system_prompt_describe.txt"
 
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 
+# Иероглифы и текст в кавычках — для проверки языка описания.
+_CJK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
+_QUOTED = re.compile(r'"[^"]*"|“[^”]*”|「[^」]*」|『[^』]*』')
+
+# Пометка к запросу правки, когда изображений переписыватель не видит.
+# Системный промт правки целиком построен на чтении картинки; пометка говорит
+# модели правду о том, что картинки нет. Опыт tools/experiments/
+# boost_text_only.py (qwen3.8-27b, 80 ответов на вариант): выдумок и чужого
+# языка не нашлось ни с пометкой, ни без — редкий сбой, увиденный вживую,
+# она не лечит (это делает проверка языка ниже); зато ответ короче и быстрее,
+# 4.5 с против 5.4. Пометка по-английски: так написан системный промт.
+BLIND_NOTE = (
+    "\n\nNote: the input image is NOT available to you — you cannot see it. "
+    "Do not guess, describe or name anything the image might contain. Rewrite "
+    "only the instruction itself: make the requested change concrete and say "
+    "that everything else in the image stays exactly as it is, without listing "
+    "what that is. Write the description in the language of the instruction."
+)
+
 
 @dataclass(frozen=True)
 class BoostResult:
@@ -47,6 +66,9 @@ class BoostResult:
     wh_ratio: str | None = None
     ratio_follow: str | None = None
     raw: str = ""
+    # Изображения были, но переписыватель их не видел: модель их не читает
+    # (или о ней это уже известно). Промт переписан по одному тексту.
+    images_skipped: bool = False
 
 
 def _clean(value: object) -> str | None:
@@ -81,6 +103,21 @@ def parse_response(text: str) -> BoostResult:
     return BoostResult(prompt=raw, raw=text)
 
 
+def off_language(instruction: str, rewritten: str) -> bool:
+    """Описание по-китайски при инструкции без иероглифов.
+
+    Оба системных промта требуют: инструкция на китайском — описание на
+    китайском, на любом другом языке — по-английски. Модель изредка
+    нарушает правило и отвечает по-китайски на английскую инструкцию
+    (увидено вживую на qwen3.8-27b). Текст в кавычках не считается: это
+    надписи, которые модель изображения нарисует, и их язык решается
+    отдельным правилом (B).
+    """
+    if _CJK.search(instruction):
+        return False
+    return bool(_CJK.search(_QUOTED.sub("", rewritten)))
+
+
 def build_user_message(prompt: str, reference_count: int) -> str:
     """Собирает сообщение пользователя для переписывателя.
 
@@ -108,14 +145,55 @@ def boost(
     mode: str,
     prompt_dir: Path,
     references: list[Image.Image] | None = None,
+    send_images: bool = True,
 ) -> BoostResult:
+    """Переписывает промт; изображения — подспорье, а не условие.
+
+    Картинки помогают переписывателю правки понять, что на кадре, но промт
+    переписывается и без них. Текстовая модель отвечает на запрос с
+    изображением ошибкой сервера — тогда тот же запрос уходит одним текстом.
+    Раньше отказ считался провалом буста целиком, и с текстовой моделью AI
+    буст при правке не работал вовсе. ``send_images=False`` — модель уже
+    известна как текстовая: незачем каждый раз платить заведомо неудачным
+    запросом с картинками.
+
+    Теги ``<imageN>`` в сообщении остаются и без картинок: это адреса
+    изображений для самой Qwen-Image, и переписанный промт обязан их
+    сохранить. К сообщению добавляется только ``BLIND_NOTE``.
+    """
     system = _read_system_prompt(prompt_dir, _PROMPT_FILES[mode])
     user = build_user_message(prompt, len(references or []))
     # Референсы уходят в модель только в режиме редактирования: переписывателю
     # T2I смотреть не на что, а лишние изображения удлиняют запрос.
     images = references if mode == MODE_EDIT else None
-    answer = client.complete(system, user, images=images)
-    return parse_response(answer)
+    if images and send_images:
+        try:
+            return _ask(client, system, user, prompt, images)
+        except LlmImagesRejected as error:
+            LOGGER.warning("Языковая модель не приняла изображения, переписываю по тексту: %s", error)
+    if not images:
+        return _ask(client, system, user, prompt)
+    # Изображения были, но переписыватель их не увидит — и узнаёт об этом.
+    return replace(_ask(client, system, user + BLIND_NOTE, prompt), images_skipped=True)
+
+
+def _ask(
+    client: LlmClient,
+    system: str,
+    user: str,
+    instruction: str,
+    images: list[Image.Image] | None = None,
+) -> BoostResult:
+    """Один запрос и, если описание пришло не на том языке, один повтор.
+
+    Повтор ровно один: сбой редкий, и второй ответ почти наверняка верный;
+    если нет — лучше отдать его, чем задерживать генерацию дальше.
+    """
+    result = parse_response(client.complete(system, user, images=images))
+    if off_language(instruction, result.prompt):
+        LOGGER.warning("Переписанный промт пришёл не на языке инструкции, спрашиваю ещё раз")
+        result = parse_response(client.complete(system, user, images=images))
+    return result
 
 
 def describe(client: LlmClient, image: Image.Image, prompt_dir: Path) -> str:

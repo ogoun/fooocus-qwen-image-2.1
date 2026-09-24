@@ -7,8 +7,9 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 import pytest
 from PIL import Image
 
-from fooocus_qwen.llm.client import LlmClient, LlmError
+from fooocus_qwen.llm.client import LlmClient, LlmError, LlmImagesRejected
 from fooocus_qwen.llm.endpoint import LlmEndpoint
+from fooocus_qwen.prompting import boost
 
 RECEIVED: list[dict] = []
 
@@ -217,3 +218,95 @@ def test_a_text_only_model_is_named_as_the_likely_cause(blind_server):
     # того, кто пришёл через буст.
     assert "Описать изображение" in text
     assert "буст" in text
+
+
+
+# --- AI буст с текстовой моделью -----------------------------------------
+#
+# Промт обязан переписываться и моделью без зрения: изображения переписывателю
+# правки — подспорье, а не условие. Раньше отказ сервера от картинки ронял буст
+# целиком, и с текстовой моделью AI буст при правке не работал вовсе.
+
+
+def _prompt_dir(tmp_path):
+    for name in ("system_prompt_t2i.txt", "system_prompt_edit.txt"):
+        (tmp_path / name).write_text("rewrite", encoding="utf-8")
+    return tmp_path
+
+
+def _posts():
+    return [isinstance(item["body"]["messages"][1]["content"], list) for item in RECEIVED]
+
+
+def test_a_refused_image_is_its_own_error_type(blind_server):
+    client = LlmClient(LlmEndpoint(base_url=blind_server))
+    with pytest.raises(LlmImagesRejected):
+        client.complete("s", "u", images=[Image.new("RGB", (8, 8))])
+
+
+def test_an_access_error_is_not_blamed_on_the_image(monkeypatch):
+    """401 с картинкой в запросе — это токен, а не зрение: повторять без картинки незачем."""
+    import urllib.error
+    import urllib.request
+
+    monkeypatch.setattr(
+        urllib.request, "urlopen",
+        _raising_urlopen(urllib.error.HTTPError("u", 401, "Unauthorized", {}, None)),
+    )
+    client = LlmClient(LlmEndpoint(base_url="http://192.0.2.1:8000"))
+    with pytest.raises(LlmError) as failure:
+        client.complete("s", "u", images=[Image.new("RGB", (8, 8))])
+    assert not isinstance(failure.value, LlmImagesRejected)
+
+
+def test_boost_rewrites_by_text_when_the_model_refuses_images(blind_server, tmp_path):
+    client = LlmClient(LlmEndpoint(base_url=blind_server))
+    result = boost.boost(
+        client, "make it red", mode=boost.MODE_EDIT, prompt_dir=_prompt_dir(tmp_path),
+        references=[Image.new("RGB", (8, 8))],
+    )
+    assert result.prompt == "готово"
+    assert result.images_skipped
+    assert _posts() == [True, False], "сначала с картинкой, затем тот же запрос одним текстом"
+
+
+def test_boost_skips_images_for_a_known_text_model(blind_server, tmp_path):
+    client = LlmClient(LlmEndpoint(base_url=blind_server))
+    result = boost.boost(
+        client, "make it red", mode=boost.MODE_EDIT, prompt_dir=_prompt_dir(tmp_path),
+        references=[Image.new("RGB", (8, 8))], send_images=False,
+    )
+    assert result.prompt == "готово" and result.images_skipped
+    assert _posts() == [False]
+
+
+def test_boost_with_a_vision_model_is_unchanged(server, tmp_path):
+    client = LlmClient(LlmEndpoint(base_url=server))
+    result = boost.boost(
+        client, "make it red", mode=boost.MODE_EDIT, prompt_dir=_prompt_dir(tmp_path),
+        references=[Image.new("RGB", (8, 8))],
+    )
+    assert not result.images_skipped
+    assert _posts() == [True]
+
+
+def test_studio_remembers_a_text_model_and_says_so(blind_server, tmp_path, monkeypatch):
+    from fooocus_qwen import config
+    from fooocus_qwen.ui.state import Studio
+
+    endpoint_file = tmp_path / "llm_endpoint.txt"
+    endpoint_file.write_text(blind_server + "\n", encoding="utf-8")
+    monkeypatch.setattr(config, "ENDPOINT_FILE", endpoint_file)
+    monkeypatch.setattr(config, "SYSTEM_PROMPT_DIR", _prompt_dir(tmp_path))
+    studio = Studio(config.AppConfig())
+    picture = [Image.new("RGB", (8, 8))]
+
+    text, _, message = studio.boost_prompt("make it red", boost.MODE_EDIT, "ru", picture)
+    assert text == "готово"
+    assert "по тексту" in message and "не выполнен" not in message
+    assert _posts() == [True, False]
+
+    RECEIVED.clear()
+    text, _, message = studio.boost_prompt("make it blue", boost.MODE_EDIT, "en", picture)
+    assert text == "готово" and "text alone" in message
+    assert _posts() == [False], "известная текстовая модель — без заведомо неудачного запроса"

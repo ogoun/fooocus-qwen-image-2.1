@@ -99,6 +99,11 @@ class Studio:
         self._generator: Any = None
         self._residency: Any = None
         self._cache: Any = None
+        # Модели, не принявшие изображения: (адрес, имя модели). Следующий буст
+        # к ним сразу идёт одним текстом, без заведомо неудачного запроса с
+        # картинками. Живёт до перезапуска: сменил модель на сервере под тем
+        # же именем — перезапуск оболочки вернёт попытку.
+        self._text_only_models: set[tuple[str, str]] = set()
 
     @property
     def generator(self):
@@ -221,12 +226,17 @@ class Studio:
         """Возвращает переписанный промт, соотношение сторон и сообщение о результате."""
         try:
             client = self.llm_client()
+            key = (client.base_url, client.model)
             result = boost.boost(
-                client, prompt, mode=mode, prompt_dir=config.SYSTEM_PROMPT_DIR, references=references
+                client, prompt, mode=mode, prompt_dir=config.SYSTEM_PROMPT_DIR,
+                references=references, send_images=key not in self._text_only_models,
             )
         except (LlmError, FileNotFoundError, ValueError, OSError) as error:
             LOGGER.warning("AI-буст не выполнен: %s", error)
             return prompt, None, say("boost_failed", lang, error=error)
+        if result.images_skipped:
+            self._text_only_models.add(key)
+            return result.prompt, result.wh_ratio, say("boost_done_text_only", lang)
         return result.prompt, result.wh_ratio, say("boost_done", lang)
 
     def describe_image(self, image: Image.Image, lang: str) -> tuple[str, str]:

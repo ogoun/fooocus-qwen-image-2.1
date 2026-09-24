@@ -314,6 +314,12 @@ MESSAGES: dict[str, tuple[str, str]] = {
     ),
     "boost_failed": ("AI буст не выполнен: {error}", "AI boost failed: {error}"),
     "boost_done": ("AI буст выполнен", "AI boost done"),
+    "boost_done_text_only": (
+        "AI буст выполнен по тексту: языковая модель не читает изображения,"
+        " промт переписан без них",
+        "AI boost done from the text alone: the language model cannot read"
+        " images, so the prompt was rewritten without them",
+    ),
     "describe_failed": ("Описание не выполнено: {error}", "Describing failed: {error}"),
     "describe_done": ("Описание готово", "Description ready"),
     # классификация сбоя генерации

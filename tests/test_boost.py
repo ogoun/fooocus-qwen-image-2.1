@@ -134,3 +134,70 @@ def test_boost_raises_file_not_found_for_missing_prompt(tmp_path):
     # tmp_path пуст, системные промты не существуют
     with pytest.raises(FileNotFoundError, match="system_prompt_t2i"):
         boost.boost(client, "a cat", mode=boost.MODE_T2I, prompt_dir=tmp_path)
+
+
+# --- язык описания: правило (A) системных промтов ---------------------------
+
+
+class SequenceClient(RecordingClient):
+    """Отвечает по очереди из списка — для проверки повтора."""
+
+    def __init__(self, answers):
+        super().__init__()
+        self.answers = list(answers)
+
+    def complete(self, system, user, images=None, temperature=0.3, max_tokens=2048):
+        self.calls.append({"system": system, "user": user, "images": images})
+        return self.answers.pop(0)
+
+
+def _prompts(tmp_path):
+    for name in ("system_prompt_t2i.txt", "system_prompt_edit.txt"):
+        (tmp_path / name).write_text("rewrite", encoding="utf-8")
+    return tmp_path
+
+
+def test_chinese_prose_for_an_english_instruction_is_off_language():
+    assert boost.off_language("replace the sky with a sunset", "将图像中的天空区域替换为日落景象")
+
+
+def test_a_chinese_instruction_may_get_a_chinese_description():
+    assert not boost.off_language("把天空换成日落", "将图像中的天空区域替换为日落景象")
+
+
+def test_quoted_text_is_rendered_text_not_the_description_language():
+    """Надпись в кавычках — для картинки; её язык решает правило (B), не (A)."""
+    assert not boost.off_language("add a sign saying sale", 'Add a shop sign reading "特价" above the door')
+
+
+def test_an_off_language_answer_is_asked_again(tmp_path):
+    client = SequenceClient([
+        '{"rewritten_prompt": "将天空替换为日落"}',
+        '{"rewritten_prompt": "Replace the sky with a sunset"}',
+    ])
+    result = boost.boost(client, "replace the sky with a sunset", mode=boost.MODE_T2I, prompt_dir=_prompts(tmp_path))
+    assert result.prompt == "Replace the sky with a sunset"
+    assert len(client.calls) == 2
+
+
+def test_the_second_answer_is_taken_whatever_it_is(tmp_path):
+    """Повтор один: задерживать генерацию бесконечными попытками хуже."""
+    client = SequenceClient(['{"rewritten_prompt": "日落"}', '{"rewritten_prompt": "日落二"}'])
+    result = boost.boost(client, "sunset", mode=boost.MODE_T2I, prompt_dir=_prompts(tmp_path))
+    assert result.prompt == "日落二" and len(client.calls) == 2
+
+
+def test_the_blind_note_goes_only_to_a_request_without_its_images(tmp_path):
+    client = RecordingClient()
+    picture = [Image.new("RGB", (8, 8))]
+    boost.boost(client, "make it red", mode=boost.MODE_EDIT, prompt_dir=_prompts(tmp_path), references=picture)
+    boost.boost(
+        client, "make it red", mode=boost.MODE_EDIT, prompt_dir=_prompts(tmp_path),
+        references=picture, send_images=False,
+    )
+    boost.boost(client, "make it red", mode=boost.MODE_T2I, prompt_dir=_prompts(tmp_path), references=picture)
+    with_images, without_images, t2i = client.calls
+    assert with_images["images"] and boost.BLIND_NOTE not in with_images["user"]
+    assert not without_images["images"] and without_images["user"].endswith(boost.BLIND_NOTE)
+    assert not t2i["images"] and boost.BLIND_NOTE not in t2i["user"], "переписывателю T2I картинки и не нужны"
+

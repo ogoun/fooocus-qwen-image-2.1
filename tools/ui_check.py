@@ -455,7 +455,11 @@ def main() -> int:
 
     from fooocus_qwen.ui import app
 
-    work = Path(tempfile.mkdtemp(prefix="qs-ui-check-"))
+    # Рабочий каталог — внутри проекта (.tmp/ под .gitignore), не в системном
+    # %TEMP%: всё, что порождает прогон, остаётся рядом с проектом.
+    scratch = Path(__file__).resolve().parents[1] / ".tmp" / "ui_check"
+    scratch.mkdir(parents=True, exist_ok=True)
+    work = Path(tempfile.mkdtemp(prefix="run-", dir=scratch))
     # Результаты подставного генератора не должны попасть в галерею человека.
     config.OUTPUT_DIR = work / "outputs"
     config.PROMPT_DIR = work / "prompts"

@@ -29,6 +29,16 @@ class LlmError(RuntimeError):
     """Сервер языковой модели недоступен или ответил ошибкой."""
 
 
+class LlmImagesRejected(LlmError):
+    """Сервер ответил ошибкой на запрос с изображениями.
+
+    Отдельный тип нужен вызывающему, чтобы отличить «модель не читает
+    картинки» от «сервер недоступен»: в первом случае тот же запрос без
+    изображений проходит, и AI буст обязан его повторить, а не сдаться.
+    Обрыв связи сюда не попадает — там картинка ни при чём.
+    """
+
+
 def _image_to_data_url(image: Image.Image) -> str:
     buffer = io.BytesIO()
     image.convert("RGB").save(buffer, format="PNG")
@@ -55,6 +65,21 @@ def _check_header_safe(value: str, description: str) -> None:
         ) from error
 
 
+# Ответы, в которых изображение заведомо ни при чём: доступ и адрес.
+# Всё остальное с картинкой в запросе — вероятный отказ модели без зрения:
+# llama.cpp с текстовой моделью отвечает 500, другие серверы — 400 или 422.
+_NOT_ABOUT_IMAGES = frozenset({401, 403, 404, 407, 429})
+
+
+def _images_rejected(images: list[Image.Image] | None, error: Exception) -> bool:
+    return (
+        bool(images)
+        and isinstance(error, urllib.error.HTTPError)
+        and error.code >= 400
+        and error.code not in _NOT_ABOUT_IMAGES
+    )
+
+
 def _vision_hint(images: list[Image.Image] | None, error: Exception) -> str:
     """Подсказка для случая, когда сервер подавился именно изображением.
 
@@ -66,20 +91,15 @@ def _vision_hint(images: list[Image.Image] | None, error: Exception) -> str:
     Подсказка добавляется только к ошибкам сервера, а не к обрывам связи:
     при недоступном хосте картинка ни при чём.
 
-    Кнопка «Описать изображение» — не единственный путь сюда: AI буст в
-    режиме правки тоже отправляет референсы картинками, а без них проходит.
-    Первая редакция подсказки называла только кнопку и тем вводила в
-    заблуждение того, кто пришёл сюда через буст; проверено на живом сервере
-    с текстовой моделью.
+    Сюда доходит только кнопка «Описать изображение»: AI буст такой отказ
+    перехватывает и повторяет запрос одним текстом (``prompting.boost``).
     """
-    if not images:
-        return ""
-    if not isinstance(error, urllib.error.HTTPError) or error.code < 500:
+    if not _images_rejected(images, error):
         return ""
     return (
         ". Запрос содержал изображение — возможно, выбранная модель не умеет их"
-        " читать. Зрение нужно кнопке «Описать изображение» и AI бусту при"
-        " правке с референсами; всё остальное работает и с текстовой моделью."
+        " читать. Зрение нужно только кнопке «Описать изображение»; AI буст с"
+        " текстовой моделью переписывает промт по тексту."
     )
 
 
@@ -94,6 +114,10 @@ class LlmClient:
     @property
     def model(self) -> str:
         return self._model
+
+    @property
+    def base_url(self) -> str:
+        return self._endpoint.base_url
 
     def _headers(self) -> dict[str, str]:
         headers = {"Content-Type": "application/json; charset=utf-8"}
@@ -155,7 +179,8 @@ class LlmClient:
             with urllib.request.urlopen(request, timeout=self._timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
         except (urllib.error.URLError, OSError, json.JSONDecodeError, UnicodeError) as error:
-            raise LlmError(f"Ошибка обращения к языковой модели: {error}{_vision_hint(images, error)}") from error
+            kind = LlmImagesRejected if _images_rejected(images, error) else LlmError
+            raise kind(f"Ошибка обращения к языковой модели: {error}{_vision_hint(images, error)}") from error
 
         choices = payload.get("choices") or []
         if not choices:
