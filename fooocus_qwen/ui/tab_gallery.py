@@ -30,7 +30,7 @@ from ..imaging import metadata
 from ..storage import gallery
 from . import layout
 from .i18n import Localizer, pick, say
-from .tab_edit import editor_value_for
+from .tab_edit import editor_value_for, selected_path
 
 # Порядок обязан совпадать с порядком выходов кнопки «Восстановить» в build():
 # восстановление читает по этому же порядку значения из словаря параметров, а
@@ -219,9 +219,13 @@ def build(
     def refresh_history():
         return [str(path) for path in gallery.recent(config.OUTPUT_DIR)]
 
-    def on_select(lang, event: gr.SelectData):
-        value = event.value
-        path = Path(value["image"]["path"]) if isinstance(value, dict) else Path(value)
+    def on_select(items, lang, event: gr.EventData):
+        # EventData, а не SelectData: см. tab_edit.selected_path — у события
+        # выбора в Gradio 6.5.1 бывает только индекс, без значения.
+        found = selected_path(items, event)
+        if found is None:
+            return gr.update(), gr.update()
+        path = Path(found)
         return str(path), describe(metadata.read_png(path), path, lang)
 
     def open_outputs(lang):
@@ -270,7 +274,7 @@ def build(
     switch_output = [tabs] if tabs is not None else []
 
     open_button.click(open_outputs, language, status)
-    history.select(on_select, language, [selected, details])
+    history.select(on_select, [history, language], [selected, details])
     reuse.click(restore, [selected, language], restore_outputs + switch_output)
     from_file.upload(restore_from_file, [from_file, language], restore_outputs + switch_output)
     if edit_components is not None:

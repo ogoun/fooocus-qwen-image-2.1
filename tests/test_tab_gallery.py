@@ -158,7 +158,7 @@ def test_the_card_is_readable_text_not_json(monkeypatch, tmp_path):
     handlers, _ = _build(monkeypatch, tmp_path)
     source = metadata.save_png(Image.new("RGB", (8, 8)), tmp_path / "e.png", PARAMS)
 
-    path, card = handlers["on_select"]("ru", _select(source))
+    path, card = handlers["on_select"](None, "ru", _select(source))
     assert path == str(source)
     assert "{" not in card, "карточка — текст, а не JSON"
     for expected in ("Промт", "4242", "1024×768", "MaxQuality", "40 шагов", "e\\.png"):
@@ -175,7 +175,7 @@ def test_a_foreign_png_gets_a_card_that_says_so(monkeypatch, tmp_path):
     handlers, _ = _build(monkeypatch, tmp_path)
     foreign = tmp_path / "foreign.png"
     Image.new("RGB", (8, 8), "green").save(foreign)
-    _path, card = handlers["on_select"]("ru", _select(foreign))
+    _path, card = handlers["on_select"](None, "ru", _select(foreign))
     assert "foreign" in card and "{" not in card
 
 

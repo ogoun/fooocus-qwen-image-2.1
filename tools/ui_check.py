@@ -137,6 +137,11 @@ def fresh_page(browser, url: str, width=1920, height=1080, scale=1):
     page = browser.new_page(viewport={"width": width, "height": height}, device_scale_factor=scale)
     errors: list[str] = []
     page.on("pageerror", lambda error: errors.append(str(error)[:200]))
+    # Упавший обработчик без очереди не показывает уведомления — только ответ
+    # 500 на /gradio_api/run/predict и трассировку в консоли сервера. Так
+    # прошла незамеченной ошибка выбора в галерее (KeyError: 'value').
+    page.on("response", lambda response: errors.append(f"HTTP {response.status} {response.url[-40:]}")
+            if response.status >= 500 else None)
     page.goto(url)
     page.wait_for_selector('button[role="tab"]', timeout=60000)
     page.wait_for_timeout(2500)
@@ -500,6 +505,35 @@ def scenario_send(browser, url, report: Report, fake: FakeGenerator) -> None:
     page.close()
 
 
+def scenario_references(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
+    """«Отправить в референсы» с генерации и с правки: лента референсов растёт."""
+    print("отправка в референсы:")
+    page, errors = fresh_page(browser, url)
+    for box in page.locator("textarea").all():
+        if box.is_visible():
+            box.fill("a gray square")
+            break
+    before = len(fake.requests)
+    click_text(page, "Сгенерировать")
+    fake.wait(before + 1)
+    page.wait_for_function("() => document.querySelector('.preview img')", timeout=20000)
+    click_text(page, "Отправить в референсы")
+    page.wait_for_function("() => document.querySelectorAll('.qs-strip .thumbnail-item').length === 1", timeout=20000)
+    report.check(True, "результат генерации — в референсах")
+
+    open_tab(page, 1)
+    load_into_painter(page, sample_image(samples, 1024, 768))
+    apply_edit(page)
+    fake.wait(before + 2)
+    page.wait_for_function("() => document.querySelector('.qs-slot-result .preview img')", timeout=20000)
+    click_text(page, "Отправить в референсы")
+    page.wait_for_function("() => document.querySelectorAll('.qs-strip .thumbnail-item').length === 2", timeout=20000)
+    active = page.locator('button[role="tab"][aria-selected="true"]').inner_text()
+    report.check(active == "Генерация", f"с правки — переход на генерацию: {active}")
+    report.check(not errors, "без ошибок страницы" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
 def scenario_performance(browser, url, report: Report, fake: FakeGenerator) -> None:
     """Секция «Производительность»: состояние, точность, SageAttention на лету."""
     print("производительность:")
@@ -567,7 +601,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Проверка интерфейса в браузере")
     parser.add_argument("--port", type=int, default=7899)
     parser.add_argument("--only", nargs="*", default=None,
-                        help="layout language painter annotation outpaint latency paste gallery send performance secret")
+                        help="layout language painter annotation outpaint latency paste gallery send references performance secret")
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
@@ -609,6 +643,7 @@ def main() -> int:
         "paste": lambda b, r: scenario_paste(b, url, r),
         "gallery": lambda b, r: scenario_gallery(b, url, r, fake, samples),
         "send": lambda b, r: scenario_send(b, url, r, fake),
+        "references": lambda b, r: scenario_references(b, url, r, fake, samples),
         "performance": lambda b, r: scenario_performance(b, url, r, fake),
         "secret": lambda b, r: scenario_secret(b, url, r),
     }

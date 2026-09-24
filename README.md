@@ -68,7 +68,8 @@ on, the prompt is first rewritten by your language model. **Rewrite now**
 shows the rewritten text before you generate, so you can review or edit it.
 Whatever is in the *Rewritten prompt* box is what the model receives.
 **Send to editor** puts the selected result into the mask brush and opens the
-Edit tab.
+Edit tab; **Send to references** adds it to the reference images. Both buttons
+also sit under the Edit tab's result.
 
 ![Generate tab: a short prompt, its AI-boosted rewrite and the result](docs/images/generate.webp)
 

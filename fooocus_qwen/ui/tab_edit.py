@@ -101,9 +101,31 @@ def gallery_path(item) -> str | None:
     return str(item) if item else None
 
 
-def remember_selection(event: gr.SelectData) -> str | None:
+def selected_path(produced, event: gr.EventData) -> str | None:
+    """Путь картинки, выбранной в галерее, — и при неполных данных события.
+
+    Принимается ``gr.EventData``, а не ``gr.SelectData``, и это обход ошибки
+    Gradio 6.5.1. Когда галерея открывает картинку сама (``selected_index``
+    — так результат показывается крупно), она шлёт событие выбора с одним
+    индексом, без поля ``value``, а конструктор ``SelectData`` читает
+    ``data["value"]`` и падает раньше обработчика: ``KeyError: 'value'`` после
+    каждой генерации. Здесь значение берётся из события, если оно есть, а
+    иначе — по индексу из самой галереи.
+    """
+    data = getattr(event, "_data", None) or {}
+    path = gallery_path(data.get("value"))
+    if path:
+        return path
+    index = data.get("index")
+    items = list(produced or [])
+    if isinstance(index, int) and 0 <= index < len(items):
+        return gallery_path(items[index])
+    return None
+
+
+def remember_selection(produced, event: gr.EventData) -> str | None:
     """Путь картинки, которую выбрали в галерее результата."""
-    return gallery_path(event.value)
+    return selected_path(produced, event)
 
 
 def chosen_path(produced, selected) -> str | None:
@@ -207,10 +229,16 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         ),
                         label=("Результат", "Result"),
                     )
-                    send_back = localizer.bind(
-                        gr.Button(pick("send_to_edit", lang)),
-                        value=("Отправить в редактор", "Send to editor"),
-                    )
+                    with gr.Row():
+                        send_back = localizer.bind(
+                            gr.Button(pick("send_to_edit", lang)),
+                            value=("Отправить в редактор", "Send to editor"),
+                        )
+                        # Связывается в app.py: референсы — на вкладке генерации.
+                        send_to_refs = localizer.bind(
+                            gr.Button(pick("send_to_references", lang)),
+                            value=("Отправить в референсы", "Send to references"),
+                        )
 
             with gr.Row(elem_classes=[layout.PROMPT_BAR, layout.SLOT_PROMPT]):
                 prompt = localizer.bind(
@@ -506,8 +534,15 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         js=flush,
     )
     stop_button.click(stop, language, status, queue=False)
-    result.select(remember_selection, None, selected, queue=False)
+    result.select(remember_selection, result, selected, queue=False)
     send_back.click(take_back, [result, selected, language], [editor, status])
     mode.change(show_region, mode, editor, queue=False)
 
-    return {"editor": editor, "result": result, "prompt": prompt, "status": status}
+    return {
+        "editor": editor,
+        "result": result,
+        "selected": selected,
+        "send_to_references": send_to_refs,
+        "prompt": prompt,
+        "status": status,
+    }

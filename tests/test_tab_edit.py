@@ -220,3 +220,18 @@ def test_send_to_editor_fills_the_brush_and_opens_the_edit_tab(tmp_path, painter
 
     _value, _edit, generate_status, tabs = tab_edit.send_to_editor([], None, "en")
     assert generate_status and "Nothing" in generate_status, "пустой результат — сообщение там, где человек остался"
+
+
+def test_a_selection_event_without_a_value_is_resolved_by_index(tmp_path):
+    """Gradio 6.5.1: открывая картинку сама (selected_index), галерея шлёт событие
+    с одним индексом — gr.SelectData на нём падал с KeyError: 'value'."""
+    import gradio as gr
+
+    from fooocus_qwen.ui import tab_edit
+
+    first, second = _saved(tmp_path, "a.png", "red"), _saved(tmp_path, "b.png", "blue")
+    produced = [(first, None), (second, None)]
+    assert tab_edit.selected_path(produced, gr.EventData(None, {"index": 1})) == second
+    assert tab_edit.selected_path(produced, gr.EventData(None, {"index": 7})) is None
+    full = {"index": 0, "value": {"image": {"path": first}, "caption": None}}
+    assert tab_edit.selected_path(produced, gr.EventData(None, full)) == first

@@ -124,6 +124,7 @@ T: dict[str, tuple[str, str]] = {
     "outpaint_amount": ("Насколько расширить", "How far to expand"),
     "apply_edit": ("Применить правку", "Apply edit"),
     "send_to_edit": ("Отправить в редактор", "Send to editor"),
+    "send_to_references": ("Отправить в референсы", "Send to references"),
     "llm_check": ("Проверить связь", "Check connection"),
     "refresh": ("Обновить", "Refresh"),
     "open_folder": ("Открыть папку", "Open folder"),
@@ -229,6 +230,14 @@ MESSAGES: dict[str, tuple[str, str]] = {
         "Preparing: encoding the prompt and condition images. The first step takes longest…",
     ),
     "references_cleared": ("Референсы очищены", "References cleared"),
+    "reference_sent": (
+        "Картинка добавлена в референсы: {count} из {total}.",
+        "Image added to the references: {count} of {total}.",
+    ),
+    "references_full": (
+        "Референсов уже {total} — больше модель не принимает. Уберите лишние кнопкой «Очистить референсы».",
+        "There are already {total} references — the model takes no more. Remove some with “Clear references”.",
+    ),
     "reference_scale_chosen": (
         "Детальность референсов: {scale} (выбрано автоматически).",
         "Reference detail: {scale} (chosen automatically).",

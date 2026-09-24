@@ -142,3 +142,73 @@ def test_save_rejects_an_empty_name(monkeypatch, tmp_path):
 
     handlers["save"]("   ", "промт", "", [], "LowQuality", "1:1", -1, 1.0, "ru")
     assert not list(tmp_path.glob("*.json"))
+
+
+# --- «Отправить в референсы» ---------------------------------------------------
+
+
+class _Upload:
+    """Файл так, как его отдаёт gr.File: объект с полем name."""
+
+    def __init__(self, path):
+        self.name = str(path)
+
+
+def _png(tmp_path, name, colour, size=(20, 10)):
+    from PIL import Image
+
+    path = tmp_path / name
+    Image.new("RGB", size, colour).save(path)
+    return path
+
+
+def test_a_sent_result_is_appended_after_the_uploaded_files(tmp_path):
+    uploaded = _Upload(_png(tmp_path, "u.png", "red"))
+    result = str(_png(tmp_path, "r.png", "blue", size=(30, 12)))
+    sent, images, _gallery, box, _clear, status = tab_generate.send_to_references(
+        [(result, None)], None, [uploaded], [], "en"
+    )
+    assert len(sent) == 1 and len(images) == 2
+    assert images[0].size == (20, 10) and images[1].size == (30, 12), "загруженные — первыми, присланные — следом"
+    assert box["open"] is True
+    assert "2 of 10" in status
+
+
+def test_uploading_more_files_keeps_what_was_sent(tmp_path):
+    """Виджет загрузки отдаёт весь свой набор: присланное не должно из-за этого пропасть."""
+    handlers, _engine = _handlers_with_references(tmp_path)
+    from PIL import Image
+
+    sent = [Image.new("RGB", (8, 8), "green")]
+    images, *_rest = handlers["add_references"]([_Upload(_png(tmp_path, "u.png", "red"))], sent, "en")
+    assert len(images) == 2 and images[1].size == (8, 8)
+
+
+def test_the_eleventh_reference_is_refused(tmp_path):
+    from PIL import Image
+
+    result = str(_png(tmp_path, "r.png", "blue"))
+    sent = [Image.new("RGB", (8, 8)) for _ in range(tab_generate.MAX_REFERENCES)]
+    outputs = tab_generate.send_to_references([(result, None)], None, [], sent, "en")
+    assert "10" in outputs[-1] and "no more" in outputs[-1]
+    assert all(value == {"__type__": "update"} for value in outputs[:5]), "ничего не меняется"
+
+
+def test_nothing_to_send_says_so(tmp_path):
+    outputs = tab_generate.send_to_references([], None, [], [], "en")
+    assert "Nothing" in outputs[-1]
+
+
+def test_sending_from_the_edit_tab_opens_the_generate_tab(tmp_path):
+    from fooocus_qwen.ui import layout
+
+    result = str(_png(tmp_path, "r.png", "blue"))
+    *_outputs, tabs = tab_generate.send_reference_from_edit([(result, None)], None, [], [], "en")
+    assert tabs.selected == layout.TAB_GENERATE
+
+
+def _handlers_with_references(tmp_path):
+    studio = Studio(config.AppConfig())
+    with gr.Blocks() as demo:
+        tab_generate.build(studio, Localizer("en"))
+    return {fn.fn.__name__: fn.fn for fn in demo.fns.values()}, studio

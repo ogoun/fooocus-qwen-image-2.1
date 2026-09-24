@@ -26,7 +26,7 @@ from ..storage import gallery
 from . import layout
 from .i18n import Localizer, pick, say, sentences
 from .state import GPU_CONCURRENCY_ID, describe_failure
-from .tab_edit import remember_selection
+from .tab_edit import chosen_path, remember_selection
 
 LOGGER = logging.getLogger(__name__)
 
@@ -73,6 +73,58 @@ def _captions(images, lang: str) -> list[str]:
     ]
 
 
+def _shown_references(images, lang: str) -> tuple:
+    """Лента, секция, кнопка очистки и строка состояния для списка референсов.
+
+    Секция раскрывается сама, когда есть что показать: подписи с тегами
+    ``<imageN>`` бесполезны, если до них надо доклацаться.
+    """
+    captioned = list(zip(images, _captions(images, lang)))
+    return (
+        gr.update(value=captioned, visible=bool(images)),
+        gr.update(open=bool(images)),
+        gr.update(visible=bool(images)),
+        say("references_counted", lang, count=len(images), total=MAX_REFERENCES),
+    )
+
+
+def send_to_references(produced, selected, files, sent, lang: str) -> tuple:
+    """«Отправить в референсы»: выбранная картинка результата — в конец списка.
+
+    Выходы: присланные, все референсы, лента, секция, кнопка очистки, строка
+    состояния вкладки генерации. Кнопка есть и на правке (связывается в
+    app.py) — тогда к выходам добавляется переход на эту вкладку.
+    """
+    from PIL import Image as PILImage
+
+    path = chosen_path(produced, selected)
+    sent = list(sent or [])
+    uploaded = len(files or [])
+    if path is None:
+        unchanged = (gr.update(),) * 5
+        return (*unchanged, say("nothing_to_send", lang))
+    if uploaded + len(sent) >= MAX_REFERENCES:
+        unchanged = (gr.update(),) * 5
+        return (*unchanged, say("references_full", lang, total=MAX_REFERENCES))
+    with PILImage.open(path) as opened:
+        sent.append(opened.convert("RGB"))
+    uploaded_images = [PILImage.open(item.name).convert("RGB") for item in (files or [])]
+    images = (uploaded_images + sent)[:MAX_REFERENCES]
+    gallery, box, clear, _counted = _shown_references(images, lang)
+    return (sent, images, gallery, box, clear, say("reference_sent", lang, count=len(images), total=MAX_REFERENCES))
+
+
+def send_reference_from_edit(produced, selected, files, sent, lang: str) -> tuple:
+    """То же с вкладки правки — и переход на генерацию, где лежат референсы.
+
+    Переход делается всегда, в том числе при отказе («нечего отправлять»,
+    «референсов уже десять»): сообщение пишется в строку состояния
+    генерации, и без перехода человек его бы не увидел.
+    """
+    outputs = send_to_references(produced, selected, files, sent, lang)
+    return (*outputs, gr.Tabs(selected=layout.TAB_GENERATE))
+
+
 def build(studio, localizer: Localizer, language=None) -> dict:
     """Собирает вкладку.
 
@@ -89,6 +141,12 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         language = gr.State(lang)
 
     references = gr.State([])
+    # Картинки, присланные кнопкой «Отправить в референсы» — с этой вкладки или
+    # с правки. Отдельно от виджета загрузки: тот в каждом событии отдаёт весь
+    # свой набор файлов, и список референсов пересобирается из него заново —
+    # присланное, дописанное в общий список, пропало бы при следующей загрузке.
+    # Итоговый список — загруженные файлы, затем присланные.
+    sent_references = gr.State([])
     # Исходный текст, по которому составлен переписанный промт. Нужен, чтобы
     # заметить, что промт с тех пор правили, а в модель по-прежнему уйдёт
     # старая переписка.
@@ -118,10 +176,15 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             )
             # Результат — в кисть правки, с переходом на её вкладку. Связывается
             # в app.py: вкладка правки собирается после этой.
-            send_to_edit = localizer.bind(
-                gr.Button(pick("send_to_edit", lang)),
-                value=("Отправить в редактор", "Send to editor"),
-            )
+            with gr.Row():
+                send_to_edit = localizer.bind(
+                    gr.Button(pick("send_to_edit", lang)),
+                    value=("Отправить в редактор", "Send to editor"),
+                )
+                send_to_refs = localizer.bind(
+                    gr.Button(pick("send_to_references", lang)),
+                    value=("Отправить в референсы", "Send to references"),
+                )
             selected = gr.State(None)
 
             with gr.Row(elem_classes=[layout.PROMPT_BAR]):
@@ -330,7 +393,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     # --- обработчики ---
 
-    def add_references(files, lang):
+    def add_references(files, sent, lang):
         """Пересобирает список референсов из виджета целиком.
 
         Виджет ``gr.File(file_count="multiple")`` в каждом событии ``change``
@@ -343,24 +406,16 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         """
         from PIL import Image as PILImage
 
-        images = [PILImage.open(item.name).convert("RGB") for item in (files or [])[:MAX_REFERENCES]]
-        captioned = list(zip(images, _captions(images, lang)))
-        # Секция раскрывается сама, когда есть что показать: подписи с
-        # тегами `<imageN>` бесполезны, если до них надо доклацаться.
-        return (
-            images,
-            gr.update(value=captioned, visible=bool(images)),
-            gr.update(open=bool(images)),
-            gr.update(visible=bool(images)),
-            say("references_counted", lang, count=len(images), total=MAX_REFERENCES),
-        )
+        uploaded = [PILImage.open(item.name).convert("RGB") for item in (files or [])]
+        images = (uploaded + list(sent or []))[:MAX_REFERENCES]
+        return (images, *_shown_references(images, lang))
 
     def clear_references(lang):
         # Сбрасываем и сам виджет: иначе следующее добавление файла принесёт
         # с собой прежний набор, который виджет продолжает хранить внутри себя.
         # Секция закрывается: показывать в ней больше нечего.
         return (
-            [], gr.update(value=[], visible=False), None, gr.update(open=False),
+            [], [], gr.update(value=[], visible=False), None, gr.update(open=False),
             gr.update(visible=False), say("references_cleared", lang),
         )
 
@@ -544,13 +599,13 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     reference_upload.change(
         add_references,
-        [reference_upload, language],
+        [reference_upload, sent_references, language],
         [references, reference_gallery, reference_box, reference_clear, status],
     )
     reference_clear.click(
         clear_references,
         language,
-        [references, reference_gallery, reference_upload, reference_box, reference_clear, status],
+        [references, sent_references, reference_gallery, reference_upload, reference_box, reference_clear, status],
     )
     boost_now.click(
         rewrite,
@@ -579,9 +634,18 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     saved.change(load, [saved, language], [prompt, negative, styles, quality, ratio, seed, cfg, status])
     delete_button.click(delete, [saved, language], [saved, status])
 
-    result.select(remember_selection, None, selected, queue=False)
+    result.select(remember_selection, result, selected, queue=False)
+    reference_targets = [sent_references, references, reference_gallery, reference_box, reference_clear, status]
+    send_to_refs.click(
+        send_to_references,
+        [result, selected, reference_upload, sent_references, language],
+        reference_targets,
+    )
 
     return {
+        "reference_targets": reference_targets,
+        "reference_upload": reference_upload,
+        "sent_references": sent_references,
         "send_to_edit": send_to_edit,
         "selected": selected,
         "prompt": prompt,

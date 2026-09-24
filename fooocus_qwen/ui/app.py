@@ -127,6 +127,16 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
                 [generate_components["result"], generate_components["selected"], language],
                 [edit_components["editor"], edit_components["status"], generate_components["status"], tabs],
             )
+            # Результат правки — в референсы генерации, с переходом туда: список
+            # референсов и сообщение о нём живут на вкладке генерации.
+            edit_components["send_to_references"].click(
+                tab_generate.send_reference_from_edit,
+                [
+                    edit_components["result"], edit_components["selected"],
+                    generate_components["reference_upload"], generate_components["sent_references"], language,
+                ],
+                [*generate_components["reference_targets"], tabs],
+            )
 
             gallery_tab = localizer.bind(
                 gr.Tab(pick("tab_gallery", cfg.lang), id=layout.TAB_GALLERY),
