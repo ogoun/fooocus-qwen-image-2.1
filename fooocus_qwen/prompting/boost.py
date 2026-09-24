@@ -34,6 +34,12 @@ _DESCRIBE_FILE = "system_prompt_describe.txt"
 
 _JSON_OBJECT = re.compile(r"\{.*\}", re.DOTALL)
 
+# Рассуждения модели перед ответом. Официальные переписыватели Qwen-Image-2.1
+# (PE-T2I, PE-I2I) думают в блоке <think> и только потом выдают JSON. Обычно
+# сервер уносит рассуждения в отдельное поле, но не всякий: оставшись в тексте,
+# они путали бы поиск JSON — в рассуждениях тоже бывают фигурные скобки.
+_THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
+
 # Иероглифы и текст в кавычках — для проверки языка описания.
 _CJK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
 _QUOTED = re.compile(r'"[^"]*"|“[^”]*”|「[^」]*」|『[^』]*』')
@@ -79,7 +85,7 @@ def _clean(value: object) -> str | None:
 
 
 def parse_response(text: str) -> BoostResult:
-    raw = text.strip()
+    raw = _THINK.sub("", text).strip()
     if not raw:
         return BoostResult(prompt="", raw=text)
 

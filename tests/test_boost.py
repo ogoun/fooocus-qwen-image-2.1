@@ -201,3 +201,15 @@ def test_the_blind_note_goes_only_to_a_request_without_its_images(tmp_path):
     assert not without_images["images"] and without_images["user"].endswith(boost.BLIND_NOTE)
     assert not t2i["images"] and boost.BLIND_NOTE not in t2i["user"], "переписывателю T2I картинки и не нужны"
 
+
+def test_reasoning_before_the_answer_is_ignored():
+    """Официальные переписыватели PE думают в <think> перед JSON — и в
+    рассуждениях бывают фигурные скобки, которые путали бы поиск ответа."""
+    text = (
+        '<think>The user wants {a cat}; ratio maybe {"wh_ratio": "1:1"}?</think>\n'
+        '{"rewritten_prompt": "a ginger cat on a windowsill", "wh_ratio": "3:2"}'
+    )
+    result = boost.parse_response(text)
+    assert result.prompt == "a ginger cat on a windowsill"
+    assert result.wh_ratio == "3:2"
+

@@ -4,6 +4,21 @@
 
 ## 2026-09-24
 
+### Исследование: turbo-дистиллят, SageAttention, INT8
+
+По ссылкам заказчика (R9700, Unsloth GGUF, PE-модели, RefMod) и найденному
+при поиске дистилляту Viggle/Qwen-Image-2.1-viggle-turbo. Разбор:
+`docs/research/2026-09-24-uskorenie-turbo-sage-int8.md`.
+
+- Turbo (6 шагов): ×2.1 на LowQuality, ×3.8 на 1536², ×2 на правке при
+  сопоставимом качестве (`tools/experiments/turbo.py`).
+- SageAttention 2.2 (сборка под Windows + `triton-windows`): −15…25 %
+  времени; INT8-веса трансформера (torchao): −6.6 ГиБ видеопамяти, INT8 GEMM
+  на RTX 3090 не быстрее bf16 (`tools/experiments/sage_int8.py`).
+- В приложение пока ничего не включено: решения за заказчиком.
+- Разбор ответа AI буста отбрасывает блок `<think>`: официальные
+  переписыватели PE-T2I/PE-I2I рассуждают в нём перед JSON.
+
 ### Документация для GitHub: README на английском, снимки интерфейса
 
 - `README.md` — на английском, полноценный: возможности, обзор каждой
