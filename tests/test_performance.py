@@ -290,3 +290,22 @@ def test_staging_moves_int8_weights_together_with_their_data():
     staged.to_host()
     assert layer.weight.qdata.device.type == "cpu"
     assert staged.nbytes < 64 * 32 * 2 + 32 * 2, "INT8 считается по хранимым байтам, а не как bf16"
+
+
+def test_only_the_irrelevant_merge_warning_is_silenced(tmp_path):
+    """peft предупреждает, что merge() с INT8-слоями невозможен, — мы его и не
+    зовём. Это сообщение заглушается, любое другое остаётся видимым."""
+    import warnings as warnings_module
+
+    class NoisyPipe(_Pipe):
+        def load_lora_weights(self, path, weight_name, adapter_name):
+            warnings_module.warn("TorchaoLoraLinear was instantiated without `get_apply_tensor_subclass`.", stacklevel=2)
+            warnings_module.warn("something else worth seeing", stacklevel=2)
+            super().load_lora_weights(path, weight_name, adapter_name)
+
+    adapter = turbo.TurboAdapter(NoisyPipe(), _Residency(), _turbo_dir(tmp_path))
+    with warnings_module.catch_warnings(record=True) as caught:
+        warnings_module.simplefilter("always")
+        adapter.activate(True)
+    messages = [str(item.message) for item in caught]
+    assert messages == ["something else worth seeing"]

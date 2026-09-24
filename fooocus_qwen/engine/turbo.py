@@ -27,6 +27,7 @@ Viggle выпустили к нашей модели LoRA-адаптер, обу
 from __future__ import annotations
 
 import logging
+import warnings
 from pathlib import Path
 
 from . import fetch
@@ -65,12 +66,22 @@ class TurboAdapter:
             raise FileNotFoundError(f"Нет весов turbo в {self._dir}: {', '.join(missing)}")
         LOGGER.info("Подключаю адаптер turbo из %s", self._dir)
         self._base_scheduler = self._pipe.scheduler
-        self._residency.restage_transformer(
-            lambda _transformer: self._pipe.load_lora_weights(
-                str(self._dir), weight_name=fetch.TURBO_LORA, adapter_name=ADAPTER
-            )
-        )
+        self._residency.restage_transformer(self._attach)
         self._turbo_scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(str(self._dir), subfolder="scheduler")
+
+    def _attach(self, _transformer) -> None:
+        """Подключает адаптер к трансформеру, не сливая его с весами.
+
+        На INT8-трансформере peft предупреждает, что ``merge()``/``unmerge()``
+        с такими слоями невозможны. Нам они и не нужны: адаптер намеренно
+        держится отдельно и включается и выключается на лету (слияние в bf16
+        к тому же необратимо портит точность). Предупреждение заглушается
+        точечно — только это сообщение и только на время подключения, —
+        иначе оно пугало бы в консоли при каждом первом выборе Turbo.
+        """
+        with warnings.catch_warnings():
+            warnings.filterwarnings("ignore", message=r"TorchaoLoraLinear was instantiated without")
+            self._pipe.load_lora_weights(str(self._dir), weight_name=fetch.TURBO_LORA, adapter_name=ADAPTER)
 
     def activate(self, enabled: bool) -> None:
         """Включает turbo для следующего вызова пайплайна или выключает его."""
