@@ -474,6 +474,32 @@ def scenario_gallery(browser, url, report: Report, fake: FakeGenerator, samples:
     page.close()
 
 
+def scenario_send(browser, url, report: Report, fake: FakeGenerator) -> None:
+    """Генерация → «Отправить в редактор»: картинка в кисти, вкладка правки открыта."""
+    print("отправка результата генерации в редактор:")
+    page, errors = fresh_page(browser, url)
+    for box in page.locator("textarea").all():
+        if box.is_visible():
+            box.fill("a gray square")
+            break
+    before = len(fake.requests)
+    click_text(page, "Сгенерировать")
+    fake.wait(before + 1)
+    page.wait_for_function("() => document.querySelector('.preview img')", timeout=20000)
+    # Подпись кнопки локализуется под язык браузера: проверяются обе. Что
+    # селектор её вообще находит, проверено на голой галерее Gradio с кнопками
+    # по умолчанию — там «Поделиться» есть.
+    share = 'button[aria-label="Share"], button[aria-label="Поделиться"]'
+    report.check(page.locator(share).count() == 0, "у галерей нет кнопки «поделиться»")
+    click_text(page, "Отправить в редактор")
+    page.wait_for_function(f"() => {API}.state().width === 256", timeout=20000)
+    active = page.locator('button[role="tab"][aria-selected="true"]').inner_text()
+    report.check(active == "Редактирование", f"открыта вкладка правки: {active}")
+    report.check(painter_state(page)["height"] == 256, "картинка генерации — в кисти")
+    report.check(not errors, "без ошибок страницы" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
 def scenario_performance(browser, url, report: Report, fake: FakeGenerator) -> None:
     """Секция «Производительность»: состояние, точность, SageAttention на лету."""
     print("производительность:")
@@ -541,7 +567,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Проверка интерфейса в браузере")
     parser.add_argument("--port", type=int, default=7899)
     parser.add_argument("--only", nargs="*", default=None,
-                        help="layout language painter annotation outpaint latency paste gallery performance secret")
+                        help="layout language painter annotation outpaint latency paste gallery send performance secret")
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
@@ -582,6 +608,7 @@ def main() -> int:
         "latency": lambda b, r: scenario_latency(b, url, r, samples),
         "paste": lambda b, r: scenario_paste(b, url, r),
         "gallery": lambda b, r: scenario_gallery(b, url, r, fake, samples),
+        "send": lambda b, r: scenario_send(b, url, r, fake),
         "performance": lambda b, r: scenario_performance(b, url, r, fake),
         "secret": lambda b, r: scenario_secret(b, url, r),
     }

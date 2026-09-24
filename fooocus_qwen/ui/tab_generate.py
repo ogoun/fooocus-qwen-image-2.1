@@ -26,6 +26,7 @@ from ..storage import gallery
 from . import layout
 from .i18n import Localizer, pick, say, sentences
 from .state import GPU_CONCURRENCY_ID, describe_failure
+from .tab_edit import remember_selection
 
 LOGGER = logging.getLogger(__name__)
 
@@ -111,9 +112,17 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     # изображению — а это значение по умолчанию — половину
                     # ширины холста, и вторая половина стояла пустой.
                     preview=True,
+                    buttons=layout.GALLERY_BUTTONS,
                 ),
                 label=("Результат", "Result"),
             )
+            # Результат — в кисть правки, с переходом на её вкладку. Связывается
+            # в app.py: вкладка правки собирается после этой.
+            send_to_edit = localizer.bind(
+                gr.Button(pick("send_to_edit", lang)),
+                value=("Отправить в редактор", "Send to editor"),
+            )
+            selected = gr.State(None)
 
             with gr.Row(elem_classes=[layout.PROMPT_BAR]):
                 prompt = localizer.bind(
@@ -173,6 +182,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         object_fit="contain",
                         show_label=False,
                         interactive=False,
+                        buttons=layout.GALLERY_BUTTONS,
                         # Пустая лента — только место: видна, когда есть что показать.
                         visible=False,
                     ),
@@ -569,7 +579,11 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     saved.change(load, [saved, language], [prompt, negative, styles, quality, ratio, seed, cfg, status])
     delete_button.click(delete, [saved, language], [saved, status])
 
+    result.select(remember_selection, None, selected, queue=False)
+
     return {
+        "send_to_edit": send_to_edit,
+        "selected": selected,
         "prompt": prompt,
         "boosted": boosted,
         "negative": negative,

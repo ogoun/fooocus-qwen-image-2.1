@@ -120,6 +120,13 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
             )
             with edit_tab:
                 edit_components = tab_edit.build(studio, localizer, language)
+            # Результат генерации — в кисть правки, с переходом на её вкладку.
+            # Здесь, а не во вкладке генерации: кисть и вкладки появляются позже.
+            generate_components["send_to_edit"].click(
+                tab_edit.send_to_editor,
+                [generate_components["result"], generate_components["selected"], language],
+                [edit_components["editor"], edit_components["status"], generate_components["status"], tabs],
+            )
 
             gallery_tab = localizer.bind(
                 gr.Tab(pick("tab_gallery", cfg.lang), id=layout.TAB_GALLERY),

@@ -63,6 +63,11 @@ SLOT_EDITOR = "qs-slot-editor"
 SLOT_PROMPT = "qs-slot-prompt"
 SLOT_ACTIONS = "qs-slot-actions"
 SLOT_RESULT = "qs-slot-result"
+
+# Кнопки в углу галерей. Без «share»: она публикует картинку в обсуждения
+# Hugging Face Spaces и работает только там — у локального приложения ей
+# некуда отправлять, и нажатие кончалось ошибкой.
+GALLERY_BUTTONS: list[str] = ["download", "fullscreen"]
 PROMPT_BAR = "qs-bar"
 DROP_ZONE = "qs-drop"
 STATUS = "qs-status"

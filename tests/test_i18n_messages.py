@@ -176,7 +176,7 @@ def test_every_status_line_a_user_can_reach_without_the_model_is_english(monkeyp
 
     # вкладка «Редактирование»
     _assert_english(handlers["expand_canvas"](None, ["right"], 0.5, "en")[2], "расширение без картинки")
-    _assert_english(handlers["take_back"](None, "en")[1], "пустая отправка в редактор")
+    _assert_english(handlers["take_back"](None, None, "en")[1], "пустая отправка в редактор")
 
     # вкладка «Настройки»
     _assert_english(handlers["store_endpoint"]("192.0.2.10:8000", "", "en")[1], "сохранение адреса")

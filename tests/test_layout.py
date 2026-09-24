@@ -151,3 +151,30 @@ def test_no_variables_are_redefined_inside_media_queries():
             "внутри @media переопределяется :root — Gradio это правило потеряет; "
             "переопределяйте сам класс"
         )
+
+
+def test_no_gallery_offers_the_share_button():
+    """«Share» публикует в обсуждения Hugging Face Spaces и работает только там;
+    у локального приложения нажатие кончалось ошибкой."""
+    import gradio as gr
+
+    from fooocus_qwen.ui import app
+
+    demo = app.build(config.AppConfig())
+    galleries = [block for block in demo.blocks.values() if isinstance(block, gr.Gallery)]
+    assert len(galleries) >= 4
+    for gallery in galleries:
+        assert "share" not in (gallery.buttons or []), gallery.label
+
+
+def test_the_generate_result_can_be_sent_to_the_editor():
+    """Кнопка на вкладке генерации ведёт в кисть и переключает вкладку."""
+    import gradio as gr
+
+    from fooocus_qwen.ui import app, tab_edit
+
+    demo = app.build(config.AppConfig())
+    functions = [fn for fn in demo.fns.values() if fn.fn is tab_edit.send_to_editor]
+    assert len(functions) == 1
+    outputs = functions[0].outputs
+    assert any(isinstance(block, gr.Tabs) for block in outputs)

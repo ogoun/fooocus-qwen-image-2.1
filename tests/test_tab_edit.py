@@ -186,3 +186,37 @@ def test_an_edit_without_a_prompt_is_not_started(prompt, painter_value):
 
     assert paths == [] and fake.captured is None
     assert "Промт" in message and "прозрачной" in message
+
+
+# --- картинку результата — в кисть -------------------------------------------
+
+
+def _saved(tmp_path, name, colour):
+    path = tmp_path / name
+    Image.new("RGB", (16, 12), colour).save(path)
+    return str(path)
+
+
+def test_the_chosen_result_is_sent_not_always_the_first(tmp_path):
+    from fooocus_qwen.ui import tab_edit
+
+    first, second = _saved(tmp_path, "a.png", "red"), _saved(tmp_path, "b.png", "blue")
+    produced = [(first, None), (second, None)]
+    assert tab_edit.chosen_path(produced, second) == second
+    assert tab_edit.chosen_path(produced, None) == first
+    assert tab_edit.chosen_path(produced, str(tmp_path / "old.png")) == first, "выбор из прошлого результата устарел"
+    assert tab_edit.chosen_path([], second) is None
+
+
+def test_send_to_editor_fills_the_brush_and_opens_the_edit_tab(tmp_path, painter_value):
+    from fooocus_qwen.ui import layout, tab_edit
+    from fooocus_qwen.ui.painter import payload
+
+    path = _saved(tmp_path, "r.png", "green")
+    value, edit_status, generate_status, tabs = tab_edit.send_to_editor([(path, None)], None, "en")
+    assert payload.decode(value).as_editor_value()["background"].size == (16, 12)
+    assert "editor" in edit_status.lower()
+    assert tabs.selected == layout.TAB_EDIT
+
+    _value, _edit, generate_status, tabs = tab_edit.send_to_editor([], None, "en")
+    assert generate_status and "Nothing" in generate_status, "пустой результат — сообщение там, где человек остался"

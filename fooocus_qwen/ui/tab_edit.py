@@ -90,6 +90,59 @@ def collect(value, mode: str) -> tuple[Image.Image | None, Image.Image | None]:
     return background.convert("RGBA"), mask
 
 
+def gallery_path(item) -> str | None:
+    """Путь картинки из значения галереи: строка, пара (путь, подпись) или словарь."""
+    if item is None:
+        return None
+    if isinstance(item, (list, tuple)):
+        item = item[0] if item else None
+    if isinstance(item, dict):
+        item = (item.get("image") or {}).get("path") if isinstance(item.get("image"), dict) else item.get("path")
+    return str(item) if item else None
+
+
+def remember_selection(event: gr.SelectData) -> str | None:
+    """Путь картинки, которую выбрали в галерее результата."""
+    return gallery_path(event.value)
+
+
+def chosen_path(produced, selected) -> str | None:
+    """Выбранная картинка результата, а если выбора нет или он устарел — первая.
+
+    Выбор устаревает с новой генерацией: запомненный путь относится к прошлому
+    результату. Сверка с текущим составом галереи решает это без отдельного
+    сброса — выбрана картинка, которой в галерее нет, значит, берём первую.
+    """
+    paths = [path for path in (gallery_path(item) for item in (produced or [])) if path]
+    if not paths:
+        return None
+    return selected if selected in paths else paths[0]
+
+
+def editor_value_for(path) -> str:
+    """Значение кисти с картинкой из файла: так её кладут туда галерея и кнопки результата."""
+    with Image.open(path) as opened:
+        return painter.encode(opened.convert("RGBA"))
+
+
+def send_to_editor(produced, selected, lang: str) -> tuple:
+    """Кнопка «Отправить в редактор» у результата генерации.
+
+    Выходы: кисть, строка состояния правки, строка состояния генерации,
+    вкладки. Сообщение об успехе — на вкладке правки, куда человек и
+    попадает; «нечего отправлять» — на генерации, где он остаётся.
+    """
+    path = chosen_path(produced, selected)
+    if path is None:
+        return gr.update(), gr.update(), say("nothing_to_send", lang), gr.update()
+    return (
+        editor_value_for(path),
+        say("sent_to_editor", lang),
+        gr.update(),
+        gr.Tabs(selected=layout.TAB_EDIT),
+    )
+
+
 def read_painter(raw, lang: str) -> tuple[dict | None, str | None]:
     """Значение кисти → словарь формы ``gr.ImageEditor`` и сообщение об ошибке.
 
@@ -149,6 +202,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                             # интерактивным (оно же вход «Отправить в
                             # редактор») и зазывал загрузить в него файл.
                             interactive=False,
+                            buttons=layout.GALLERY_BUTTONS,
                             elem_classes=[layout.PREVIEW, layout.BOARD],
                         ),
                         label=("Результат", "Result"),
@@ -414,14 +468,15 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         # для README). ``selected_index=0`` открывает первую картинку в просмотре.
         return gr.Gallery(value=paths, selected_index=0), sentences(message, edit_done)
 
-    def take_back(produced, lang):
-        if not produced:
+    # Какую картинку результата выбрали: «Отправить в редактор» берёт её, а не
+    # всегда первую (правка с несколькими результатами отдавала не ту).
+    selected = gr.State(None)
+
+    def take_back(produced, chosen, lang):
+        path = chosen_path(produced, chosen)
+        if path is None:
             return gr.update(), say("nothing_to_send", lang)
-        first = produced[0]
-        path = first[0] if isinstance(first, (list, tuple)) else first
-        with Image.open(path) as opened:
-            image = opened.convert("RGBA")
-        return painter.encode(image), say("sent_to_editor", lang)
+        return editor_value_for(path), say("sent_to_editor", lang)
 
     def show_region(mode_value):
         # Режим области меняет вид кисти: в «маске» пометки полупрозрачные и
@@ -451,7 +506,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         js=flush,
     )
     stop_button.click(stop, language, status, queue=False)
-    send_back.click(take_back, [result, language], [editor, status])
+    result.select(remember_selection, None, selected, queue=False)
+    send_back.click(take_back, [result, selected, language], [editor, status])
     mode.change(show_region, mode, editor, queue=False)
 
     return {"editor": editor, "result": result, "prompt": prompt, "status": status}

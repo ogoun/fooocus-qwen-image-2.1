@@ -22,15 +22,15 @@ import sys
 from pathlib import Path
 
 import gradio as gr
-from PIL import Image
 
 from .. import config
 from ..engine import presets
 from ..imaging import aspect as aspect_module
 from ..imaging import metadata
 from ..storage import gallery
-from . import layout, painter
+from . import layout
 from .i18n import Localizer, pick, say
+from .tab_edit import editor_value_for
 
 # Порядок обязан совпадать с порядком выходов кнопки «Восстановить» в build():
 # восстановление читает по этому же порядку значения из словаря параметров, а
@@ -184,6 +184,7 @@ def build(
                     elem_classes=[layout.BROWSE],
                     object_fit="contain",
                     interactive=False,
+                    buttons=layout.GALLERY_BUTTONS,
                     value=[str(path) for path in gallery.recent(config.OUTPUT_DIR)],
                 ),
                 label=("Галерея", "Gallery"),
@@ -253,9 +254,7 @@ def build(
     def send_to_editor(path, lang):
         if not path:
             return (gr.update(), say("gallery_pick", lang)) + _switch(None)
-        with Image.open(path) as opened:
-            image = opened.convert("RGBA")
-        return (painter.encode(image), say("sent_to_editor", lang)) + _switch(layout.TAB_EDIT)
+        return (editor_value_for(path), say("sent_to_editor", lang)) + _switch(layout.TAB_EDIT)
 
     restore_outputs = [
         generate_components["prompt"],
