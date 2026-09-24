@@ -145,3 +145,17 @@ def test_a_failed_rewrite_does_not_tick_the_box_or_move_the_source(monkeypatch, 
     assert box["value"] is False
     assert isinstance(source, dict), "источник обязан остаться прежним, а не смениться"
     assert "недоступен" in message
+
+
+# --- как результат доходит до экрана ---
+
+
+def test_the_result_opens_large_not_as_a_grid(monkeypatch, tmp_path):
+    """``preview=True`` действует только при первой загрузке: новое значение
+    возвращало галерею к сетке, и единственная картинка становилась
+    квадратной миниатюрой выше окна. Результат обязан открываться крупно."""
+    handlers, _engine, _studio = _handlers(monkeypatch, tmp_path)
+    shown, _status = _run(handlers, "рыжий кот", "", "", use_boost=False)
+    assert isinstance(shown, gr.Gallery)
+    assert shown.selected_index == 0
+    assert len(shown.value) == 1

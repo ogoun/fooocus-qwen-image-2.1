@@ -132,9 +132,13 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
                 )
             # Галерея обновляется при каждом открытии: новые картинки видны
             # сразу, без кнопки «Обновить», о которой надо было помнить.
-            gallery_tab.select(
-                gallery_components["refresh"], None, gallery_components["history"], queue=False
-            )
+            #
+            # Через очередь, а не ``queue=False``: без очереди Gradio 6.5.1
+            # строит ссылки на файлы в ответе от адреса вызова —
+            # ``/gradio_api/run/predict/gradio_api/file=…`` — и сервер отвечает
+            # на них 404. Галерея после первого же открытия вкладки показывала
+            # битые значки вместо миниатюр (tools/ui_check.py это теперь ловит).
+            gallery_tab.select(gallery_components["refresh"], None, gallery_components["history"])
 
             settings_tab = localizer.bind(
                 gr.Tab(pick("tab_settings", cfg.lang), id=layout.TAB_SETTINGS),

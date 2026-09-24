@@ -31,7 +31,7 @@ from ..imaging import masking, metadata, outpaint
 from ..prompting import boost as boost_module
 from ..storage import gallery
 from . import layout, painter
-from .i18n import Localizer, painter_labels, pick, say
+from .i18n import Localizer, painter_labels, pick, say, sentences
 from .state import GPU_CONCURRENCY_ID, describe_failure
 
 LOGGER = logging.getLogger(__name__)
@@ -324,6 +324,13 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         source, mask = collect(value, mode_value)
         if source is None:
             return [], say("upload_first", lang)
+        # Пустой промт — не «правь на своё усмотрение»: модель правки работает
+        # по инструкции, и без неё результат не определён. Хуже всего с
+        # расширением холста: новая площадь выходит прозрачной, с пурпуром
+        # декодера под альфой (увидено на снимках для README: человек,
+        # нажавший «Расширить» и «Применить», получал именно это).
+        if not (prompt_text or "").strip():
+            return [], say("edit_needs_prompt", lang)
 
         effective, message = prompt_text, ""
         if use_boost:
@@ -360,7 +367,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         # необъяснимую потерю детальности исходника.
         chosen = resolve_reference_scale(request)
         if chosen != request.preset.output_resolution:
-            message = f"{message} {say('reference_scale_chosen', lang, scale=chosen)}".strip()
+            message = sentences(message, say("reference_scale_chosen", lang, scale=chosen))
 
         def report(index: int, step: int, total: int) -> None:
             progress((step, total), desc=say("progress_edit", lang))
@@ -373,9 +380,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         ))
         produced, failure = studio.run_generation(request, lang, progress=report)
         if failure is not None:
-            return [], f"{message} {failure}".strip()
+            return [], sentences(message, failure)
         if not produced:
-            return [], f"{message} {say('edit_interrupted', lang)}".strip()
+            return [], sentences(message, say("edit_interrupted", lang))
 
         paths = []
         for item in produced:
@@ -393,9 +400,14 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         clipped = max((item.parameters.get("clipped_outside_pct", 0.0) for item in produced),
                       default=0.0)
         if clipped >= CLIPPED_WARNING_PCT:
-            edit_done = f"{edit_done} {say('edit_clipped', lang, share=clipped)}"
+            edit_done = sentences(edit_done, say("edit_clipped", lang, share=clipped))
 
-        return paths, f"{message} {edit_done}".strip()
+        # Результат открывается крупно, а не сеткой. ``preview=True`` у галереи
+        # действует только при первой загрузке страницы: при новом значении Gradio
+        # возвращается к сетке, и единственная картинка становилась квадратной
+        # миниатюрой выше окна — видна была средняя полоса кадра (найдено на снимках
+        # для README). ``selected_index=0`` открывает первую картинку в просмотре.
+        return gr.Gallery(value=paths, selected_index=0), sentences(message, edit_done)
 
     def take_back(produced, lang):
         if not produced:

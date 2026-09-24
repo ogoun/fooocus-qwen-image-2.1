@@ -170,3 +170,19 @@ def test_expand_canvas_without_sides_asks_to_choose_one(painter_value):
     update, mode, message = handlers["expand_canvas"](painter_value(*_editor_images()), [], 0.5, "ru")
     assert mode == gen.MASK_MASK
     assert message
+
+
+@pytest.mark.parametrize("prompt", ["", "   "])
+def test_an_edit_without_a_prompt_is_not_started(prompt, painter_value):
+    """Без инструкции модели правки нечего делать, а после расширения холста
+    пустой промт даёт прозрачную новую площадь — просим описать правку."""
+    fake = _FakeGenerator()
+    handlers, _studio = _build_handlers(_NoLoadStudio(config.AppConfig(), fake))
+
+    paths, message = handlers["run"](
+        painter_value(*_editor_images(painted=(8, 8, 24, 24))), prompt, False, gen.MASK_MASK,
+        config.AppConfig().preset, 8, 12, True, -1, "ru",
+    )
+
+    assert paths == [] and fake.captured is None
+    assert "Промт" in message and "прозрачной" in message

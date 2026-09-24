@@ -271,6 +271,15 @@ MESSAGES: dict[str, tuple[str, str]] = {
         "clipped it — the mask edge will show a seam. Clear “Keep pixels outside "
         "the mask” to accept the edit whole, or widen the mask.",
     ),
+    "edit_needs_prompt": (
+        "Опишите правку в поле «Промт»: модель правит изображение по инструкции, "
+        "без неё ей нечего делать. После расширения холста опишите всю картину "
+        "целиком — с пустым промтом новая площадь выходит прозрачной.",
+        "Describe the edit in the “Prompt” field: the model edits by instruction "
+        "and has nothing to do without one. After expanding the canvas, describe "
+        "the whole picture — with an empty prompt the new area comes out "
+        "transparent.",
+    ),
     "canvas_expanded": (
         "Холст расширен до {width}×{height}. В промте опишите всю желаемую картину "
         "целиком, а не действие: «продолжи сцену» даст прозрачную заливку. "
@@ -393,6 +402,22 @@ def say(key: str, lang: str, **values: Any) -> str:
         return key
     template = entry[0] if lang == "ru" else entry[1]
     return template.format(**values)
+
+
+_SENTENCE_END = (".", "!", "?", "…", ":")
+
+
+def sentences(*parts: str) -> str:
+    """Склеивает сообщения строки состояния в связный текст.
+
+    Строку состояния собирают из нескольких сообщений: «AI буст выполнен»,
+    «Детальность референсов…», «Готово. Сиды…», сводка памяти. У каждого
+    своя пунктуация, и склейка пробелом давала «AI boost done Done. Seeds…».
+    Здесь пустые части отбрасываются, а каждая завершается точкой, если не
+    кончается знаком препинания сама.
+    """
+    cleaned = [part.strip() for part in parts if part and part.strip()]
+    return " ".join(part if part.endswith(_SENTENCE_END) else part + "." for part in cleaned)
 
 
 class Localizer:

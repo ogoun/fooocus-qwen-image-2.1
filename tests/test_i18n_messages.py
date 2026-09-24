@@ -218,3 +218,22 @@ def test_a_model_failure_is_reported_in_english_too(monkeypatch, tmp_path):
         progress=lambda *args, **kwargs: None,
     )
     _assert_english(status, "сообщение о сбое генерации")
+
+
+# --- склейка строки состояния ----------------------------------------------
+
+
+def test_status_parts_are_joined_as_sentences():
+    """«AI boost done Done. Seeds…» — так выглядела склейка пробелом."""
+    from fooocus_qwen.ui.i18n import sentences
+
+    assert sentences("AI boost done", "Done. Seeds: 1. GPU memory: 13.9 GiB") == (
+        "AI boost done. Done. Seeds: 1. GPU memory: 13.9 GiB."
+    )
+
+
+def test_empty_parts_vanish_and_punctuation_is_kept():
+    from fooocus_qwen.ui.i18n import sentences
+
+    assert sentences("", "  ", "Готово!", "Промт «x» сохранён…") == "Готово! Промт «x» сохранён…"
+    assert sentences("") == ""

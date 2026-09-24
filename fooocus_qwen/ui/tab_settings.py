@@ -26,7 +26,7 @@ from .. import config
 from ..llm import LlmError, load_endpoint, parse_endpoint_file
 from ..llm import setup as llm_setup
 from . import layout
-from .i18n import MESSAGES, Localizer, pick, say
+from .i18n import MESSAGES, Localizer, pick, say, sentences
 
 _PROMPT_FILES: tuple[str, ...] = (
     "system_prompt_t2i.txt",
@@ -188,7 +188,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         except ValueError as error:
             return "", say("endpoint_bad_address", lang, error=error)
         config.ENDPOINT_FILE.write_text(text, encoding="utf-8")
-        return "", say("endpoint_saved", lang) + " " + describe_endpoint(lang)
+        return "", sentences(say("endpoint_saved", lang), describe_endpoint(lang))
 
     def forget_token(lang):
         current = _current_endpoint()
@@ -197,7 +197,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         config.ENDPOINT_FILE.write_text(
             llm_setup.render(current.base_url, None, current.backend), encoding="utf-8"
         )
-        return say("token_forgotten", lang) + " " + describe_endpoint(lang)
+        return sentences(say("token_forgotten", lang), describe_endpoint(lang))
 
     def check_connection(lang):
         # load_endpoint бросает FileNotFoundError (файла нет — обычное дело

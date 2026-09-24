@@ -167,6 +167,16 @@ def click_text(page, text: str) -> None:
     page.get_by_role("button", name=text, exact=True).first.click()
 
 
+def apply_edit(page, prompt: str = "a small red boat") -> None:
+    """«Применить правку» с промтом: без него правка не запускается вовсе."""
+    for box in page.locator("textarea").all():
+        if box.is_visible():
+            if not box.input_value().strip():
+                box.fill(prompt)
+            break
+    click_text(page, "Применить правку")
+
+
 # --- сценарии ------------------------------------------------------------------
 
 def scenario_layout(browser, url, report: Report) -> None:
@@ -239,8 +249,20 @@ def scenario_painter(browser, url, report: Report, fake: FakeGenerator, samples:
 
     before = len(fake.requests)
     click_text(page, "Применить правку")
+    page.wait_for_timeout(1500)
+    status = " ".join(box.input_value() for box in page.locator("textarea").all())
+    report.check(
+        len(fake.requests) == before and "Опишите правку" in status,
+        "без промта правка не запускается и просит описать её",
+    )
+
+    apply_edit(page)
     request = fake.wait(before + 1)
     report.check(request.source is not None and request.source.size == (1888, 1280), "сервер получил исходник целиком")
+    # Результат — крупным просмотром, а не сеткой: в сетке единственная
+    # картинка становилась квадратом выше окна, и видна была полоса кадра.
+    page.wait_for_function("() => document.querySelector('.qs-slot-result .preview img')", timeout=20000)
+    report.check(True, "результат открылся крупным просмотром")
     report.check(request.mask is not None, "сервер получил маску")
     if request.mask is not None:
         centre, corner = mask_at(request.mask, 0.5, 0.5), mask_at(request.mask, 0.05, 0.05)
@@ -253,7 +275,7 @@ def scenario_painter(browser, url, report: Report, fake: FakeGenerator, samples:
     page.wait_for_timeout(300)
     report.check(painter_state(page)["strokes"] == 0, "Ctrl+Z отменяет мазок")
     before = len(fake.requests)
-    click_text(page, "Применить правку")
+    apply_edit(page)
     request = fake.wait(before + 1)
     report.check(request.mask is None and request.mask_mode == "none", f"без пометок — весь кадр: {request.mask_mode}")
 
@@ -261,7 +283,7 @@ def scenario_painter(browser, url, report: Report, fake: FakeGenerator, samples:
     stroke(page, [(0.2, 0.3), (0.8, 0.3)])
     stroke(page, [(0.2, 0.3), (0.8, 0.3)], button="right")
     before = len(fake.requests)
-    click_text(page, "Применить правку")
+    apply_edit(page)
     request = fake.wait(before + 1)
     report.check(request.mask is None, "правая кнопка стирает")
 
@@ -283,7 +305,7 @@ def scenario_annotation(browser, url, report: Report, fake: FakeGenerator, sampl
     }}""")
     stroke(page, [(0.4, 0.4), (0.6, 0.6)])
     before = len(fake.requests)
-    click_text(page, "Применить правку")
+    apply_edit(page)
     request = fake.wait(before + 1)
     pixel = np.asarray(request.source.convert("RGB"))[int(0.5 * 768), int(0.5 * 1024)]
     report.check(request.mask is None and request.mask_mode == "annotation", f"режим аннотации: {request.mask_mode}")
@@ -307,7 +329,7 @@ def scenario_outpaint(browser, url, report: Report, fake: FakeGenerator, samples
     report.check(state["width"] > 1024 and state["height"] == 768, f"холст расширен: {state['width']}x{state['height']}")
 
     before = len(fake.requests)
-    click_text(page, "Применить правку")
+    apply_edit(page)
     request = fake.wait(before + 1)
     ok = request.mask is not None and mask_at(request.mask, 0.97, 0.5) == 255 and mask_at(request.mask, 0.1, 0.5) == 0
     report.check(ok, "новая площадь помечена, старая — нет")
@@ -400,6 +422,15 @@ def scenario_gallery(browser, url, report: Report, fake: FakeGenerator, samples:
     page.wait_for_timeout(800)
     thumbs = page.locator(".qs-browse img")
     report.check(thumbs.count() >= 1, f"галерея обновилась при открытии: {thumbs.count()} картинок")
+    # Тег на месте — ещё не картинка: сервер может отказать в файле. Так и
+    # было — обновление галереи без очереди получало ссылки вида
+    # /gradio_api/run/predict/gradio_api/file=… с ответом 404, и галерея
+    # показывала битые значки при зелёной проверке.
+    page.wait_for_timeout(1500)
+    loaded = page.evaluate(
+        "() => [...document.querySelectorAll('.qs-browse img')].filter(i => i.complete && i.naturalWidth > 0).length"
+    )
+    report.check(loaded == thumbs.count(), f"картинки галереи загрузились: {loaded} из {thumbs.count()}")
     thumbs.first.click()
     page.wait_for_timeout(1200)
     card = page.locator(".block.qs-card").inner_text()
@@ -455,9 +486,9 @@ def main() -> int:
 
     from fooocus_qwen.ui import app
 
-    # Рабочий каталог — внутри проекта (.tmp/ под .gitignore), не в системном
+    # Рабочий каталог — внутри проекта (tmp/ под .gitignore), не в системном
     # %TEMP%: всё, что порождает прогон, остаётся рядом с проектом.
-    scratch = Path(__file__).resolve().parents[1] / ".tmp" / "ui_check"
+    scratch = Path(__file__).resolve().parents[1] / "tmp" / "ui_check"
     scratch.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp(prefix="run-", dir=scratch))
     # Результаты подставного генератора не должны попасть в галерею человека.

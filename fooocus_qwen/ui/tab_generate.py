@@ -24,7 +24,7 @@ from ..prompting import boost as boost_module
 from ..prompting import library
 from ..storage import gallery
 from . import layout
-from .i18n import Localizer, pick, say
+from .i18n import Localizer, pick, say, sentences
 from .state import GPU_CONCURRENCY_ID, describe_failure
 
 LOGGER = logging.getLogger(__name__)
@@ -421,7 +421,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             # значит оставить необъяснимую потерю детальности.
             chosen = resolve_reference_scale(request)
             if not scale_value and chosen != request.preset.output_resolution:
-                message = f"{message} {say('reference_scale_chosen', lang, scale=chosen)}".strip()
+                message = sentences(message, say("reference_scale_chosen", lang, scale=chosen))
 
             def report(index: int, step: int, total: int) -> None:
                 progress(
@@ -437,9 +437,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             ))
             produced, failure = studio.run_generation(request, lang, progress=report)
             if failure is not None:
-                return [], f"{message} {failure}".strip()
+                return [], sentences(message, failure)
             if not produced:
-                return [], f"{message} {say('generation_interrupted', lang)}".strip()
+                return [], sentences(message, say("generation_interrupted", lang))
 
             paths = []
             for item in produced:
@@ -451,7 +451,12 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             report_line = say(
                 "generation_done", lang, seeds=seeds, memory=studio.memory_report(lang)
             )
-            return paths, f"{message} {report_line}".strip()
+            # Результат открывается крупно, а не сеткой. ``preview=True`` у галереи
+            # действует только при первой загрузке страницы: при новом значении Gradio
+            # возвращается к сетке, и единственная картинка становилась квадратной
+            # миниатюрой выше окна — видна была средняя полоса кадра (найдено на снимках
+            # для README). ``selected_index=0`` открывает первую картинку в просмотре.
+            return gr.Gallery(value=paths, selected_index=0), sentences(message, report_line)
         except Exception as error:  # noqa: BLE001
             LOGGER.exception("Обработчик генерации не выполнен")
             return [], describe_failure(error, lang)
