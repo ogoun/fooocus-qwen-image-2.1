@@ -113,7 +113,7 @@ def side_by_side(images: list[Image.Image], height: int = 640, gap: int = 12) ->
 
 
 # Пример позы: скелет из библиотеки в ячейке и промт, который на него ссылается
-# (один референс — без тега, по спецификации Qwen).
+# (один референс — тег не нужен, по спецификации Qwen).
 POSE_EXAMPLE = "dance_02"
 POSE_PROMPT = ("A ballet dancer in a white tutu on a theatre stage under a warm spotlight, full body, "
                "posed exactly like the pose skeleton in the reference image")

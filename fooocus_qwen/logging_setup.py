@@ -55,6 +55,29 @@ def use_utf8_console() -> None:
         _configure_console_stream(stream)
 
 
+class _ClientResetFilter(logging.Filter):
+    """Убирает из журнала обрыв соединения браузером под Windows.
+
+    Закрыл человек вкладку или перезагрузил страницу — браузер рвёт
+    соединение сбросом (RST), и цикл событий Proactor, закрывая свою сторону,
+    получает ``ConnectionResetError`` в ``_call_connection_lost``. Это
+    известная ошибка CPython под Windows (python/cpython#83413): исключение
+    ловить некому, и asyncio пишет его в журнал уровнем ERROR с трассировкой —
+    четыре экрана «ошибок» на каждое закрытие вкладки, при том что сервер
+    работает дальше как ни в чём не бывало. Отбрасывается ровно этот случай:
+    обрыв соединения в этом обратном вызове; любые другие ошибки asyncio
+    остаются в журнале.
+    """
+
+    _CALLBACK = "_call_connection_lost"
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        error = record.exc_info[1] if record.exc_info else None
+        if isinstance(error, (ConnectionResetError, ConnectionAbortedError)):
+            return self._CALLBACK not in record.getMessage()
+        return True
+
+
 def setup_logging(verbose: bool = False) -> None:
     config.LOG_DIR.mkdir(parents=True, exist_ok=True)
     log_file = config.LOG_DIR / f"{datetime.now():%Y-%m-%d_%H-%M-%S}.log"
@@ -79,3 +102,4 @@ def setup_logging(verbose: bool = False) -> None:
     # что в файле журнала превращается в шум.
     logging.getLogger("diffusers").setLevel(logging.WARNING)
     logging.getLogger("transformers").setLevel(logging.WARNING)
+    logging.getLogger("asyncio").addFilter(_ClientResetFilter())

@@ -530,12 +530,17 @@ def scenario_send(browser, url, report: Report, fake: FakeGenerator) -> None:
 SLOTS_JS = """() => [...document.querySelectorAll('.qs-refcell')].filter(cell => cell.getBoundingClientRect().width > 0).map(cell => {
     const img = cell.querySelector('.qs-refslot img');
     const tag = cell.querySelector('.qs-reftag');
-    const inner = tag.querySelector('code') || tag;
+    // Ширина самого текста (Range), а не контейнера: у контейнера с
+    // overflow: hidden scrollWidth совпадал с шириной, и обрезанная подпись
+    // проходила проверку.
+    const inner = tag.querySelector('code, [title]') || tag;
+    const range = document.createRange();
+    range.selectNodeContents(inner);
+    const text = range.getBoundingClientRect(), box = tag.getBoundingClientRect();
     return {
         loaded: !!(img && img.complete && img.naturalWidth > 0),
         text: tag.innerText.trim(),
-        clipped: inner.getBoundingClientRect().right > tag.getBoundingClientRect().right + 1
-            || tag.scrollWidth > tag.clientWidth + 1,
+        clipped: text.width > 0 && (text.right > box.right + 1 || text.left < box.left - 1),
     };
 })"""
 
@@ -661,8 +666,15 @@ def scenario_references(browser, url, report: Report, fake: FakeGenerator, sampl
     wait_loaded(page, [2])
     # Не «тега нет», а «подпись о том, что тег не нужен, есть»: отсутствие
     # тега выполняется и тогда, когда подписи нет вовсе.
-    label = wait_label(page, 2, "без тега")
-    report.check("<image" not in label, f"один референс — подписан без тега: «{label}»")
+    label = wait_label(page, 2, "тег не нужен")
+    report.check("<image" not in label, f"один референс — подписан «тег не нужен»: «{label}»")
+    clipped = [slot["text"] for slot in reference_slots(page) if slot["clipped"]]
+    report.check(not clipped, "подпись «тег не нужен» видна целиком" + (f": {clipped}" if clipped else ""))
+    why = page.evaluate(
+        "() => [...document.querySelectorAll('.qs-refcell')].filter(c => c.getBoundingClientRect().width > 0)[2]"
+        ".querySelector('.qs-reftag [title]')?.title || ''"
+    )
+    report.check("словами" in why, f"у подписи подсказка с причиной: «{why[:50]}…»")
 
     # Результат генерации — в первый свободный слот, то есть в первый.
     for box in page.locator("textarea").all():
@@ -703,6 +715,13 @@ def scenario_references(browser, url, report: Report, fake: FakeGenerator, sampl
     report.check(True, f"теги трёх слотов сдвинулись по порядку: {tags}")
     clipped = [slot["text"] for slot in reference_slots(page) if slot["clipped"]]
     report.check(not clipped, "теги видны целиком, не обрезаны" + (f": {clipped}" if clipped else ""))
+    # И на маленьком окне: ячейка там 57 px, и при прежних 12 px теги не влезали.
+    page.set_viewport_size({"width": 1280, "height": 800})
+    page.wait_for_timeout(400)
+    clipped = [slot["text"] for slot in reference_slots(page) if slot["clipped"]]
+    report.check(not clipped, "1280×800: теги видны целиком" + (f": {clipped}" if clipped else ""))
+    page.set_viewport_size({"width": 1920, "height": 1080})
+    page.wait_for_timeout(400)
     # Снимок заполненной сетки — глазам: текстом проверено, что подписи
     # есть, но не то, как подпись ложится поверх картинки в ячейке.
     shot = samples.parent / "references-grid.png"

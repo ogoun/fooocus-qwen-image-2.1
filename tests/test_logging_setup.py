@@ -200,3 +200,83 @@ def test_every_tool_prepares_the_console_before_parsing_arguments():
                 f"{script.name}: подготовка консоли (строка {min(prepares)}) стоит ниже "
                 f"разбора аргументов (строка {min(parses)})"
             )
+
+
+# --- обрыв соединения браузером под Windows ---
+
+
+def _asyncio_record(message: str, error: BaseException | None) -> logging.LogRecord:
+    exc_info = (type(error), error, None) if error is not None else None
+    return logging.LogRecord("asyncio", logging.ERROR, __file__, 1, message, None, exc_info)
+
+
+RESET_MESSAGE = "Exception in callback _ProactorBasePipeTransport._call_connection_lost(None)"
+
+
+def test_a_client_reset_in_connection_lost_is_dropped():
+    """Закрытая вкладка — не ошибка сервера: CPython под Windows пишет её
+    трассировкой ERROR на каждое закрытие (python/cpython#83413)."""
+    keep = logging_setup._ClientResetFilter().filter
+    assert not keep(_asyncio_record(RESET_MESSAGE, ConnectionResetError(10054, "reset")))
+    assert not keep(_asyncio_record(RESET_MESSAGE, ConnectionAbortedError(10053, "aborted")))
+
+
+def test_other_asyncio_errors_stay_in_the_log():
+    keep = logging_setup._ClientResetFilter().filter
+    assert keep(_asyncio_record("Exception in callback something_else()", ConnectionResetError()))
+    assert keep(_asyncio_record(RESET_MESSAGE, RuntimeError("не обрыв")))
+    assert keep(_asyncio_record("Task was destroyed but it is pending!", None))
+
+
+def test_setup_logging_installs_the_filter_on_asyncio(tmp_path, monkeypatch, isolated_root_logger):
+    monkeypatch.setattr(config, "LOG_DIR", tmp_path)
+    asyncio_logger = logging.getLogger("asyncio")
+    before = asyncio_logger.filters[:]
+    try:
+        logging_setup.setup_logging()
+        assert any(isinstance(f, logging_setup._ClientResetFilter) for f in asyncio_logger.filters)
+    finally:
+        asyncio_logger.filters[:] = before
+
+
+class _ProactorBasePipeTransport:
+    """Двойник транспорта asyncio: то же имя класса и метода, что в журнале."""
+
+    def _call_connection_lost(self, exc):
+        raise ConnectionResetError(10054, "An existing connection was forcibly closed by the remote host")
+
+
+def _run_callback_and_capture(with_filter: bool) -> list[logging.LogRecord]:
+    """Настоящий путь asyncio: исключение в обратном вызове → call_exception_handler
+    → logger 'asyncio'.error с трассировкой, как в журнале пользователя."""
+    import asyncio
+
+    records: list[logging.LogRecord] = []
+
+    class Capture(logging.Handler):
+        def emit(self, record):
+            records.append(record)
+
+    logger = logging.getLogger("asyncio")
+    handler, saved = Capture(), logger.filters[:]
+    logger.filters[:] = [logging_setup._ClientResetFilter()] if with_filter else []
+    logger.addHandler(handler)
+    loop = asyncio.new_event_loop()
+    try:
+        loop.call_soon(_ProactorBasePipeTransport()._call_connection_lost, None)
+        loop.run_until_complete(asyncio.sleep(0.01))
+    finally:
+        loop.close()
+        logger.removeHandler(handler)
+        logger.filters[:] = saved
+    return [r for r in records if "_call_connection_lost" in r.getMessage()]
+
+
+def test_the_real_asyncio_record_is_what_the_filter_drops():
+    """Контроль и опыт на настоящем пути журналирования asyncio: без фильтра
+    запись есть (та самая, из журнала пользователя), с фильтром — нет."""
+    unfiltered = _run_callback_and_capture(with_filter=False)
+    assert len(unfiltered) == 1
+    assert unfiltered[0].getMessage().startswith("Exception in callback _ProactorBasePipeTransport._call_connection_lost(None)")
+    assert isinstance(unfiltered[0].exc_info[1], ConnectionResetError)
+    assert _run_callback_and_capture(with_filter=True) == []

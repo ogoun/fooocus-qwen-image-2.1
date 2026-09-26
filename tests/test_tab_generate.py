@@ -222,7 +222,22 @@ def test_a_single_reference_is_marked_untagged_and_short():
     """
     tags = tab_generate.slot_tags(_slots({4: _img()}), "en")
     assert "<image" not in tags[4]["value"]
-    assert tags[4]["value"] == "no tag"
+    # «Не нужен», а не «нет»: подпись «no tag» читалась как «ячейка не
+    # подписана». Причина — во всплывающей подсказке.
+    assert tags[4]["value"].endswith(">no tag needed</span>")
+    assert 'title="Only one reference' in tags[4]["value"]
+
+
+def test_the_status_line_explains_a_single_reference():
+    """Строка состояния при единственном референсе говорит, как на него ссылаться."""
+    from fooocus_qwen.ui import references
+
+    one = references.with_single_hint("References: 1 of 10", _slots({4: _img()}), "en", None)
+    assert "in words" in one
+    two = references.with_single_hint("References: 2 of 10", _slots({1: _img(), 4: _img()}), "en", None)
+    assert two == "References: 2 of 10"
+    editing = references.with_single_hint("References: 1 of 10", _slots({4: _img()}), "en", "mask")
+    assert editing == "References: 1 of 10", "на правке у единственного референса тег есть"
 
 
 def _result(tmp_path, colour="blue", size=(30, 12)):

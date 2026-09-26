@@ -18,6 +18,7 @@
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 
 import gradio as gr
@@ -25,7 +26,7 @@ from PIL import Image
 
 from ..engine.generator import MASK_MASK, MASK_NONE, MASK_REGION, condition_slots
 from . import layout
-from .i18n import Localizer, pick, say
+from .i18n import Localizer, pick, say, sentences
 
 # Сетка референсов слева от результата: два столбца по пять ячеек, в рост
 # поля результата. Десять — предел самой модели (карточка Qwen-Image-2.1), и
@@ -108,13 +109,28 @@ def slot_tags(references, lang: str, mode: str | None = None) -> list:
     grid = _grid(references)
     captions = iter(_captions(filled(grid), lang, mode))
     return [
-        gr.update(value=_tag_markdown(next(captions)) if image is not None else _NO_TAG)
+        gr.update(value=_tag_markdown(next(captions), lang) if image is not None else _NO_TAG)
         for image in grid
     ]
 
 
-def _tag_markdown(caption: str) -> str:
-    return f"`{caption}`" if caption.startswith("<image") else caption
+def _tag_markdown(caption: str, lang: str) -> str:
+    """Тег — кодом; «тег не нужен» — с подсказкой почему (атрибут title)."""
+    if caption.startswith("<image"):
+        return f"`{caption}`"
+    why = html.escape(say("caption_untagged_why", lang), quote=True)
+    return f'<span title="{why}">{caption}</span>'
+
+
+def with_single_hint(message: str, references, lang: str, mode: str | None) -> str:
+    """Строка состояния, дополненная объяснением, если референс остался один.
+
+    Только на генерации: на правке перед референсом стоит исходник, и тег у
+    него есть всегда.
+    """
+    if mode is None and len(filled(references)) == 1:
+        return sentences(message, say("single_reference_hint", lang))
+    return message
 
 
 def place(references, index: int, image, lang: str, message: str, mode: str | None = None) -> tuple:
@@ -127,7 +143,7 @@ def place(references, index: int, image, lang: str, message: str, mode: str | No
     grid = _grid(references)
     grid[index] = image
     slots = [gr.update(value=image) if position == index else gr.update() for position in range(MAX_REFERENCES)]
-    return (grid, *slots, *slot_tags(grid, lang, mode), message)
+    return (grid, *slots, *slot_tags(grid, lang, mode), with_single_hint(message, grid, lang, mode))
 
 
 # --- построение и события --------------------------------------------------
@@ -240,14 +256,16 @@ def wire(grid: Grid, language, status, mode=None) -> None:
         """
         images, rest = values[:MAX_REFERENCES], values[MAX_REFERENCES:]
         *ctx, lang = rest
+        mode_value = ctx[0] if ctx else None
         cells = _grid(images)
+        counted = say("references_counted", lang, count=len(filled(cells)), total=MAX_REFERENCES)
         return (
             cells,
             # Сами ячейки не трогаются: картинка в них уже стоит, её туда
             # положил человек, а переслать её обратно — лишний круг в браузер.
             *(gr.update() for _ in cells),
-            *slot_tags(cells, lang, ctx[0] if ctx else None),
-            say("references_counted", lang, count=len(filled(cells)), total=MAX_REFERENCES),
+            *slot_tags(cells, lang, mode_value),
+            with_single_hint(counted, cells, lang, mode_value),
         )
 
     def clear_references(*values):

@@ -76,7 +76,7 @@ def test_caption_numbering_follows_the_region_mode(mode, first):
 def test_a_single_reference_is_tagged_when_editing():
     """Исходник плюс референс — уже два изображения: теги обязательны."""
     assert references._captions(_refs("red"), "ru", gen.MASK_NONE) == ["<image2>"]
-    assert references._captions(_refs("red"), "ru", None) == ["без тега"]
+    assert references._captions(_refs("red"), "ru", None) == ["тег не нужен"]
 
 
 def test_the_grid_stands_left_of_the_brush():

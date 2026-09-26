@@ -200,8 +200,20 @@ MESSAGES: dict[str, tuple[str, str]] = {
     # Коротко: подпись стоит одной строкой под ячейкой шириной в семьдесят
     # пикселей, и «без тега — одно изображение» обрезалось бы на полуслове.
     # Почему тег не нужен, объясняет руководство (docs/USAGE.md, раздел 4).
-    "caption_untagged": ("без тега", "no tag"),
+    # Единственный референс по правилу Qwen тегом не адресуется: подпись
+    # говорит «не нужен», а не «нет» — «без тега» читалось как «не подписан».
+    "caption_untagged": ("тег не нужен", "no tag needed"),
+    "caption_untagged_why": (
+        "Референс один: по правилам Qwen тег не пишут — ссылайтесь словами («на изображении»)",
+        "Only one reference: by Qwen's rules it takes no tag — refer to it in words (“the image”)",
+    ),
     "references_counted": ("Референсов: {count} из {total}", "References: {count} of {total}"),
+    "single_reference_hint": (
+        "Референс один — тег ему не нужен: по правилам Qwen на единственное изображение "
+        "ссылаются словами («на изображении»), теги <image1>, <image2>… появятся со вторым",
+        "One reference needs no tag: by Qwen's rules a single image is referred to in words "
+        "(“the image”); the <image1>, <image2>… tags appear with the second one",
+    ),
     # Две ловушки вокруг «Переписанного промта», обе молчаливые.
     #
     # Первая: кнопка «Переписать сейчас» работает независимо от галочки «AI

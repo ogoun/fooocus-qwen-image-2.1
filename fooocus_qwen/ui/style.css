@@ -262,14 +262,27 @@ footer { display: none !important; }
     text-align: center !important;
     white-space: nowrap !important;
     overflow: hidden !important;
-    font-size: 12px !important;
+    text-overflow: ellipsis !important;
+    /* Шрифт — от ширины ячейки: 12 px, пока место есть, мельче на маленьком
+       окне, но не мельче 9 px. На 1280×800 ячейка — 57 px, и при 12 px в неё
+       не влезали ни «<image1>» (около 62 px), ни «тег не нужен» (67 px):
+       замерено по тексту, а не по контейнеру. 16cqi — чтобы «no tag needed»
+       и «<image10>» помещались целиком в ячейку 57 px; что не влезет и тогда,
+       обрезается многоточием, а полный текст остаётся в подсказке. */
+    font-size: clamp(9px, 16cqi, 12px) !important;
     line-height: 1.3 !important;
     min-height: 1.3em !important;
+}
+
+.qs-refcell {
+    container-type: inline-size;
 }
 
 .qs-reftag * {
     font-size: inherit !important;
     margin: 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
 }
 
 /* Значки «поза» и «эскиз» — поверх нижних углов картинки. Под ячейкой места
