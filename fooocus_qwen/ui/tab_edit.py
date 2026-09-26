@@ -24,13 +24,15 @@ from ..engine.generator import (
     MASK_NONE,
     MASK_REGION,
     GenerationRequest,
+    condition_slots,
     resolve_reference_scale,
 )
 from ..imaging import aspect as aspect_module
 from ..imaging import masking, metadata, outpaint
 from ..prompting import boost as boost_module
 from ..storage import gallery
-from . import layout, painter
+from . import layout, painter, reference_tools
+from . import references as references_module
 from .i18n import Localizer, painter_labels, pick, say, sentences
 from .state import GPU_CONCURRENCY_ID, describe_failure, seeds_phrase
 
@@ -41,6 +43,8 @@ ANNOTATION_COLOURS: tuple[str, ...] = ("#ff0000", "#0000ff", "#00ff00", "#ffff00
 
 # По этому имени скрипты кнопок находят кисть на странице.
 PAINTER_ID = "qs-edit-painter"
+# Кисть окна эскиза вкладки правки; у генерации — своя (reference_tools).
+SKETCH_PAINTER_ID = "qs-edit-sketch-painter"
 
 # Доля кадра вне маски, начиная с которой шов виден и о нём стоит сказать.
 # Ниже — обычная точечная правка, где обрезать почти нечего.
@@ -197,20 +201,26 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             # видны разом, и на широком мониторе для этого есть место.
             with gr.Row(elem_classes=[layout.BOARDS_ROW]):
                 with gr.Column(min_width=layout.CANVAS_MIN_WIDTH, elem_classes=[layout.SLOT_EDITOR]):
-                    # Своя кисть вместо gr.ImageEditor: у того стоимость
-                    # движения мыши растёт с длиной мазка, и на крупном кадре
-                    # кисть заметно отстаёт от руки (см. ui/painter).
-                    editor = localizer.bind(
-                        painter.MaskPainter(
-                            lang=lang,
-                            region=MASK_MASK,
-                            labels=painter_labels(),
-                            palette=list(ANNOTATION_COLOURS),
-                            elem_id=PAINTER_ID,
-                            elem_classes=[layout.BOARD, layout.PAINTER],
-                        ),
-                        lang=("ru", "en"),
-                    )
+                    # Сетка референсов — слева от кисти и в её рост, как на
+                    # генерации слева от результата (references.build_grid).
+                    # Референсы при правке — то, что вносится в исходник:
+                    # «вставь кота с <image3>», одежда, стиль, поза.
+                    with gr.Row(equal_height=True, elem_classes=[layout.RESULT_ROW]):
+                        grid = references_module.build_grid(localizer, lang)
+                        # Своя кисть вместо gr.ImageEditor: у того стоимость
+                        # движения мыши растёт с длиной мазка, и на крупном
+                        # кадре кисть заметно отстаёт от руки (см. ui/painter).
+                        editor = localizer.bind(
+                            painter.MaskPainter(
+                                lang=lang,
+                                region=MASK_MASK,
+                                labels=painter_labels(),
+                                palette=list(ANNOTATION_COLOURS),
+                                elem_id=PAINTER_ID,
+                                elem_classes=[layout.BOARD, layout.PAINTER],
+                            ),
+                            lang=("ru", "en"),
+                        )
 
                 with gr.Column(min_width=layout.CANVAS_MIN_WIDTH, elem_classes=[layout.SLOT_RESULT]):
                     result = localizer.bind(
@@ -234,7 +244,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                             gr.Button(pick("send_to_edit", lang)),
                             value=("Отправить в редактор", "Send to editor"),
                         )
-                        # Связывается в app.py: референсы — на вкладке генерации.
+                        # Связывается в app.py: кладёт результат в референсы
+                        # вкладки генерации — продолжить работу с ним там.
                         send_to_refs = localizer.bind(
                             gr.Button(pick("send_to_references", lang)),
                             value=("Отправить в референсы", "Send to references"),
@@ -382,7 +393,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     def run(
         raw, prompt_text, use_boost, mode_value, quality_name,
-        grow_value, feather_value, keep_value, seed_value, lang,
+        grow_value, feather_value, keep_value, seed_value, current_references, lang,
         progress=gr.Progress(track_tqdm=True),
     ):
         # Обработчик целиком под try по тем же причинам, что и на вкладке
@@ -390,7 +401,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         try:
             return _apply(
                 raw, prompt_text, use_boost, mode_value, quality_name,
-                grow_value, feather_value, keep_value, seed_value, lang, progress,
+                grow_value, feather_value, keep_value, seed_value, current_references, lang, progress,
             )
         except Exception as error:  # noqa: BLE001
             LOGGER.exception("Обработчик правки не выполнен")
@@ -398,7 +409,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     def _apply(
         raw, prompt_text, use_boost, mode_value, quality_name,
-        grow_value, feather_value, keep_value, seed_value, lang, progress,
+        grow_value, feather_value, keep_value, seed_value, current_references, lang, progress,
     ):
         value, failure = read_painter(raw, lang)
         if failure:
@@ -414,11 +425,33 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         if not (prompt_text or "").strip():
             return [], say("edit_needs_prompt", lang)
 
+        images = references_module.filled(current_references)
+        # Режим переигрывается по факту, а не по выбору пользователя: если
+        # mask is None, collect() уже решил, что маскировать нечего (пустая
+        # маска в mask/region), и это решение — источник истины, а не
+        # напоминание. Аннотация — исключение: там маски нет по определению
+        # режима, а не из-за пустого рисунка, поэтому её оставляем как есть.
+        effective_mode = mode_value if mask is not None or mode_value == MASK_ANNOTATION else MASK_NONE
+        slots = condition_slots(source, mask, effective_mode, images)
+
         effective, message = prompt_text, ""
         if use_boost:
+            # Переписывателю — исходник и референсы (маску он не видит) с теми
+            # тегами, под которыми их увидит модель: при маске первый
+            # референс — <image3>, а не <image2>.
+            shown = [slot for slot in slots if slot.role != "mask"]
             effective, _, message = studio.boost_prompt(
-                prompt_text, boost_module.MODE_EDIT, lang, [source]
+                prompt_text, boost_module.MODE_EDIT, lang,
+                [slot.image for slot in shown], [slot.tag for slot in shown if slot.tag],
             )
+
+        # Подписи ячеек считаются по выбранному режиму, а маска бывает пустой:
+        # тогда её места в очереди нет, и теги референсов сдвигаются на один.
+        # Промт, написанный по подписям, после этого ссылался бы не туда —
+        # об этом говорится прямо, с настоящими тегами.
+        actual = [slot.tag for slot in slots if slot.role == "reference"]
+        if images and actual != references_module._captions(images, lang, mode_value):
+            message = sentences(message, say("edit_tags_shifted", lang, tags=", ".join(actual)))
 
         request = GenerationRequest(
             prompt=effective or prompt_text,
@@ -431,12 +464,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             seed=int(seed_value),
             source=source,
             mask=mask,
-            # Режим переигрывается по факту, а не по выбору пользователя: если
-            # mask is None, collect() уже решил, что маскировать нечего (пустая
-            # маска в mask/region), и это решение — источник истины, а не
-            # напоминание. Аннотация — исключение: там маски нет по определению
-            # режима, а не из-за пустого рисунка, поэтому её оставляем как есть.
-            mask_mode=mode_value if mask is not None or mode_value == MASK_ANNOTATION else MASK_NONE,
+            mask_mode=effective_mode,
+            references=tuple(images),
             mask_grow=int(grow_value),
             mask_feather=int(feather_value),
             keep_outside=bool(keep_value),
@@ -531,7 +560,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     run_button.click(
         run,
         [editor, prompt, boost_enabled, mode, quality, grow, feather, keep_outside, seed,
-         language],
+         grid.state, language],
         [result, status],
         # Та же группа очереди, что и у «Сгенерировать»: видеокарта одна.
         concurrency_id=GPU_CONCURRENCY_ID,
@@ -542,7 +571,23 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     send_back.click(take_back, [result, selected, language], [editor, status])
     mode.change(show_region, mode, editor, queue=False)
 
+    # Сетка референсов правки: свои ячейки, свои окна позы и эскиза. Режим
+    # области — вход подписей: от него зависит, с какого тега начинаются
+    # референсы (см. ui/references.py).
+    references_module.wire(grid, language, status, mode)
+    tools = reference_tools.build(
+        studio, localizer, lang, language, grid, status, mode=mode, sketch_id=SKETCH_PAINTER_ID,
+    )
+
     return {
+        **tools,
+        "references": grid.state,
+        "reference_slots": grid.slots,
+        "reference_tags": grid.tags,
+        "reference_targets": grid.targets(status),
+        "pose_buttons": grid.pose_buttons,
+        "sketch_buttons": grid.sketch_buttons,
+        "mode": mode,
         "editor": editor,
         "result": result,
         "selected": selected,

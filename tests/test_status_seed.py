@@ -71,7 +71,7 @@ def test_edit_status_names_the_seed(monkeypatch, tmp_path):
     monkeypatch.setattr(payload, "upload_root", lambda: tmp_path)
     value = payload.encode(Image.new("RGBA", (64, 64), "red"), None)
     _images, status = handlers["run"](
-        value, "сделай синим", False, "none", presets.DEFAULT, 8, 12, True, -1, "ru",
+        value, "сделай синим", False, "none", presets.DEFAULT, 8, 12, True, -1, [], "ru",
         progress=_quiet,
     )
     assert "Сид: 4242" in status

@@ -336,6 +336,12 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "sketch_title": ("**Эскиз для ячейки {cell}**", "**Sketch for cell {cell}**"),
     "sketch_failed": ("Эскиз не принят: {error}", "The sketch was not accepted: {error}"),
     "sketch_empty": ("Холст пуст — откройте картинку или нарисуйте эскиз", "The canvas is empty — open an image or draw"),
+    "edit_tags_shifted": (
+        "Маска пуста, поэтому правится весь кадр и маски среди изображений модели нет — "
+        "референсы сдвинулись: {tags}. Проверьте теги в промте",
+        "The mask is empty, so the whole frame is edited and the model gets no mask image — "
+        "the references moved to {tags}. Check the tags in the prompt",
+    ),
     "sketch_placed": ("Эскиз — в ячейке {cell}", "Sketch put into cell {cell}"),
     "edit_done": ("Готово. {seeds}. {memory}", "Done. {seeds}. {memory}"),
     "nothing_to_send": ("Нечего отправлять", "Nothing to send"),

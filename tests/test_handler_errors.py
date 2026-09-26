@@ -253,7 +253,7 @@ def test_edit_handler_reports_a_model_failure_in_the_status_line(monkeypatch, tm
 
     value = _painter_value(monkeypatch, tmp_path, Image.new("RGBA", (64, 64), "red"))
     images, status = handlers["run"](
-        value, "убрать фон", False, "none", presets.DEFAULT, 8, 12, True, -1, "ru",
+        value, "убрать фон", False, "none", presets.DEFAULT, 8, 12, True, -1, [], "ru",
         progress=lambda *args, **kwargs: None,
     )
 

@@ -119,7 +119,7 @@ def test_run_reconstructs_mask_mode_from_what_collect_actually_returned(
 
     paths, _message = handlers["run"](
         painter_value(*_editor_images(painted=painted)), "prompt", False, mode_value,
-        config.AppConfig().preset, 8, 12, True, -1, "ru",
+        config.AppConfig().preset, 8, 12, True, -1, [], "ru",
     )
 
     assert paths == []  # фиктивный генератор всегда возвращает пустой список
@@ -181,7 +181,7 @@ def test_an_edit_without_a_prompt_is_not_started(prompt, painter_value):
 
     paths, message = handlers["run"](
         painter_value(*_editor_images(painted=(8, 8, 24, 24))), prompt, False, gen.MASK_MASK,
-        config.AppConfig().preset, 8, 12, True, -1, "ru",
+        config.AppConfig().preset, 8, 12, True, -1, [], "ru",
     )
 
     assert paths == [] and fake.captured is None

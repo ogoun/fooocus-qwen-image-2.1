@@ -307,6 +307,13 @@ what to change. The region mode decides where the change goes:
 | **Exact region** | a small area on a large image | a crop around the mask is edited at full detail and pasted back |
 | **No region** | nothing | the whole frame is edited |
 
+The Edit tab has its own reference grid to the left of the brush, with the
+same pose and sketch tools: “put the cat from `<image3>` into the marked
+area”. There `<image1>` is the image being edited; in Mask and Exact region
+modes `<image2>` is the mask, so references start at `<image3>` (at
+`<image2>` in the other modes). The cell labels follow the region mode, and
+if the mask turns out empty the status line says where the tags moved.
+
 *Mask grow* and *Feather* (under Advanced) widen the mask and soften the
 paste seam. The model itself always receives a hard black-and-white mask: it
 reads a grey edge as “make this transparent”.

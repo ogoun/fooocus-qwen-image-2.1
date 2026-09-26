@@ -351,14 +351,19 @@ class Studio:
         mode: str,
         lang: str,
         references: list[Image.Image] | None = None,
+        tags: list[str] | None = None,
     ) -> tuple[str, str | None, str]:
-        """Возвращает переписанный промт, соотношение сторон и сообщение о результате."""
+        """Возвращает переписанный промт, соотношение сторон и сообщение о результате.
+
+        ``tags`` — теги изображений, если они идут не подряд (см.
+        ``boost.build_user_message``).
+        """
         try:
             client = self.llm_client()
             key = (client.base_url, client.model)
             result = boost.boost(
                 client, prompt, mode=mode, prompt_dir=config.SYSTEM_PROMPT_DIR,
-                references=references, send_images=key not in self._text_only_models,
+                references=references, send_images=key not in self._text_only_models, tags=tags,
             )
         except (LlmError, FileNotFoundError, ValueError, OSError) as error:
             LOGGER.warning("AI-буст не выполнен: %s", error)

@@ -75,7 +75,7 @@ def _run(monkeypatch, tmp_path, clipped: float, lang: str = "ru"):
     value = _painter_value(monkeypatch, tmp_path, Image.new("RGBA", SIZE, "black"), painted)
     return handlers["run"](
         value, "сделать волосы платиновыми", False, "mask", presets.DEFAULT,
-        8, 12, True, -1, lang, progress=lambda *args, **kwargs: None,
+        8, 12, True, -1, [], lang, progress=lambda *args, **kwargs: None,
     )
 
 
@@ -137,7 +137,7 @@ def _capture(monkeypatch, tmp_path, mode: str):
     painted.paste((255, 0, 0, 255), (0, 0, 32, 32))
     value = _painter_value(monkeypatch, tmp_path, Image.new("RGBA", SIZE, "black"), painted)
     _images, status = handlers["run"](
-        value, "убрать фон", False, mode, "MiddleQuality", 8, 12, True, -1, "ru",
+        value, "убрать фон", False, mode, "MiddleQuality", 8, 12, True, -1, [], "ru",
         progress=lambda *a, **k: None,
     )
     return engine.request, status

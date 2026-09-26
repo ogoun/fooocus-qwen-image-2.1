@@ -32,7 +32,7 @@ from ..poses import detect, library, tile
 from . import layout, painter
 from .i18n import Localizer, painter_labels, pick, say
 from .painter import payload
-from .references import MAX_REFERENCES, place
+from .references import MAX_REFERENCES, Grid, place
 from .state import GPU_CONCURRENCY_ID
 
 LOGGER = logging.getLogger(__name__)
@@ -51,7 +51,10 @@ SKETCH_COLOURS: tuple[str, ...] = (
 )
 
 # Подсказки к значкам: у ``gr.Button`` нет своего ``title``, и его ставит
-# скрипт — при загрузке страницы и при смене языка.
+# скрипт — при загрузке страницы и при смене языка. Значки вкладки, которая
+# ещё не открывалась, Gradio рисует позже загрузки, поэтому скрипт ещё и
+# следит за появлением новых значков (наблюдатель ставится один раз и
+# проверяет только новые узлы, так что стоит копейки).
 TOOL_TITLES = {
     layout.REF_POSE: ("Поза: выбрать из библиотеки или по фото", "Pose: pick from the library or from a photo"),
     layout.REF_SKETCH: ("Эскиз: нарисовать от руки", "Sketch: draw by hand"),
@@ -59,11 +62,23 @@ TOOL_TITLES = {
 TITLES_JS = """
 (lang) => {
     const titles = __TITLES__;
-    for (const [cls, pair] of Object.entries(titles)) {
-        document.querySelectorAll('.' + cls).forEach(node => {
-            node.title = pair[lang === 'en' ? 1 : 0];
-            node.setAttribute('aria-label', node.title);
+    window.__qsToolLang = lang;
+    const apply = root => {
+        for (const [cls, pair] of Object.entries(titles)) {
+            const nodes = root.classList && root.classList.contains(cls)
+                ? [root] : (root.querySelectorAll ? root.querySelectorAll('.' + cls) : []);
+            nodes.forEach(node => {
+                node.title = pair[window.__qsToolLang === 'en' ? 1 : 0];
+                node.setAttribute('aria-label', node.title);
+            });
+        }
+    };
+    apply(document);
+    if (!window.__qsToolObserver) {
+        window.__qsToolObserver = new MutationObserver(records => {
+            for (const record of records) record.addedNodes.forEach(apply);
         });
+        window.__qsToolObserver.observe(document.body, {childList: true, subtree: true});
     }
     return [];
 }
@@ -92,17 +107,23 @@ def build(
     localizer: Localizer,
     lang: str,
     language,
-    references,
-    reference_targets: list,
-    pose_buttons: list,
-    sketch_buttons: list,
+    grid: Grid,
+    status,
+    mode=None,
+    sketch_id: str = SKETCH_PAINTER_ID,
 ) -> dict:
-    """Собирает оба окна и связывает с кнопками ячеек.
+    """Собирает оба окна для сетки ``grid`` и связывает с её значками.
 
-    ``reference_targets`` — выходы записи в сетку (состояние, десять ячеек,
-    десять тегов, строка состояния вкладки), как у ``references.place``.
+    ``status`` — строка состояния вкладки, ``mode`` — режим области вкладки
+    правки (от него зависят теги, см. ``references``) или ``None`` на
+    генерации. ``sketch_id`` — имя кисти эскиза на странице: окон эскиза
+    два, по одному на вкладку, и скрипт кисти находит их по имени.
     ``lang`` — язык сборки, ``language`` — компонент с текущим языком.
     """
+    references = grid.state
+    reference_targets = grid.targets(status)
+    if mode is None:
+        mode = gr.State(None)
     target = gr.State(0)
     entries_state = gr.State([])
 
@@ -146,7 +167,7 @@ def build(
                     region=MASK_ANNOTATION,
                     labels=painter_labels(),
                     palette=list(SKETCH_COLOURS),
-                    elem_id=SKETCH_PAINTER_ID,
+                    elem_id=sketch_id,
                     elem_classes=[layout.SKETCH],
                 ),
                 lang=("ru", "en"),
@@ -190,7 +211,7 @@ def build(
         entries = library.list_poses(catalog, config.USER_POSE_DIR)
         return [entry.name for entry in entries], pose_tiles(entries, lang), message
 
-    def pick_pose(index, names, current, lang, event: gr.EventData):
+    def pick_pose(index, names, current, mode_value, lang, event: gr.EventData):
         """Выбор плитки: поза — в ячейку и окно закрыть; «Добавить позу» — поле загрузки."""
         chosen = selected_index(event)
         keep = (gr.update(),) * (1 + 2 * MAX_REFERENCES + 1)
@@ -203,10 +224,10 @@ def build(
             return (*keep, gr.update(), gr.update(), say("pose_missing", lang))
         with Image.open(entry.skeleton) as opened:
             image = opened.convert("RGB")
-        placed = place(current, index, image, lang, say("pose_placed", lang, cell=index + 1))
+        placed = place(current, index, image, lang, say("pose_placed", lang, cell=index + 1), mode_value)
         return (*placed, gr.Column(visible=False), gr.Column(visible=False), "")
 
-    def add_pose(photo, index, current, lang):
+    def add_pose(photo, index, current, mode_value, lang):
         """Фото → скелет → своя поза → в ячейку. Плитку рисует следующий шаг."""
         keep = (gr.update(),) * (1 + 2 * MAX_REFERENCES + 1)
         if photo is None:
@@ -222,7 +243,7 @@ def build(
         entry = library.add_custom(config.USER_POSE_DIR, found)
         with Image.open(entry.skeleton) as opened:
             image = opened.convert("RGB")
-        placed = place(current, index, image, lang, say("pose_placed", lang, cell=index + 1))
+        placed = place(current, index, image, lang, say("pose_placed", lang, cell=index + 1), mode_value)
         entries = library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR)
         return (
             *placed,
@@ -274,7 +295,7 @@ def build(
 
         return open_sketch_window
 
-    def accept_sketch(value, index, current, lang):
+    def accept_sketch(value, index, current, mode_value, lang):
         keep = (gr.update(),) * (1 + 2 * MAX_REFERENCES + 1)
         try:
             canvas = payload.decode(value)
@@ -285,7 +306,9 @@ def build(
         image = canvas.background.convert("RGBA")
         if canvas.layer is not None:
             image = Image.alpha_composite(image, canvas.layer.convert("RGBA"))
-        placed = place(current, index, image.convert("RGB"), lang, say("sketch_placed", lang, cell=index + 1))
+        placed = place(
+            current, index, image.convert("RGB"), lang, say("sketch_placed", lang, cell=index + 1), mode_value
+        )
         return (*placed, gr.Column(visible=False), "")
 
     def close():
@@ -293,7 +316,7 @@ def build(
 
     # --- связи ---
     pose_outputs = [target, pose_window, add_panel, pose_title, pose_message]
-    for index, button in enumerate(pose_buttons):
+    for index, button in enumerate(grid.pose_buttons):
         button.click(
             pose_opener(index), language, pose_outputs, queue=False, show_progress="hidden",
         ).then(
@@ -301,14 +324,14 @@ def build(
         )
     pose_grid.select(
         pick_pose,
-        [target, entries_state, references, language],
+        [target, entries_state, references, mode, language],
         [*reference_targets, pose_window, add_panel, pose_message],
         show_progress="hidden",
     )
     new_pose = gr.State(None)
     pose_photo.upload(
         add_pose,
-        [pose_photo, target, references, language],
+        [pose_photo, target, references, mode, language],
         [*reference_targets, entries_state, pose_grid, add_panel, pose_message, new_pose],
         show_progress="minimal",
     ).then(
@@ -320,13 +343,13 @@ def build(
     pose_close.click(close, None, pose_window, queue=False)
 
     sketch_outputs = [target, sketch_window, sketch_title, sketch, sketch_message]
-    for index, button in enumerate(sketch_buttons):
+    for index, button in enumerate(grid.sketch_buttons):
         button.click(sketch_opener(index), language, sketch_outputs, show_progress="hidden")
     sketch_accept.click(
         accept_sketch,
-        [sketch, target, references, language],
+        [sketch, target, references, mode, language],
         [*reference_targets, sketch_window, sketch_message],
-        js=painter.flush_js(SKETCH_PAINTER_ID),
+        js=painter.flush_js(sketch_id),
         show_progress="hidden",
     )
     sketch_cancel.click(close, None, sketch_window, queue=False)

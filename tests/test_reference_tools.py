@@ -105,7 +105,7 @@ def test_the_window_lists_the_catalogue_then_add_pose(poses):
 def test_picking_a_pose_puts_its_skeleton_into_the_target_cell(poses):
     _studio, _components, found = _handlers()
     pick = found["pick_pose"][0].fn
-    outputs = pick(3, ["dance_01", "standing_01"], [], "ru", _event(1))
+    outputs = pick(3, ["dance_01", "standing_01"], [], None, "ru", _event(1))
     grid, slots, tags, status, (window, add_panel, message) = _split(outputs)
     assert grid[3] is not None and all(image is None for i, image in enumerate(grid) if i != 3)
     assert np.asarray(grid[3]).mean() < 40, "в ячейке — скелет на чёрном"
@@ -115,7 +115,7 @@ def test_picking_a_pose_puts_its_skeleton_into_the_target_cell(poses):
 
 def test_the_last_tile_opens_the_photo_field_and_keeps_the_grid(poses):
     _studio, _components, found = _handlers()
-    outputs = found["pick_pose"][0].fn(0, ["dance_01", "standing_01"], [], "ru", _event(2))
+    outputs = found["pick_pose"][0].fn(0, ["dance_01", "standing_01"], [], None, "ru", _event(2))
     grid, slots, _tags, _status, (window, add_panel, message) = _split(outputs)
     assert _untouched(grid) and all(_untouched(slot) for slot in slots), "ячейки не тронуты"
     assert _untouched(window), "окно остаётся открытым"
@@ -130,7 +130,7 @@ def test_add_pose_saves_it_places_the_skeleton_and_orders_a_tile(poses, monkeypa
     monkeypatch.setattr(detect, "to_pose", lambda found: _pose())
     _studio, _components, found = _handlers(studio)
 
-    outputs = found["add_pose"][0].fn(Image.new("RGB", (300, 400)), 5, [], "ru")
+    outputs = found["add_pose"][0].fn(Image.new("RGB", (300, 400)), 5, [], None, "ru")
     grid = outputs[0]
     names, tiles, add_panel, message, new_pose = outputs[1 + 2 * N + 1:]
     assert grid[5] is not None
@@ -159,7 +159,7 @@ def test_no_person_on_the_photo_is_said_in_the_window(poses, monkeypatch):
 
     monkeypatch.setattr(studio, "pose_detector", lambda: types.SimpleNamespace(detect=refuse))
     _studio, _components, found = _handlers(studio)
-    outputs = found["add_pose"][0].fn(Image.new("RGB", (300, 400)), 0, [], "ru")
+    outputs = found["add_pose"][0].fn(Image.new("RGB", (300, 400)), 0, [], None, "ru")
     assert "не найден человек" in outputs[-2] and outputs[-1] is None
     assert not list(config.USER_POSE_DIR.glob("*.json")), "нераспознанная поза не сохраняется"
 
@@ -177,7 +177,7 @@ def test_sketch_opens_blank_and_accept_puts_the_drawing_into_the_cell(poses, mon
     layer = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
     layer.paste((0, 0, 0, 255), (400, 400, 600, 600))
     drawn = payload.encode(blank.background.convert("RGB"), layer)
-    outputs = found["accept_sketch"][0].fn(drawn, 2, [], "ru")
+    outputs = found["accept_sketch"][0].fn(drawn, 2, [], None, "ru")
     grid, slots, _tags, status, (window, message) = _split(outputs)
     pixels = np.asarray(grid[2].convert("L"))
     assert pixels[500, 500] == 0 and pixels[50, 50] == 255
@@ -186,6 +186,6 @@ def test_sketch_opens_blank_and_accept_puts_the_drawing_into_the_cell(poses, mon
 
 def test_sketch_without_a_canvas_keeps_the_window(poses):
     _studio, _components, found = _handlers()
-    outputs = found["accept_sketch"][0].fn("", 0, [], "ru")
+    outputs = found["accept_sketch"][0].fn("", 0, [], None, "ru")
     assert _untouched(outputs[-2]), "окно эскиза остаётся открытым"
     assert "пуст" in outputs[-1]

@@ -144,16 +144,23 @@ def _latin(char: str) -> bool:
     return unicodedata.name(char, "").startswith("LATIN")
 
 
-def build_user_message(prompt: str, reference_count: int) -> str:
+def build_user_message(prompt: str, reference_count: int, tags: list[str] | None = None) -> str:
     """Собирает сообщение пользователя для переписывателя.
 
     При двух и более референсах спецификация Qwen требует адресовать их тегами
     ``<imageN>``; при единственном теги запрещены.
+
+    ``tags`` — теги изображений, как их увидит модель, если они идут не
+    подряд. Так бывает при правке с маской: исходник — ``<image1>``, маска —
+    ``<image2>`` (переписывателю её не показывают), референсы — с
+    ``<image3>``. Нумерация подряд назвала бы первый референс ``<image2>``, и
+    переписанный промт ссылался бы на маску.
     """
-    if reference_count < 2:
+    if tags is None:
+        tags = [f"<image{index}>" for index in range(1, reference_count + 1)]
+    if len(tags) < 2:
         return prompt
-    tags = " ".join(f"<image{index}>" for index in range(1, reference_count + 1))
-    return f"Input images: {tags}\n\nInstruction: {prompt}"
+    return f"Input images: {' '.join(tags)}\n\nInstruction: {prompt}"
 
 
 def _read_system_prompt(prompt_dir: Path, filename: str) -> str:
@@ -172,6 +179,7 @@ def boost(
     prompt_dir: Path,
     references: list[Image.Image] | None = None,
     send_images: bool = True,
+    tags: list[str] | None = None,
 ) -> BoostResult:
     """Переписывает промт; изображения — подспорье, а не условие.
 
@@ -188,7 +196,7 @@ def boost(
     сохранить. К сообщению добавляется только ``BLIND_NOTE``.
     """
     system = _read_system_prompt(prompt_dir, _PROMPT_FILES[mode])
-    user = build_user_message(prompt, len(references or []))
+    user = build_user_message(prompt, len(references or []), tags)
     # Референсы уходят в модель только в режиме редактирования: переписывателю
     # T2I смотреть не на что, а лишние изображения удлиняют запрос.
     images = references if mode == MODE_EDIT else None

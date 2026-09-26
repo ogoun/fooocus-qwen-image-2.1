@@ -24,6 +24,7 @@ from ..prompting import boost as boost_module
 from ..prompting import library
 from ..storage import gallery
 from . import layout, reference_tools
+from . import references as references_module
 from .i18n import Localizer, pick, say, sentences
 from .references import (  # noqa: F401 — имена сетки остаются доступны как tab_generate.*
     _NO_TAG,
@@ -118,10 +119,6 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     if language is None:
         language = gr.State(lang)
 
-    # Референсы — по позициям слотов, с дырами: картинка или None на каждый
-    # из десяти. В модель уходят только заполненные (``filled``). Поначалу
-    # пустой список: слоты ещё никто не трогал.
-    references = gr.State([])
     # Исходный текст, по которому составлен переписанный промт. Нужен, чтобы
     # заметить, что промт с тех пор правили, а в модель по-прежнему уйдёт
     # старая переписка.
@@ -136,65 +133,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             # по строке растягиваются до общей высоты сами — сетка следует за
             # полем при любом размере окна.
             with gr.Row(equal_height=True, elem_classes=[layout.RESULT_ROW]):
-                # Сетка — два столбца по пять ячеек. Каждая ячейка — отдельное
-                # поле изображения: картинку кладут кликом или перетаскиванием,
-                # убирают её собственным крестиком. Ячейка принимает только
-                # загрузку: веб-камера и буфер обмена в поле в пару сантиметров
-                # добавили бы панель переключения источников крупнее самой ячейки.
-                with gr.Column(min_width=0, elem_classes=[layout.REFS_COL]):
-                    localizer.bind(
-                        gr.Markdown(pick("references", lang)),
-                        value=("Референсы", "References"),
-                    )
-                    reference_slots: list[gr.Image] = []
-                    reference_tags: list[gr.Markdown] = []
-                    pose_buttons: list[gr.Button] = []
-                    sketch_buttons: list[gr.Button] = []
-                    for _row in range(REFERENCE_ROWS):
-                        with gr.Row(equal_height=True, elem_classes=[layout.REF_ROW]):
-                            for _column in range(REFERENCE_COLUMNS):
-                                # Ячейка — картинка и под ней строка с тегом (см. slot_tags).
-                                with gr.Column(min_width=0, elem_classes=[layout.REF_CELL]):
-                                    reference_slots.append(
-                                        gr.Image(
-                                            type="pil",
-                                            image_mode="RGB",
-                                            sources=["upload"],
-                                            label="",
-                                            show_label=False,
-                                            buttons=[],
-                                            # Заглушка — пробел нулевой ширины.
-                                            # Пустую строку и обычный пробел Gradio
-                                            # считает «не задано» и пишет свою
-                                            # «Перетащите изображение сюда - или -
-                                            # Нажмите для загрузки», которая в
-                                            # ячейку не влезает и обрезается
-                                            # (проверено снимком). U+200B пробельным
-                                            # не считается ни в Python, ни в JS:
-                                            # заглушка задана, но невидима, и в
-                                            # ячейке остаётся один значок загрузки.
-                                            placeholder=chr(0x200B),
-                                            elem_classes=[layout.REF_SLOT],
-                                        )
-                                    )
-                                    # Значки «поза» и «эскиз» — поверх нижних
-                                    # углов картинки (CSS): под ячейкой места
-                                    # нет, в ней стоит тег. Окна — в
-                                    # reference_tools.
-                                    with gr.Row(elem_classes=[layout.REF_TOOLS]):
-                                        pose_buttons.append(gr.Button(
-                                            "🧍", size="sm", min_width=0, elem_classes=[layout.REF_POSE],
-                                        ))
-                                        sketch_buttons.append(gr.Button(
-                                            "✏️", size="sm", min_width=0, elem_classes=[layout.REF_SKETCH],
-                                        ))
-                                    reference_tags.append(
-                                        gr.Markdown(_NO_TAG, elem_classes=[layout.REF_TAG])
-                                    )
-                    reference_clear = localizer.bind(
-                        gr.Button(pick("reference_clear", lang), size="sm"),
-                        value=("Очистить референсы", "Clear references"),
-                    )
+                # Сетка — два столбца по пять ячеек (см. references.build_grid).
+                grid = references_module.build_grid(localizer, lang)
 
                 result = localizer.bind(
                     gr.Gallery(
@@ -394,36 +334,6 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     # --- обработчики ---
 
-    def slots_changed(*values):
-        """Пересобирает референсы из всех десяти слотов разом.
-
-        Источник истины — то, что сейчас стоит в слотах, а не история
-        изменений: слот меняют в любом порядке и чистят крестиком, и
-        дописывать к накопленному списку значило бы рано или поздно
-        разойтись с экраном. Вызывается событием ``input``, то есть только
-        на действие человека: программная запись в слот («Отправить в
-        референсы») его не порождает, и ответ обработчика не зацикливается.
-        """
-        *images, lang = values
-        grid = _grid(images)
-        return (
-            grid,
-            # Сами ячейки не трогаются: картинка в них уже стоит, её туда
-            # положил человек, а переслать её обратно — лишний круг в браузер.
-            *(gr.update() for _ in grid),
-            *slot_tags(grid, lang),
-            say("references_counted", lang, count=len(filled(grid)), total=MAX_REFERENCES),
-        )
-
-    def clear_references(lang):
-        grid = _grid([])
-        return (
-            grid,
-            *(gr.update(value=None) for _ in grid),
-            *slot_tags(grid, lang),
-            say("references_cleared", lang),
-        )
-
     def rewrite(prompt_text, current_references, ratio_value, lang):
         """Переписывает промт и сразу включает буст.
 
@@ -604,27 +514,12 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         )
         return gr.update(choices=library.list_prompts(config.PROMPT_DIR), value=None), message
 
-    # Все слоты — один обработчик на событие каждого: список собирается из
-    # десяти значений разом (см. ``slots_changed``).
-    #
-    # Индикатор выполнения скрыт: все десять слотов — выходы обработчика, и
-    # на время запроса Gradio накрывает свои выходы индикатором — десять
-    # крутилок ради одной ячейки. Итог и так виден в подписях и в строке
-    # состояния. Замечание для проверяющего: текст «0.0s» в ``innerText``
-    # ячейки есть всегда — индикатор лежит в разметке с нулевой
-    # прозрачностью, — и видимым таймером это не является.
-    reference_targets = [references, *reference_slots, *reference_tags, status]
-    for slot in reference_slots:
-        slot.input(
-            slots_changed, [*reference_slots, language], reference_targets,
-            queue=False, show_progress="hidden",
-        )
-    reference_clear.click(
-        clear_references, language, reference_targets, queue=False, show_progress="hidden",
-    )
-    tools = reference_tools.build(
-        studio, localizer, lang, language, references, reference_targets, pose_buttons, sketch_buttons,
-    )
+    # Референсы — по позициям ячеек, с дырами: картинка или None на каждую
+    # из десяти. В модель уходят только заполненные (``filled``).
+    references = grid.state
+    reference_targets = grid.targets(status)
+    references_module.wire(grid, language, status)
+    tools = reference_tools.build(studio, localizer, lang, language, grid, status)
     boost_now.click(
         rewrite,
         [prompt, references, ratio, language],
@@ -662,11 +557,11 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     return {
         **tools,
-        "pose_buttons": pose_buttons,
-        "sketch_buttons": sketch_buttons,
+        "pose_buttons": grid.pose_buttons,
+        "sketch_buttons": grid.sketch_buttons,
         "reference_targets": reference_targets,
-        "reference_slots": reference_slots,
-        "reference_tags": reference_tags,
+        "reference_slots": grid.slots,
+        "reference_tags": grid.tags,
         "send_to_edit": send_to_edit,
         "selected": selected,
         "prompt": prompt,

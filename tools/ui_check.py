@@ -224,10 +224,26 @@ def scenario_layout(browser, url, report: Report) -> None:
                 return out;
             }""")
             if tab == 1:
-                painter_width = page.evaluate(f"() => document.getElementById('{PAINTER}').getBoundingClientRect().width")
-                column_width = page.evaluate(f"() => document.getElementById('{PAINTER}').parentElement.getBoundingClientRect().width")
-                if painter_width < column_width * 0.95:
-                    problems.append(f"кисть уже колонки: {painter_width:.0f} из {column_width:.0f}px")
+                # Кисть делит строку с сеткой референсов и обязана занять всё,
+                # что сетке не нужно (прежний дефект: 567 px в колонке 1351).
+                painter_width, free_width = page.evaluate(f"""() => {{
+                    const painter = document.getElementById('{PAINTER}');
+                    const row = painter.parentElement;
+                    const refs = row.querySelector('.qs-refs');
+                    const gap = parseFloat(getComputedStyle(row).columnGap) || 0;
+                    const taken = refs ? refs.getBoundingClientRect().width + gap : 0;
+                    return [painter.getBoundingClientRect().width, row.getBoundingClientRect().width - taken];
+                }}""")
+                if painter_width < free_width * 0.95:
+                    problems.append(f"кисть уже свободного места: {painter_width:.0f} из {free_width:.0f}px")
+                # В раскладке «рядом» (шире 2000 px) кисть и результат —
+                # одного размера: сетка слева не отнимает ширину у кисти.
+                if width > 2000:
+                    result_width = page.evaluate(
+                        "() => document.querySelector('.qs-slot-result .qs-board').getBoundingClientRect().width"
+                    )
+                    if abs(painter_width - result_width) > 2:
+                        problems.append(f"кисть и результат разной ширины: {painter_width:.0f} и {result_width:.0f}px")
             report.check(not problems, f"{width}x{height} вкладка {tab + 1}" + (f": {problems}" if problems else ""))
         report.check(not errors, f"{width}x{height} без ошибок страницы" + (f": {errors[:2]}" if errors else ""))
         page.close()
@@ -511,7 +527,7 @@ def scenario_send(browser, url, report: Report, fake: FakeGenerator) -> None:
 # тег в свою строку. Последнее проверяется шириной, а не текстом: подпись
 # «<image1>», обрезанная до «<im», в innerText остаётся целой — так первая
 # редакция сетки и прошла текстовую проверку с нечитаемыми тегами.
-SLOTS_JS = """() => [...document.querySelectorAll('.qs-refcell')].map(cell => {
+SLOTS_JS = """() => [...document.querySelectorAll('.qs-refcell')].filter(cell => cell.getBoundingClientRect().width > 0).map(cell => {
     const img = cell.querySelector('.qs-refslot img');
     const tag = cell.querySelector('.qs-reftag');
     const inner = tag.querySelector('code') || tag;
@@ -707,39 +723,49 @@ def scenario_references(browser, url, report: Report, fake: FakeGenerator, sampl
     page.close()
 
 
-def modal_open(page, index: int = 0) -> bool:
-    """Открыто ли окно: Gradio скрытую колонку не рисует, открытая — видна."""
-    return page.evaluate(f"""() => {{
-        const m = [...document.querySelectorAll('.qs-modal')][{index}];
-        if (!m) return false;
-        const r = m.getBoundingClientRect();
-        return r.width > 0 && r.height > 0 && getComputedStyle(m).display !== 'none';
-    }}""")
+VISIBLE_MODAL_JS = """() => [...document.querySelectorAll('.qs-modal')]
+    .find(m => m.getBoundingClientRect().width > 0 && getComputedStyle(m).display !== 'none')"""
 
 
-def wait_modal(page, index: int, opened: bool, timeout: int = 20000) -> None:
-    page.wait_for_function(
-        f"""() => {{
-            const m = [...document.querySelectorAll('.qs-modal')][{index}];
-            const shown = !!m && m.getBoundingClientRect().width > 0 && getComputedStyle(m).display !== 'none';
-            return shown === {str(opened).lower()};
-        }}""",
-        timeout=timeout,
-    )
+def wait_modal(page, opened: bool, timeout: int = 20000) -> None:
+    """Ждёт, пока окно откроется или закроется. Окон на странице четыре (поза и
+    эскиз на двух вкладках), Gradio скрытое не рисует — смотрится видимое."""
+    page.wait_for_function(f"() => !!({VISIBLE_MODAL_JS})() === {str(opened).lower()}", timeout=timeout)
 
 
 def pose_tiles_loaded(page) -> int:
     return page.evaluate(
-        "() => [...document.querySelectorAll('.qs-posegrid img')]"
+        f"() => [...(({VISIBLE_MODAL_JS})()?.querySelectorAll('.qs-posegrid img') || [])]"
         ".filter(i => i.complete && i.naturalWidth > 0).length"
     )
 
 
-def modal_message(page, index: int) -> str:
-    return page.evaluate(
-        f"() => ([...document.querySelectorAll('.qs-modal')][{index}]"
-        f"?.querySelector('.qs-modalmessage')?.innerText || '').trim()"
+def wait_pose_tiles(page, count: int, timeout: int = 60000) -> None:
+    page.wait_for_function(
+        f"() => [...(({VISIBLE_MODAL_JS})()?.querySelectorAll('.qs-posegrid img') || [])]"
+        f".filter(i => i.complete && i.naturalWidth > 0).length >= {count}",
+        timeout=timeout,
     )
+
+
+def modal_message(page) -> str:
+    return page.evaluate(
+        f"() => (({VISIBLE_MODAL_JS})()?.querySelector('.qs-modalmessage')?.innerText || '').trim()"
+    )
+
+
+def visible_icons(page) -> list[list[dict]]:
+    """Значки видимых ячеек (открытой вкладки): лежат ли поверх картинки, есть ли подсказка."""
+    return page.evaluate("""() => [...document.querySelectorAll('.qs-refcell')]
+        .filter(cell => cell.getBoundingClientRect().width > 0).map(cell => {
+        const slot = cell.querySelector('.qs-refslot').getBoundingClientRect();
+        return [...cell.querySelectorAll('.qs-refpose, .qs-refsketch')].map(b => {
+            const r = b.getBoundingClientRect();
+            return {inside: r.left >= slot.left - 1 && r.right <= slot.right + 1
+                            && r.top >= slot.top - 1 && r.bottom <= slot.bottom + 1,
+                    title: b.title, size: Math.round(r.width)};
+        });
+    })""")
 
 
 def scenario_tools(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
@@ -749,22 +775,16 @@ def scenario_tools(browser, url, report: Report, fake: FakeGenerator, samples: P
     оказываются в запросе генерации ровно в тех ячейках, куда их положили.
     Распознавание позы — настоящее (DWPose на процессоре), генератор —
     подставной: плитка новой позы — его ответ, важно лишь, что запрос пришёл
-    с тем промтом и единственным референсом-скелетом.
+    с тем промтом и единственным референсом-скелетом. Вторая часть — те же
+    ячейки на вкладке правки: сетка в рост кисти, теги со сдвигом на исходник
+    и маску, референсы в запросе правки.
     """
     from fooocus_qwen.poses import library, tile
 
     print("поза и эскиз в ячейке:")
     page, errors = fresh_page(browser, url)
 
-    icons = page.evaluate("""() => [...document.querySelectorAll('.qs-refcell')].map(cell => {
-        const slot = cell.querySelector('.qs-refslot').getBoundingClientRect();
-        return [...cell.querySelectorAll('.qs-refpose, .qs-refsketch')].map(b => {
-            const r = b.getBoundingClientRect();
-            return {inside: r.left >= slot.left - 1 && r.right <= slot.right + 1
-                            && r.top >= slot.top - 1 && r.bottom <= slot.bottom + 1,
-                    title: b.title, size: Math.round(r.width)};
-        });
-    })""")
+    icons = visible_icons(page)
     flat = [icon for cell in icons for icon in cell]
     report.check(len(icons) == 10 and all(len(cell) == 2 for cell in icons),
                  f"на каждой из десяти ячеек два значка: {[len(cell) for cell in icons]}")
@@ -773,64 +793,53 @@ def scenario_tools(browser, url, report: Report, fake: FakeGenerator, samples: P
                  f"у значков есть подсказки: «{flat[0]['title']}», «{flat[1]['title']}»")
 
     # --- поза из каталога — в третью ячейку ---
-    page.locator(".qs-refpose").nth(2).click()
-    wait_modal(page, 0, True)
+    page.locator(".qs-refpose:visible").nth(2).click()
+    wait_modal(page, True)
     catalog = len(library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR))
-    page.wait_for_function(
-        f"() => [...document.querySelectorAll('.qs-posegrid img')]"
-        f".filter(i => i.complete && i.naturalWidth > 0).length >= {catalog + 1}",
-        timeout=60000,
-    )
+    wait_pose_tiles(page, catalog + 1)
     report.check(pose_tiles_loaded(page) == catalog + 1,
                  f"в окне {catalog} поз и плитка «Добавить позу»: {pose_tiles_loaded(page)}")
-    box = page.evaluate("() => { const r = [...document.querySelectorAll('.qs-modal')][0].getBoundingClientRect();"
+    box = page.evaluate(f"() => {{ const r = ({VISIBLE_MODAL_JS})().getBoundingClientRect();"
                         " return [r.left, r.top, r.width, r.height].map(Math.round); }")
     report.check(box[0] == 0 and box[1] == 0 and box[2] >= 1900 and box[3] >= 1070,
                  f"окно накрывает страницу целиком: {box}")
     shot = samples.parent / "pose-window.png"
     page.screenshot(path=str(shot))
     print(f"  снимок окна поз: {shot}")
-    page.locator(".qs-posegrid img").first.click()
+    page.locator(".qs-posegrid:visible img").first.click()
     wait_loaded(page, [2])
-    wait_modal(page, 0, False)
+    wait_modal(page, False)
     report.check(True, "плитка каталога: скелет в ячейке 3, окно закрылось")
 
     # --- «Добавить позу» по фото — в первую ячейку ---
-    page.locator(".qs-refpose").nth(0).click()
-    wait_modal(page, 0, True)
-    page.wait_for_function(
-        f"() => document.querySelectorAll('.qs-posegrid img').length >= {catalog + 1}", timeout=60000
-    )
-    page.locator(".qs-posegrid img").last.click()
-    page.wait_for_selector(".qs-posephoto input[type=file]", state="attached", timeout=20000)
-    report.check("распозна" in modal_message(page, 0), f"подсказка к фото: «{modal_message(page, 0)[:60]}…»")
+    page.locator(".qs-refpose:visible").nth(0).click()
+    wait_modal(page, True)
+    wait_pose_tiles(page, catalog + 1)
+    page.locator(".qs-posegrid:visible img").last.click()
+    page.wait_for_selector(".qs-posephoto:visible input[type=file]", state="attached", timeout=20000)
+    report.check("распозна" in modal_message(page), f"подсказка к фото: «{modal_message(page)[:60]}…»")
     photo = samples / "pose_photo.jpg"
     shutil.copy(config.POSE_LIBRARY_DIR / "dance_02.jpg", photo)
     before = len(fake.requests)
-    page.locator(".qs-posephoto input[type=file]").set_input_files(str(photo))
+    page.locator(".qs-posephoto:visible input[type=file]").set_input_files(str(photo))
     wait_loaded(page, [0, 2], timeout=60000)
     request = fake.wait(before + 1, timeout=60)
     report.check(request.prompt == tile.PROMPT and len(request.references) == 1,
                  f"плитка новой позы заказана модели: скелет-референс {request.references[0].size}")
     page.wait_for_function(
-        "() => ([...document.querySelectorAll('.qs-modal')][0]?.innerText || '').includes('Плитка готова')",
-        timeout=60000,
+        f"() => (({VISIBLE_MODAL_JS})()?.innerText || '').includes('Плитка готова')", timeout=60000,
     )
     custom = library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR)[catalog:]
     report.check(len(custom) == 1 and custom[0].tile.exists() and custom[0].thumb.exists(),
                  f"своя поза сохранена с плиткой: {[entry.name for entry in custom]}")
-    page.wait_for_function(
-        f"() => [...document.querySelectorAll('.qs-posegrid img')]"
-        f".filter(i => i.complete && i.naturalWidth > 0).length >= {catalog + 2}",
-        timeout=20000,
-    )
+    wait_pose_tiles(page, catalog + 2, timeout=20000)
     report.check(True, "новая поза встала в окно перед «Добавить позу»")
     click_text(page, "Закрыть")
-    wait_modal(page, 0, False)
+    wait_modal(page, False)
 
     # --- эскиз — во вторую ячейку; «Отмена» — пятая остаётся пустой ---
-    page.locator(".qs-refsketch").nth(1).click()
-    wait_modal(page, 1, True)
+    page.locator(".qs-refsketch:visible").nth(1).click()
+    wait_modal(page, True)
     page.wait_for_function(
         "() => (window.__qsPainters || {})['qs-sketch-painter']?.state().width > 0", timeout=20000
     )
@@ -841,13 +850,13 @@ def scenario_tools(browser, url, report: Report, fake: FakeGenerator, samples: P
     print(f"  снимок окна эскиза: {shot}")
     click_text(page, "Принять")
     wait_loaded(page, [0, 1, 2])
-    wait_modal(page, 1, False)
+    wait_modal(page, False)
     report.check(True, "«Принять»: эскиз в ячейке 2, окно закрылось")
 
-    page.locator(".qs-refsketch").nth(4).click()
-    wait_modal(page, 1, True)
+    page.locator(".qs-refsketch:visible").nth(4).click()
+    wait_modal(page, True)
     click_text(page, "Отмена")
-    wait_modal(page, 1, False)
+    wait_modal(page, False)
     report.check(not reference_slots(page)[4]["loaded"], "«Отмена» закрывает окно, ячейка 5 пуста")
 
     # --- модель получает ровно это и в этом порядке ---
@@ -866,6 +875,49 @@ def scenario_tools(browser, url, report: Report, fake: FakeGenerator, samples: P
     centre, corner = sketch_img[500:524, 500:524].mean(), sketch_img[40:80, 900:980].mean()
     report.check(centre < 128 < corner,
                  f"эскиз: мазок в центре тёмный ({centre:.0f}), холст белый ({corner:.0f})")
+
+    # --- вкладка правки: своя сетка слева от кисти ---
+    open_tab(page, 1)
+    load_into_painter(page, sample_image(samples, 1024, 768))
+    stroke(page, [(0.6, 0.6), (0.8, 0.8)])
+    geometry = page.evaluate(f"""() => {{
+        const painter = document.getElementById('{PAINTER}').getBoundingClientRect();
+        const refs = [...document.querySelectorAll('.qs-refs')].find(r => r.getBoundingClientRect().width > 0)
+            .getBoundingClientRect();
+        return {{refs: [refs.top, refs.bottom, refs.right].map(Math.round),
+                 painter: [painter.top, painter.bottom, painter.left].map(Math.round)}};
+    }}""")
+    (refs_top, refs_bottom, refs_right), (painter_top, painter_bottom, painter_left) = (
+        geometry["refs"], geometry["painter"])
+    report.check(abs(refs_top - painter_top) <= 2 and abs(refs_bottom - painter_bottom) <= 2,
+                 f"правка: сетка в рост кисти: {refs_top}–{refs_bottom} и {painter_top}–{painter_bottom}")
+    report.check(refs_right <= painter_left + 1, f"правка: сетка левее кисти: {refs_right} ≤ {painter_left}")
+    icons = visible_icons(page)
+    report.check(len(icons) == 10 and all(icon["title"] for cell in icons for icon in cell),
+                 "правка: десять ячеек, у значков есть подсказки (вкладка отрисована после загрузки)")
+    report.check(not any(slot["loaded"] for slot in reference_slots(page)),
+                 "правка: своя сетка, референсы генерации сюда не попали")
+
+    page.locator(".qs-refpose:visible").nth(0).click()
+    wait_modal(page, True)
+    wait_pose_tiles(page, catalog + 2)
+    page.locator(".qs-posegrid:visible img").first.click()
+    wait_loaded(page, [0])
+    wait_modal(page, False)
+    tag = wait_label(page, 0, "<image3>")
+    report.check(True, f"правка, режим «Маска»: исходник и маска впереди, референс — «{tag}»")
+    page.get_by_label("Без области — править весь кадр", exact=True).check()
+    tag = wait_label(page, 0, "<image2>")
+    report.check(True, f"правка, «Без области»: маски нет, референс — «{tag}»")
+    page.get_by_label("Маска", exact=True).check()
+    wait_label(page, 0, "<image3>")
+
+    count = len(fake.requests)
+    apply_edit(page, "put the dancer from <image3> into the marked area")
+    request = fake.wait(count + 1)
+    sizes = [image.size for image in request.references]
+    report.check(sizes == [(768, 768)] and request.mask is not None,
+                 f"правка: в запрос ушли маска и референс-поза: {sizes}")
     report.check(not errors, "без ошибок страницы" + (f": {errors[:2]}" if errors else ""))
 
 
