@@ -2,9 +2,9 @@
 
 Компоновка повторяет Fooocus: наверху результат, под ним строка промта и одна
 кнопка, а всё остальное спрятано за переключателем «Продвинутое». Референсы —
-сетка из десяти слотов слева от результата, два ряда по пять: картинку кладут
-в слот кликом или перетаскиванием, и заполненный слот подписан тегом, которым
-на него ссылаются из промта.
+сетка из десяти ячеек слева от результата, два столбца по пять, в рост поля
+результата: картинку кладут в ячейку кликом или перетаскиванием, и под
+заполненной ячейкой стоит тег, которым на неё ссылаются из промта.
 """
 
 from __future__ import annotations
@@ -31,10 +31,11 @@ from .tab_edit import chosen_path, remember_selection
 
 LOGGER = logging.getLogger(__name__)
 
-# Сетка референсов слева от результата: два ряда по пять. Десять — предел
-# самой модели (карточка Qwen-Image-2.1), и сетка ровно его покрывает.
-REFERENCE_ROWS = 2
-REFERENCE_COLUMNS = 5
+# Сетка референсов слева от результата: два столбца по пять ячеек, в рост
+# поля результата. Десять — предел самой модели (карточка Qwen-Image-2.1), и
+# сетка ровно его покрывает. Нумерация — по рядам: первый ряд — ячейки 1 и 2.
+REFERENCE_ROWS = 5
+REFERENCE_COLUMNS = 2
 MAX_REFERENCES = REFERENCE_ROWS * REFERENCE_COLUMNS
 
 
@@ -203,79 +204,81 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     boost_source = gr.State("")
 
     with gr.Row(elem_classes=[layout.WORK_ROW]):
-        # Сетка референсов — слева от результата, два ряда по пять слотов.
-        # Каждый слот — отдельное поле изображения: картинку кладут кликом или
-        # перетаскиванием, убирают его собственным крестиком. Слот принимает
-        # только загрузку: веб-камера и буфер обмена в ячейке в пару
-        # сантиметров добавили бы панель переключения источников крупнее
-        # самой ячейки.
-        with gr.Column(min_width=0, elem_classes=[layout.REFS_COL]):
-            localizer.bind(
-                gr.Markdown(pick("references_hint", lang)),
-                value=(
-                    "**Референсы** — нажмите на ячейку или перетащите в неё картинку",
-                    "**References** — click a cell or drop an image onto it",
-                ),
-            )
-            reference_slots: list[gr.Image] = []
-            reference_tags: list[gr.Markdown] = []
-            for _row in range(REFERENCE_ROWS):
-                with gr.Row(equal_height=True):
-                    for _column in range(REFERENCE_COLUMNS):
-                        # Ячейка — картинка и под ней строка с тегом (см. slot_tags).
-                        with gr.Column(min_width=0, elem_classes=[layout.REF_CELL]):
-                            reference_slots.append(
-                                gr.Image(
-                                    type="pil",
-                                    image_mode="RGB",
-                                    sources=["upload"],
-                                    label="",
-                                    show_label=False,
-                                    buttons=[],
-                                    # Заглушка — пробел нулевой ширины. Пустую
-                                    # строку и обычный пробел Gradio считает «не
-                                    # задано» и пишет свою «Перетащите изображение
-                                    # сюда - или - Нажмите для загрузки», которая
-                                    # в ячейку в семьдесят пикселей не влезает и
-                                    # обрезается (проверено снимком). U+200B
-                                    # пробельным не считается ни в Python, ни в JS:
-                                    # заглушка задана, но невидима, и в ячейке
-                                    # остаётся один значок загрузки. «+» рядом с
-                                    # ним (первая редакция) был вторым символом
-                                    # того же смысла.
-                                    placeholder=chr(0x200B),
-                                    elem_classes=[layout.REF_SLOT],
-                                )
-                            )
-                            reference_tags.append(
-                                gr.Markdown(_NO_TAG, elem_classes=[layout.REF_TAG])
-                            )
-            reference_clear = localizer.bind(
-                gr.Button(pick("reference_clear", lang), size="sm"),
-                value=("Очистить референсы", "Clear references"),
-            )
-
         with gr.Column(min_width=layout.CANVAS_MIN_WIDTH, elem_classes=[layout.CANVAS_COL]):
-            result = localizer.bind(
-                gr.Gallery(
-                    label=pick("result", lang),
-                    show_label=True,
-                    columns=2,
-                    elem_classes=[layout.BOARD],
-                    object_fit="contain",
-                    format="png",
-                    # Только для чтения: поле результата — выход, и зазывать
-                    # «перетащить файл сюда» ему незачем.
-                    interactive=False,
-                    # Крупный просмотр с лентой миниатюр под ним. Без него
-                    # сетка в две колонки отдавала единственному
-                    # изображению — а это значение по умолчанию — половину
-                    # ширины холста, и вторая половина стояла пустой.
-                    preview=True,
-                    buttons=layout.GALLERY_BUTTONS,
-                ),
-                label=("Результат", "Result"),
-            )
+            # Сетка референсов и поле результата — в одной строке, и это ради
+            # высоты: столбцы сетки обязаны быть ровно в рост поля результата.
+            # Высоту поля задаёт CSS (пропорция и потолок по окну), и сравнять
+            # с ней отдельную колонку рабочей строки было бы нечем; соседи же
+            # по строке растягиваются до общей высоты сами — сетка следует за
+            # полем при любом размере окна.
+            with gr.Row(equal_height=True, elem_classes=[layout.RESULT_ROW]):
+                # Сетка — два столбца по пять ячеек. Каждая ячейка — отдельное
+                # поле изображения: картинку кладут кликом или перетаскиванием,
+                # убирают её собственным крестиком. Ячейка принимает только
+                # загрузку: веб-камера и буфер обмена в поле в пару сантиметров
+                # добавили бы панель переключения источников крупнее самой ячейки.
+                with gr.Column(min_width=0, elem_classes=[layout.REFS_COL]):
+                    localizer.bind(
+                        gr.Markdown(pick("references", lang)),
+                        value=("Референсы", "References"),
+                    )
+                    reference_slots: list[gr.Image] = []
+                    reference_tags: list[gr.Markdown] = []
+                    for _row in range(REFERENCE_ROWS):
+                        with gr.Row(equal_height=True, elem_classes=[layout.REF_ROW]):
+                            for _column in range(REFERENCE_COLUMNS):
+                                # Ячейка — картинка и под ней строка с тегом (см. slot_tags).
+                                with gr.Column(min_width=0, elem_classes=[layout.REF_CELL]):
+                                    reference_slots.append(
+                                        gr.Image(
+                                            type="pil",
+                                            image_mode="RGB",
+                                            sources=["upload"],
+                                            label="",
+                                            show_label=False,
+                                            buttons=[],
+                                            # Заглушка — пробел нулевой ширины.
+                                            # Пустую строку и обычный пробел Gradio
+                                            # считает «не задано» и пишет свою
+                                            # «Перетащите изображение сюда - или -
+                                            # Нажмите для загрузки», которая в
+                                            # ячейку не влезает и обрезается
+                                            # (проверено снимком). U+200B пробельным
+                                            # не считается ни в Python, ни в JS:
+                                            # заглушка задана, но невидима, и в
+                                            # ячейке остаётся один значок загрузки.
+                                            placeholder=chr(0x200B),
+                                            elem_classes=[layout.REF_SLOT],
+                                        )
+                                    )
+                                    reference_tags.append(
+                                        gr.Markdown(_NO_TAG, elem_classes=[layout.REF_TAG])
+                                    )
+                    reference_clear = localizer.bind(
+                        gr.Button(pick("reference_clear", lang), size="sm"),
+                        value=("Очистить референсы", "Clear references"),
+                    )
+
+                result = localizer.bind(
+                    gr.Gallery(
+                        label=pick("result", lang),
+                        show_label=True,
+                        columns=2,
+                        elem_classes=[layout.BOARD],
+                        object_fit="contain",
+                        format="png",
+                        # Только для чтения: поле результата — выход, и зазывать
+                        # «перетащить файл сюда» ему незачем.
+                        interactive=False,
+                        # Крупный просмотр с лентой миниатюр под ним. Без него
+                        # сетка в две колонки отдавала единственному
+                        # изображению — а это значение по умолчанию — половину
+                        # ширины холста, и вторая половина стояла пустой.
+                        preview=True,
+                        buttons=layout.GALLERY_BUTTONS,
+                    ),
+                    label=("Результат", "Result"),
+                )
             # Результат — в кисть правки, с переходом на её вкладку. Связывается
             # в app.py: вкладка правки собирается после этой.
             with gr.Row():

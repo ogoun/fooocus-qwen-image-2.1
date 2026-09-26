@@ -176,9 +176,9 @@ def _split(outputs):
     return state, rest[:N], rest[N: 2 * N], rest[2 * N]
 
 
-def test_the_grid_is_two_rows_of_five():
-    assert tab_generate.REFERENCE_ROWS == 2
-    assert tab_generate.REFERENCE_COLUMNS == 5
+def test_the_grid_is_two_columns_of_five():
+    assert tab_generate.REFERENCE_ROWS == 5
+    assert tab_generate.REFERENCE_COLUMNS == 2
     assert tab_generate.REFERENCE_ROWS * tab_generate.REFERENCE_COLUMNS == tab_generate.MAX_REFERENCES == N
 
 
@@ -329,7 +329,8 @@ def test_clear_empties_every_cell():
 
 
 def test_the_grid_stands_left_of_the_result():
-    """Десять ячеек в колонке левее холста результата, два ряда по пять."""
+    """Десять ячеек в колонке левее поля результата: пять рядов по две ячейки,
+    колонка сетки — в одной строке с полем, чтобы быть в его рост."""
     from fooocus_qwen.ui import layout
 
     studio = Studio(config.AppConfig())
@@ -349,20 +350,22 @@ def test_the_grid_stands_left_of_the_result():
         assert layout.REF_CELL in (slot.parent.elem_classes or [])
 
     rows = {id(slot.parent.parent) for slot in slots}
-    assert len(rows) == tab_generate.REFERENCE_ROWS, "ячейки стоят в двух рядах"
+    assert len(rows) == tab_generate.REFERENCE_ROWS, "ячейки стоят в пяти рядах"
+    assert all(layout.REF_ROW in (slot.parent.parent.elem_classes or []) for slot in slots)
     for row_id in rows:
         assert sum(1 for slot in slots if id(slot.parent.parent) == row_id) == tab_generate.REFERENCE_COLUMNS
 
-    # Колонка сетки и колонка холста — соседи в рабочей строке, сетка первой.
+    # Колонка сетки и поле результата — соседи в одной строке, сетка первой;
+    # строка стоит в колонке холста. Равную высоту обеспечивает CSS — её
+    # проверяет браузерная проверка (tools/ui_check.py).
     grid_column = slots[0].parent.parent.parent
     assert layout.REFS_COL in (grid_column.elem_classes or [])
-    canvas_column = components["result"].parent
-    while layout.CANVAS_COL not in (canvas_column.elem_classes or []):
-        canvas_column = canvas_column.parent
-    work_row = grid_column.parent
-    assert canvas_column.parent is work_row
-    children = list(work_row.children)
-    assert children.index(grid_column) < children.index(canvas_column)
+    result_row = grid_column.parent
+    assert layout.RESULT_ROW in (result_row.elem_classes or [])
+    assert components["result"].parent is result_row
+    children = list(result_row.children)
+    assert children.index(grid_column) < children.index(components["result"])
+    assert layout.CANVAS_COL in (result_row.parent.elem_classes or [])
     assert demo is not None
 
 

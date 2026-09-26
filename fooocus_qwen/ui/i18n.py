@@ -89,10 +89,7 @@ T: dict[str, tuple[str, str]] = {
         "Ускоряет генерацию. Переключение меняет результат при том же сиде.",
         "Speeds generation up. Toggling it changes the result for the same seed.",
     ),
-    "references_hint": (
-        "**Референсы** — нажмите на ячейку или перетащите в неё картинку",
-        "**References** — click a cell or drop an image onto it",
-    ),
+    "references": ("Референсы", "References"),
     "reference_clear": ("Очистить референсы", "Clear references"),
     "boost": ("AI буст", "AI boost"),
     "boost_info": (

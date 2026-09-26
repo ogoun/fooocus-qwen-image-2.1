@@ -248,7 +248,7 @@ RTX 3090 it makes a step 15–25% faster at 1536 px and above.
 ### Reference images
 
 References live in a grid of ten cells to the left of the result on the
-Generate tab — two rows of five, empty by default. Click a cell to pick a
+Generate tab — two columns of five, as tall as the result, empty by default. Click a cell to pick a
 file or drop an image onto it; the cross in a cell's corner clears it, and
 **Clear references** under the grid empties them all.
 

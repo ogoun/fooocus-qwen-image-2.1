@@ -563,7 +563,8 @@ def wait_label(page, index: int, fragment: str, timeout: int = 20000) -> str:
 
 
 def scenario_references(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
-    """Сетка референсов: два ряда по пять слева от результата, клик и перетаскивание.
+    """Сетка референсов: два столбца по пять слева от результата и в его рост;
+    клик и перетаскивание.
 
     Проверяется вся дорога: ячейка в сетке → подпись тегом → запрос к модели.
     Подпись и запрос обязаны сходиться: тег считается по порядку заполненных
@@ -573,26 +574,65 @@ def scenario_references(browser, url, report: Report, fake: FakeGenerator, sampl
     print("сетка референсов:")
     page, errors = fresh_page(browser, url)
 
-    geometry = page.evaluate("""() => {
-        const visible = el => el && el.getBoundingClientRect().width > 0;
-        const refs = [...document.querySelectorAll('.qs-refs')].find(visible);
-        const canvas = [...document.querySelectorAll('.qs-canvas')].find(visible);
-        const cells = [...document.querySelectorAll('.qs-refslot')]
-            .map(s => s.getBoundingClientRect()).filter(r => r.width > 0);
-        return {
-            refsRight: refs.getBoundingClientRect().right,
-            canvasLeft: canvas.getBoundingClientRect().left,
-            rows: [...new Set(cells.map(r => Math.round(r.top)))].length,
-            count: cells.length,
-            squares: cells.every(r => Math.abs(r.width - r.height) <= 2),
-            width: Math.round(cells[0].width),
-        };
-    }""")
-    report.check(geometry["count"] == 10, f"слотов десять: {geometry['count']}")
-    report.check(geometry["rows"] == 2, f"слоты в два ряда: {geometry['rows']}")
-    report.check(geometry["refsRight"] <= geometry["canvasLeft"] + 1,
-                 f"сетка левее результата: {geometry['refsRight']:.0f} ≤ {geometry['canvasLeft']:.0f}")
-    report.check(geometry["squares"], f"ячейки квадратные, {geometry['width']} px")
+    # Геометрия — на трёх окнах: высота сетки привязана к полю результата,
+    # а поле меняет высоту с окном (пропорция и потолок), и совпадение на
+    # одном размере ещё не значит, что сетка следует за полем.
+    for width, height in ((1920, 1080), (2560, 1440), (1280, 800)):
+        page.set_viewport_size({"width": width, "height": height})
+        page.wait_for_timeout(300)
+        geometry = page.evaluate("""() => {
+            const visible = el => el && el.getBoundingClientRect().width > 0;
+            const refs = [...document.querySelectorAll('.qs-refs')].find(visible).getBoundingClientRect();
+            const board = [...document.querySelectorAll('.qs-resultrow > .qs-board')].find(visible).getBoundingClientRect();
+            const cells = [...document.querySelectorAll('.qs-refslot')]
+                .map(s => s.getBoundingClientRect()).filter(r => r.width > 0);
+            return {
+                refs: [refs.top, refs.bottom, refs.right].map(Math.round),
+                board: [board.top, board.bottom, board.left].map(Math.round),
+                bottomCell: Math.round(Math.max(...cells.map(r => r.bottom))),
+                rows: [...new Set(cells.map(r => Math.round(r.top)))].length,
+                columns: [...new Set(cells.map(r => Math.round(r.left)))].length,
+                count: cells.length,
+                ratio: Math.max(...cells.map(r => Math.max(r.width / r.height, r.height / r.width))),
+                cell: [Math.round(cells[0].width), Math.round(cells[0].height)],
+                // Цепочка от поля картинки вверх до колонки сетки — для
+                // диагноза, если ячейки не заполняют высоту.
+                chain: (() => {
+                    const out = [];
+                    let el = [...document.querySelectorAll('.qs-refslot')].find(visible);
+                    while (el && !el.classList.contains('qs-resultrow')) {
+                        const s = getComputedStyle(el);
+                        out.push(`${el.className.split(' ').slice(0, 3).join('.')}: ${Math.round(el.getBoundingClientRect().height)} ` +
+                                 `[${s.display} ${s.flexDirection} flex=${s.flex} minh=${s.minHeight} h=${s.height} gap=${s.rowGap}]`);
+                        el = el.parentElement;
+                    }
+                    const refsCol = [...document.querySelectorAll('.qs-refs')].find(visible);
+                    for (const child of refsCol.children) {
+                        const s = getComputedStyle(child);
+                        out.push(`  ↳ ${child.className.split(' ').slice(0, 3).join('.')}: ${Math.round(child.getBoundingClientRect().height)} [flex=${s.flex}]`);
+                    }
+                    return out;
+                })(),
+            };
+        }""")
+        size = f"{width}×{height}"
+        (refs_top, refs_bottom, refs_right), (board_top, board_bottom, board_left) = geometry["refs"], geometry["board"]
+        report.check(geometry["count"] == 10, f"{size}: ячеек десять: {geometry['count']}")
+        report.check(geometry["rows"] == 5 and geometry["columns"] == 2,
+                     f"{size}: два столбца по пять: {geometry['columns']}×{geometry['rows']}")
+        report.check(abs(refs_top - board_top) <= 2 and abs(refs_bottom - board_bottom) <= 2,
+                     f"{size}: сетка в рост поля результата: {refs_top}–{refs_bottom} и {board_top}–{board_bottom}")
+        report.check(geometry["bottomCell"] <= refs_bottom + 1,
+                     f"{size}: ячейки не вылезают за сетку: {geometry['bottomCell']} ≤ {refs_bottom}")
+        report.check(refs_right <= board_left + 1, f"{size}: сетка левее результата: {refs_right} ≤ {board_left}")
+        report.check(geometry["ratio"] <= 1.5,
+                     f"{size}: ячейки близки к квадрату: {geometry['cell']} px, вытянутость {geometry['ratio']:.2f}")
+        if geometry["ratio"] > 1.5:
+            print("    цепочка:")
+            for link in geometry["chain"]:
+                print(f"      {link}")
+    page.set_viewport_size({"width": 1920, "height": 1080})
+    page.wait_for_timeout(300)
     report.check(not any(slot["loaded"] for slot in reference_slots(page)), "по умолчанию все пусты")
 
     # Картинка кладётся прямо в третью ячейку — как это сделал бы человек,
