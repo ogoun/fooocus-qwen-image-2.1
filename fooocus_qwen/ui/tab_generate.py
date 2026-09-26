@@ -97,38 +97,50 @@ def filled(references) -> list:
     return [image for image in (references or []) if image is not None]
 
 
-def slot_labels(references, lang: str) -> list:
-    """Подписи всех слотов: тег у заполненных, ничего у пустых.
+# Пустая строка тега — неразрывный пробел, а не "": пустое поле схлопнулось
+# бы по высоте, и ряды ячеек с подписью и без поехали бы относительно друг
+# друга.
+_NO_TAG = chr(0xA0)
 
-    Тег считается по порядку **заполненных** слотов, а не по позиции слота:
-    если заполнены первый, третий и седьмой, они — ``<image1>``,
-    ``<image2>`` и ``<image3>``. Подпись по позиции («<image7>») ссылалась бы
-    на изображение, которого у модели нет, — пустые слоты в неё не уходят.
+
+def slot_tags(references, lang: str) -> list:
+    """Строки тегов под ячейками: тег у заполненных, пусто у пустых.
+
+    Тег считается по порядку **заполненных** ячеек, а не по номеру ячейки:
+    если заполнены первая, третья и седьмая, они — ``<image1>``,
+    ``<image2>`` и ``<image3>``. Подпись по номеру («<image7>») ссылалась бы
+    на изображение, которого у модели нет, — пустые ячейки в неё не уходят.
     Сами теги берутся из ``_captions``, то есть из той же функции, что строит
     вход модели.
 
-    Обновляется только подпись, картинка не трогается: иначе каждый ответ
-    заново слал бы изображение в браузер.
+    Тег стоит отдельной строкой под ячейкой, а не подписью самого поля
+    изображения. Подпись Gradio делит верх ячейки со значком и крестиком, и в
+    ячейке в семьдесят пикселей от ``<image1>`` оставалось «<im» — видно на
+    снимке, хотя текстом подпись была на месте. Тег обёрнут в код: иначе
+    Markdown принял бы ``<image1>`` за тег разметки и не показал бы вовсе.
     """
     grid = _grid(references)
     captions = iter(_captions(filled(grid), lang))
     return [
-        gr.update(label=next(captions), show_label=True) if image is not None
-        else gr.update(label="", show_label=False)
+        gr.update(value=_tag_markdown(next(captions)) if image is not None else _NO_TAG)
         for image in grid
     ]
 
 
-def send_to_references(produced, selected, references, lang: str) -> tuple:
-    """«Отправить в референсы»: выбранная картинка результата — в первый свободный слот.
+def _tag_markdown(caption: str) -> str:
+    return f"`{caption}`" if caption.startswith("<image") else caption
 
-    Выходы: состояние референсов, десять слотов, строка состояния вкладки
-    генерации. Кнопка есть и на правке (связывается в app.py) — тогда к
-    выходам добавляется переход на эту вкладку.
+
+def send_to_references(produced, selected, references, lang: str) -> tuple:
+    """«Отправить в референсы»: выбранная картинка результата — в первую свободную ячейку.
+
+    Выходы: состояние референсов, десять ячеек, десять тегов, строка
+    состояния вкладки генерации. Кнопка есть и на правке (связывается в
+    app.py двумя шагами — см. ``open_generate_tab``).
     """
     from PIL import Image as PILImage
 
-    unchanged = (gr.update(),) * (1 + MAX_REFERENCES)
+    unchanged = (gr.update(),) * (1 + 2 * MAX_REFERENCES)
     path = chosen_path(produced, selected)
     if path is None:
         return (*unchanged, say("nothing_to_send", lang))
@@ -141,10 +153,11 @@ def send_to_references(produced, selected, references, lang: str) -> tuple:
     with PILImage.open(path) as opened:
         grid[free] = opened.convert("RGB")
 
-    slots = slot_labels(grid, lang)
-    slots[free] = gr.update(value=grid[free], **{k: v for k, v in slots[free].items() if k != "__type__"})
+    # Картинка уходит только в свою ячейку: остальные не трогаются, иначе
+    # каждая отправка заново слала бы в браузер все десять изображений.
+    slots = [gr.update(value=grid[index]) if index == free else gr.update() for index in range(MAX_REFERENCES)]
     count = len(filled(grid))
-    return (grid, *slots, say("reference_sent", lang, count=count, total=MAX_REFERENCES))
+    return (grid, *slots, *slot_tags(grid, lang), say("reference_sent", lang, count=count, total=MAX_REFERENCES))
 
 
 def open_generate_tab():
@@ -205,23 +218,38 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 ),
             )
             reference_slots: list[gr.Image] = []
+            reference_tags: list[gr.Markdown] = []
             for _row in range(REFERENCE_ROWS):
                 with gr.Row(equal_height=True):
                     for _column in range(REFERENCE_COLUMNS):
-                        reference_slots.append(
-                            gr.Image(
-                                type="pil",
-                                image_mode="RGB",
-                                sources=["upload"],
-                                label="",
-                                show_label=False,
-                                buttons=[],
-                                placeholder="# +",
-                                min_width=0,
-                                scale=1,
-                                elem_classes=[layout.REF_SLOT],
+                        # Ячейка — картинка и под ней строка с тегом (см. slot_tags).
+                        with gr.Column(min_width=0, elem_classes=[layout.REF_CELL]):
+                            reference_slots.append(
+                                gr.Image(
+                                    type="pil",
+                                    image_mode="RGB",
+                                    sources=["upload"],
+                                    label="",
+                                    show_label=False,
+                                    buttons=[],
+                                    # Заглушка — пробел нулевой ширины. Пустую
+                                    # строку и обычный пробел Gradio считает «не
+                                    # задано» и пишет свою «Перетащите изображение
+                                    # сюда - или - Нажмите для загрузки», которая
+                                    # в ячейку в семьдесят пикселей не влезает и
+                                    # обрезается (проверено снимком). U+200B
+                                    # пробельным не считается ни в Python, ни в JS:
+                                    # заглушка задана, но невидима, и в ячейке
+                                    # остаётся один значок загрузки. «+» рядом с
+                                    # ним (первая редакция) был вторым символом
+                                    # того же смысла.
+                                    placeholder=chr(0x200B),
+                                    elem_classes=[layout.REF_SLOT],
+                                )
                             )
-                        )
+                            reference_tags.append(
+                                gr.Markdown(_NO_TAG, elem_classes=[layout.REF_TAG])
+                            )
             reference_clear = localizer.bind(
                 gr.Button(pick("reference_clear", lang), size="sm"),
                 value=("Очистить референсы", "Clear references"),
@@ -440,7 +468,10 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         grid = _grid(images)
         return (
             grid,
-            *slot_labels(grid, lang),
+            # Сами ячейки не трогаются: картинка в них уже стоит, её туда
+            # положил человек, а переслать её обратно — лишний круг в браузер.
+            *(gr.update() for _ in grid),
+            *slot_tags(grid, lang),
             say("references_counted", lang, count=len(filled(grid)), total=MAX_REFERENCES),
         )
 
@@ -448,7 +479,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         grid = _grid([])
         return (
             grid,
-            *(gr.update(value=None, label="", show_label=False) for _ in grid),
+            *(gr.update(value=None) for _ in grid),
+            *slot_tags(grid, lang),
             say("references_cleared", lang),
         )
 
@@ -640,7 +672,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     # состояния. Замечание для проверяющего: текст «0.0s» в ``innerText``
     # ячейки есть всегда — индикатор лежит в разметке с нулевой
     # прозрачностью, — и видимым таймером это не является.
-    reference_targets = [references, *reference_slots, status]
+    reference_targets = [references, *reference_slots, *reference_tags, status]
     for slot in reference_slots:
         slot.input(
             slots_changed, [*reference_slots, language], reference_targets,
@@ -687,6 +719,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     return {
         "reference_targets": reference_targets,
         "reference_slots": reference_slots,
+        "reference_tags": reference_tags,
         "send_to_edit": send_to_edit,
         "selected": selected,
         "prompt": prompt,

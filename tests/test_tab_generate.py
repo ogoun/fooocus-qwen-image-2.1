@@ -144,13 +144,19 @@ def test_save_rejects_an_empty_name(monkeypatch, tmp_path):
     assert not list(tmp_path.glob("*.json"))
 
 
-# --- сетка референсов: десять слотов слева от результата ---------------------
+# --- сетка референсов: десять ячеек слева от результата ----------------------
 #
-# Референс кладут в слот кликом или перетаскиванием. Слоты позиционные и
+# Референс кладут в ячейку кликом или перетаскиванием. Ячейки позиционные и
 # бывают с дырами (заполнены 1, 3 и 7), а модель получает сплошной список —
-# поэтому подпись слота считается по порядку **заполненных**, той же
-# функцией, что строит вход модели: иначе тег в подписи разошёлся бы с тем,
-# на что он ссылается в промте.
+# поэтому тег под ячейкой считается по порядку **заполненных**, той же
+# функцией, что строит вход модели: иначе тег разошёлся бы с тем, на что он
+# ссылается в промте.
+#
+# Выходы обработчиков сетки: состояние, десять ячеек, десять строк тегов,
+# строка состояния.
+
+NBSP = chr(0xA0)
+N = 10
 
 
 def _img(colour="red", size=(8, 8)):
@@ -160,14 +166,20 @@ def _img(colour="red", size=(8, 8)):
 
 
 def _slots(filled: dict[int, object]) -> list:
-    """Десять слотов: в указанных позициях картинки, в остальных пусто."""
+    """Десять ячеек: в указанных позициях картинки, в остальных пусто."""
     return [filled.get(index) for index in range(tab_generate.MAX_REFERENCES)]
+
+
+def _split(outputs):
+    """Разбирает выходы обработчика сетки на части."""
+    state, rest = outputs[0], list(outputs[1:])
+    return state, rest[:N], rest[N: 2 * N], rest[2 * N]
 
 
 def test_the_grid_is_two_rows_of_five():
     assert tab_generate.REFERENCE_ROWS == 2
     assert tab_generate.REFERENCE_COLUMNS == 5
-    assert tab_generate.REFERENCE_ROWS * tab_generate.REFERENCE_COLUMNS == tab_generate.MAX_REFERENCES
+    assert tab_generate.REFERENCE_ROWS * tab_generate.REFERENCE_COLUMNS == tab_generate.MAX_REFERENCES == N
 
 
 def test_filled_drops_empty_slots_and_keeps_order():
@@ -177,39 +189,40 @@ def test_filled_drops_empty_slots_and_keeps_order():
     assert tab_generate.filled(None) == []
 
 
-def test_labels_follow_the_order_of_filled_slots_not_their_positions():
-    """Слоты 1, 3 и 7 — это <image1>, <image2>, <image3>.
+def test_tags_follow_the_order_of_filled_cells_not_their_positions():
+    """Ячейки 1, 3 и 7 — это <image1>, <image2>, <image3>.
 
-    Подпись по позиции («<image7>») ссылалась бы на изображение, которого у
-    модели нет: пустые слоты в неё не уходят.
+    Подпись по номеру («<image7>») ссылалась бы на изображение, которого у
+    модели нет: пустые ячейки в неё не уходят.
     """
-    updates = tab_generate.slot_labels(_slots({0: _img(), 2: _img(), 6: _img()}), "ru")
-    assert len(updates) == tab_generate.MAX_REFERENCES
-    shown = {index: u["label"] for index, u in enumerate(updates) if u.get("show_label")}
-    assert shown == {0: "<image1>", 2: "<image2>", 6: "<image3>"}
+    tags = tab_generate.slot_tags(_slots({0: _img(), 2: _img(), 6: _img()}), "ru")
+    assert len(tags) == N
+    shown = {index: tag["value"] for index, tag in enumerate(tags) if tag["value"] != NBSP}
+    assert shown == {0: "`<image1>`", 2: "`<image2>`", 6: "`<image3>`"}
 
 
-def test_empty_slots_carry_no_tag():
-    updates = tab_generate.slot_labels(_slots({3: _img(), 4: _img()}), "ru")
+def test_tags_are_wrapped_in_code_so_markdown_keeps_them():
+    """Голый <image1> Markdown принял бы за тег разметки и не показал вовсе."""
+    tags = tab_generate.slot_tags(_slots({0: _img(), 1: _img()}), "ru")
+    assert tags[0]["value"].startswith("`") and tags[0]["value"].endswith("`")
+
+
+def test_empty_cells_keep_a_blank_line_not_nothing():
+    """Пустая строка схлопнулась бы, и ряды с подписью и без поехали бы."""
+    tags = tab_generate.slot_tags(_slots({3: _img(), 4: _img()}), "ru")
     for index in (0, 1, 2, 5, 6, 7, 8, 9):
-        assert updates[index]["show_label"] is False, f"пустой слот {index} подписан"
+        assert tags[index]["value"] == NBSP, f"пустая ячейка {index}"
 
 
-def test_a_single_reference_is_labelled_untagged():
-    """При одном условном изображении теги запрещены спецификацией Qwen."""
-    updates = tab_generate.slot_labels(_slots({4: _img()}), "en")
-    assert updates[4]["show_label"] is True
-    assert "<image" not in updates[4]["label"]
+def test_a_single_reference_is_marked_untagged_and_short():
+    """При одном условном изображении теги запрещены спецификацией Qwen.
 
-
-def test_labels_never_touch_the_slot_image():
-    """Обновление подписи не должно перезаписывать картинку в слоте.
-
-    Иначе каждая подпись заново отправляла бы изображение в браузер, а
-    событие изменения слота срабатывало бы от собственного же ответа.
+    И подпись коротка: она одной строкой под ячейкой шириной в семьдесят
+    пикселей.
     """
-    for update in tab_generate.slot_labels(_slots({0: _img(), 1: _img()}), "ru"):
-        assert "value" not in update
+    tags = tab_generate.slot_tags(_slots({4: _img()}), "en")
+    assert "<image" not in tags[4]["value"]
+    assert tags[4]["value"] == "no tag"
 
 
 def _result(tmp_path, colour="blue", size=(30, 12)):
@@ -220,25 +233,30 @@ def _result(tmp_path, colour="blue", size=(30, 12)):
     return [(str(path), None)]
 
 
-def test_a_sent_result_goes_into_the_first_empty_slot(tmp_path):
+def test_a_sent_result_goes_into_the_first_empty_cell(tmp_path):
     references = _slots({0: _img("red"), 2: _img("green")})
-    state, *slots, status = tab_generate.send_to_references(_result(tmp_path), None, references, "en")
+    state, slots, tags, status = _split(
+        tab_generate.send_to_references(_result(tmp_path), None, references, "en")
+    )
 
-    assert state[1] is not None and state[1].size == (30, 12), "в первый свободный — второй слот"
-    assert state[0] is references[0] and state[2] is references[2], "занятые слоты не тронуты"
-    assert slots[1]["value"].size == (30, 12), "картинка показана в своём слоте"
-    assert all("value" not in slot for index, slot in enumerate(slots) if index != 1)
+    assert state[1] is not None and state[1].size == (30, 12), "в первую свободную — вторую"
+    assert state[0] is references[0] and state[2] is references[2], "занятые ячейки не тронуты"
+    assert slots[1]["value"].size == (30, 12), "картинка показана в своей ячейке"
+    assert all("value" not in slot for index, slot in enumerate(slots) if index != 1), (
+        "остальные ячейки не пересылаются заново"
+    )
+    assert [tags[i]["value"] for i in (0, 1, 2)] == ["`<image1>`", "`<image2>`", "`<image3>`"]
     assert "3 of 10" in status
 
 
-def test_sending_into_an_untouched_grid_starts_at_the_first_slot(tmp_path):
-    state, *_slots_, _status = tab_generate.send_to_references(_result(tmp_path), None, [], "en")
-    assert len(state) == tab_generate.MAX_REFERENCES
+def test_sending_into_an_untouched_grid_starts_at_the_first_cell(tmp_path):
+    state, *_rest = tab_generate.send_to_references(_result(tmp_path), None, [], "en")
+    assert len(state) == N
     assert state[0] is not None and all(item is None for item in state[1:])
 
 
 def test_the_eleventh_reference_is_refused(tmp_path):
-    references = [_img() for _ in range(tab_generate.MAX_REFERENCES)]
+    references = [_img() for _ in range(N)]
     outputs = tab_generate.send_to_references(_result(tmp_path), None, references, "en")
     assert "10" in outputs[-1] and "no more" in outputs[-1]
     assert all(value == {"__type__": "update"} for value in outputs[:-1]), "ничего не меняется"
@@ -253,10 +271,10 @@ def test_nothing_to_send_says_so():
 def test_sending_from_the_edit_tab_first_opens_the_generate_tab_then_sends():
     """Два шага в строгом порядке: сначала вкладка, потом картинка.
 
-    Одним ответом нельзя: новое значение слота на скрытой вкладке Gradio
+    Одним ответом нельзя: новое значение ячейки на скрытой вкладке Gradio
     6.5.1 не отрисовывает — подпись менялась, а картинки не было
     (см. ``open_generate_tab``). Проверяется сама цепочка событий кнопки
-    правки: первым звеном переход, следующим — отправка в слоты.
+    правки: первым звеном переход, следующим — отправка в ячейки.
     """
     from fooocus_qwen.ui import app, layout
 
@@ -270,9 +288,9 @@ def test_sending_from_the_edit_tab_first_opens_the_generate_tab_then_sends():
         fn for fn in demo.fns.values()
         if fn.fn is tab_generate.send_to_references and fn.trigger_after == opens[0]._id
     ]
-    assert len(sends) == 1, "отправка в слоты должна идти следом за переходом (.then)"
+    assert len(sends) == 1, "отправка в ячейки должна идти следом за переходом (.then)"
     assert not any(isinstance(block, gr.Tabs) for block in sends[0].outputs), (
-        "переключение вкладки в одном ответе со значением слота и есть дефект"
+        "переключение вкладки в одном ответе со значением ячейки и есть дефект"
     )
 
 
@@ -286,50 +304,58 @@ def _handlers_with_references():
     return {fn.fn.__name__: fn.fn for fn in demo.fns.values()}, studio, components
 
 
-def test_a_slot_change_rebuilds_the_list_from_all_slots():
-    """Список собирается из всех слотов разом, а не дописывается.
+def test_a_cell_change_rebuilds_the_list_from_all_cells():
+    """Список собирается из всех ячеек разом, а не дописывается.
 
-    Слот меняют в любом порядке и чистят крестиком; источник истины — то,
-    что сейчас стоит в слотах, а не история изменений.
+    Ячейку меняют в любом порядке и чистят крестиком; источник истины — то,
+    что сейчас стоит в ячейках, а не история изменений.
     """
     handlers, _studio, _components = _handlers_with_references()
     values = _slots({1: _img("red"), 5: _img("blue")})
-    state, *updates, status = handlers["slots_changed"](*values, "en")
+    state, slots, tags, status = _split(handlers["slots_changed"](*values, "en"))
 
     assert state == values
-    assert len(updates) == tab_generate.MAX_REFERENCES
-    assert updates[1]["label"] == "<image1>" and updates[5]["label"] == "<image2>"
+    assert all("value" not in slot for slot in slots), "картинки не пересылаются обратно"
+    assert tags[1]["value"] == "`<image1>`" and tags[5]["value"] == "`<image2>`"
     assert "2 of 10" in status
 
 
-def test_clear_empties_every_slot():
+def test_clear_empties_every_cell():
     handlers, _studio, _components = _handlers_with_references()
-    state, *updates, _status = handlers["clear_references"]("en")
-    assert state == [None] * tab_generate.MAX_REFERENCES
-    assert all(update["value"] is None for update in updates[: tab_generate.MAX_REFERENCES])
+    state, slots, tags, _status = _split(handlers["clear_references"]("en"))
+    assert state == [None] * N
+    assert all(slot["value"] is None for slot in slots)
+    assert all(tag["value"] == NBSP for tag in tags)
 
 
 def test_the_grid_stands_left_of_the_result():
-    """Десять слотов в колонке левее холста результата, два ряда по пять."""
+    """Десять ячеек в колонке левее холста результата, два ряда по пять."""
     from fooocus_qwen.ui import layout
 
     studio = Studio(config.AppConfig())
     with gr.Blocks() as demo:
         components = tab_generate.build(studio, Localizer("ru"))
 
-    slots = components["reference_slots"]
-    assert len(slots) == tab_generate.MAX_REFERENCES
+    slots, tags = components["reference_slots"], components["reference_tags"]
+    assert len(slots) == N and len(tags) == N
     assert all(isinstance(slot, gr.Image) for slot in slots)
     assert all(layout.REF_SLOT in (slot.elem_classes or []) for slot in slots)
     assert all(slot.sources == ["upload"] for slot in slots), "клик и перетаскивание, без веб-камеры"
+    assert all(slot.show_label is False for slot in slots), "тег — строкой под ячейкой, не внутри"
 
-    rows = {id(slot.parent) for slot in slots}
-    assert len(rows) == tab_generate.REFERENCE_ROWS, "слоты стоят в двух рядах"
+    # Тег — сосед картинки в её ячейке.
+    for slot, tag in zip(slots, tags):
+        assert tag.parent is slot.parent
+        assert layout.REF_CELL in (slot.parent.elem_classes or [])
+
+    rows = {id(slot.parent.parent) for slot in slots}
+    assert len(rows) == tab_generate.REFERENCE_ROWS, "ячейки стоят в двух рядах"
     for row_id in rows:
-        assert sum(1 for slot in slots if id(slot.parent) == row_id) == tab_generate.REFERENCE_COLUMNS
+        assert sum(1 for slot in slots if id(slot.parent.parent) == row_id) == tab_generate.REFERENCE_COLUMNS
 
     # Колонка сетки и колонка холста — соседи в рабочей строке, сетка первой.
-    grid_column = slots[0].parent.parent
+    grid_column = slots[0].parent.parent.parent
+    assert layout.REFS_COL in (grid_column.elem_classes or [])
     canvas_column = components["result"].parent
     while layout.CANVAS_COL not in (canvas_column.elem_classes or []):
         canvas_column = canvas_column.parent
@@ -340,8 +366,8 @@ def test_the_grid_stands_left_of_the_result():
     assert demo is not None
 
 
-def test_run_gets_only_the_filled_slots():
-    """Пустые слоты в модель не уходят, а порядок заполненных сохраняется."""
+def test_run_gets_only_the_filled_cells():
+    """Пустые ячейки в модель не уходят, а порядок заполненных сохраняется."""
     from fooocus_qwen.engine import presets
     from fooocus_qwen.engine.generator import GeneratedImage
 

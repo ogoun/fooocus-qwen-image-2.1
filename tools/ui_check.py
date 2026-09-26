@@ -505,9 +505,20 @@ def scenario_send(browser, url, report: Report, fake: FakeGenerator) -> None:
     page.close()
 
 
-SLOTS_JS = """() => [...document.querySelectorAll('.qs-refslot')].map(slot => {
-    const img = slot.querySelector('img');
-    return {loaded: !!(img && img.complete && img.naturalWidth > 0), text: slot.innerText.trim()};
+# По ячейке: загружена ли картинка, что написано в строке тега и влезает ли
+# тег в свою строку. Последнее проверяется шириной, а не текстом: подпись
+# «<image1>», обрезанная до «<im», в innerText остаётся целой — так первая
+# редакция сетки и прошла текстовую проверку с нечитаемыми тегами.
+SLOTS_JS = """() => [...document.querySelectorAll('.qs-refcell')].map(cell => {
+    const img = cell.querySelector('.qs-refslot img');
+    const tag = cell.querySelector('.qs-reftag');
+    const inner = tag.querySelector('code') || tag;
+    return {
+        loaded: !!(img && img.complete && img.naturalWidth > 0),
+        text: tag.innerText.trim(),
+        clipped: inner.getBoundingClientRect().right > tag.getBoundingClientRect().right + 1
+            || tag.scrollWidth > tag.clientWidth + 1,
+    };
 })"""
 
 
@@ -632,6 +643,13 @@ def scenario_references(browser, url, report: Report, fake: FakeGenerator, sampl
     report.check(active == "Генерация", f"с правки — переход на генерацию: {active}")
     tags = [wait_label(page, index, f"<image{index + 1}>") for index in (0, 1, 2)]
     report.check(True, f"теги трёх слотов сдвинулись по порядку: {tags}")
+    clipped = [slot["text"] for slot in reference_slots(page) if slot["clipped"]]
+    report.check(not clipped, "теги видны целиком, не обрезаны" + (f": {clipped}" if clipped else ""))
+    # Снимок заполненной сетки — глазам: текстом проверено, что подписи
+    # есть, но не то, как подпись ложится поверх картинки в ячейке.
+    shot = samples.parent / "references-grid.png"
+    page.locator(".qs-refs").first.screenshot(path=str(shot))
+    print(f"  снимок сетки: {shot}")
 
     # Модель получает ровно заполненные слоты и ровно в порядке тегов.
     click_text(page, "Сгенерировать")

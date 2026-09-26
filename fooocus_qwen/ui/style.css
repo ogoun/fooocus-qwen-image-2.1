@@ -183,21 +183,44 @@ footer { display: none !important; }
     height: 100% !important;
 }
 
-/* Слот референса — квадрат. Высота выводится из ширины ячейки, поэтому
+/* Ячейки ряда делят ширину поровну: базис нулевой, иначе ширину ячейки
+   задавало бы её содержимое. Зазор между картинкой и тегом — маленький:
+   тег подписывает именно эту картинку, и отрыв в стандартные шестнадцать
+   пикселей делал бы его похожим на подпись к нижнему ряду. */
+.qs-refcell {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+    gap: 2px !important;
+}
+
+/* Поле картинки — квадрат. Высота выводится из ширины ячейки, поэтому
    `height: auto` обязателен: Gradio ставит высоту поля изображения
    инлайном, и без него пропорция до дела не доходит. */
 .qs-refslot {
     height: auto !important;
     aspect-ratio: 1 / 1 !important;
     min-height: 0 !important;
-    /* Ячейки ряда делят ширину поровну: базис нулевой, иначе ширину
-       ячейки задавало бы её содержимое. */
-    flex: 1 1 0 !important;
-    min-width: 0 !important;
 }
 
 .qs-refslot > div {
     height: 100% !important;
+}
+
+/* Тег под ячейкой — одна строка во всю её ширину. Длиннее ячейки он не
+   бывает (`<image10>` мелким шрифтом короче семидесяти пикселей), а
+   переносить его на две строки значило бы разъехаться рядам ячеек. */
+.qs-reftag {
+    text-align: center !important;
+    white-space: nowrap !important;
+    overflow: hidden !important;
+    font-size: 12px !important;
+    line-height: 1.3 !important;
+    min-height: 1.3em !important;
+}
+
+.qs-reftag * {
+    font-size: inherit !important;
+    margin: 0 !important;
 }
 
 /* --- два холста вкладки правки -------------------------------------------- */
