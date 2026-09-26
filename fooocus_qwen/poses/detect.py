@@ -88,7 +88,8 @@ class PoseDetector:
 
                 from ..engine import fetch
 
-                # 350 МБ при первом распознавании — как адаптер Turbo при
+                # Веса качает установка (--fetch-model); если их всё же нет —
+                # 350 МБ при первом распознавании, как адаптер Turbo при
                 # первом выборе пресета; докачивается только недостающее.
                 fetch.ensure_files(self.model_dir, REPO, FILES)
 

@@ -74,13 +74,16 @@ also sit under the Edit tab's result.
 
 ![Generate tab: a short prompt, its AI-boosted rewrite and the result](docs/images/generate.webp)
 
-Each reference cell has two icons. 🧍 opens a pose library: pick a pose and
-its OpenPose skeleton goes into the cell, and the model follows it.
+Each reference cell has two small icons in its bottom corners. The figure
+opens a pose library: pick a pose and its OpenPose skeleton goes into the
+cell, and the model follows it.
+
+![The pose library](docs/images/pose-window.webp)
 
 ![A pose skeleton in a reference cell and the result that follows it](docs/images/pose-result.webp)
 
-✏️ opens a sketch canvas: draw, press **Accept**, and the sketch becomes the
-reference.
+The pencil opens a sketch canvas: draw, press **Accept**, and the sketch
+becomes the reference.
 
 ![The sketch window](docs/images/sketch-window.webp)
 
@@ -270,22 +273,21 @@ not the cell number: empty cells are not sent to the model, so cells 1, 3
 and 7 are `<image1>`, `<image2>` and `<image3>`. With exactly one reference,
 don't use a tag at all.
 
-**Poses.** 🧍 on a cell opens the pose library: the poses of
+**Poses.** The figure icon on a cell opens the pose library: the 46 poses of
 [openposes.com](https://openposes.com/) (model: Emma Watson), then your own.
-Clicking a tile puts its skeleton into the cell. The catalogue (about 11 MB)
-downloads the first time the window opens; `tools\fetch_poses.py` does it in
-advance, also from an already downloaded `poses.zip` (`--archive`). The tiles
-are not part of this repository — the site declares no licence for them.
+Clicking a tile puts its skeleton into the cell. The catalogue ships with the
+project in `resources/poses/catalog/`; `tools\fetch_poses.py` refreshes it
+from the site.
 
 The last tile, **Add a pose**, takes a photo of a person. The pose is
 recognised on the CPU in a fraction of a second with
 [DWPose](https://github.com/IDEA-Research/DWPose) (its 350 MB of ONNX weights
-download on first use), the skeleton goes into the cell at once, and the pose
-is saved to `user/poses/`. Qwen-Image then draws a tile for it in the
+are downloaded by the installer), the skeleton goes into the cell at once, and
+the pose is saved to `user/outputs/poses/`, next to your generations. Qwen-Image then draws a tile for it in the
 catalogue's style (about 13 s with Turbo if its adapter is already downloaded,
 LowQuality otherwise).
 
-**Sketches.** ✏️ opens a white canvas with the same brush as the Edit tab:
+**Sketches.** The pencil icon opens a white canvas with the same brush as the Edit tab:
 palette, size, eraser, undo/redo, zoom. **Accept** puts the drawing into the
 cell, **Cancel** closes the window.
 

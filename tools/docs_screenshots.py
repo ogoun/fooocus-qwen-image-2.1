@@ -223,14 +223,12 @@ def phase_ui(mask_box: tuple[float, float, float, float]) -> None:
         shot(page, "generate")
         page.close()
 
-        # Поза из библиотеки в ячейке и результат по ней; затем окно эскиза.
-        # Окно поз в документацию не снимается: в нём плитки openposes.com,
-        # лицензия на которые не объявлена, — раздавать их от имени проекта
-        # нельзя. Скелет — только точки позы, его показать можно.
+        # Окно поз, поза из библиотеки в ячейке и результат по ней; затем
+        # окно эскиза.
         print("поза и эскиз:")
         from fooocus_qwen.poses import library
 
-        names = [entry.name for entry in library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR)]
+        names = [entry.name for entry in library.list_poses(config.POSE_LIBRARY_DIR, config.user_pose_dir())]
         page, _ = u.fresh_page(browser, url, 1920, 1080)
         page.locator(".qs-refpose").nth(0).click()
         page.wait_for_function(
@@ -238,6 +236,7 @@ def phase_ui(mask_box: tuple[float, float, float, float]) -> None:
             f".filter(i => i.complete && i.naturalWidth > 0).length > {len(names)}",
             timeout=120000,
         )
+        shot(page, "pose-window")
         page.locator(".qs-posegrid img").nth(names.index(POSE_EXAMPLE)).click()
         u.wait_loaded(page, [0])
         visible(page.get_by_label("LowQuality", exact=True)).check()

@@ -314,8 +314,6 @@ MESSAGES: dict[str, tuple[str, str]] = {
     ),
     "edit_interrupted": ("Правка прервана", "Edit interrupted"),
     "pose_title": ("**Поза для ячейки {cell}**", "**Pose for cell {cell}**"),
-    "pose_catalog_downloading": ("Скачиваю каталог поз openposes.com", "Downloading the openposes.com pose catalogue"),
-    "pose_catalog_failed": ("Каталог поз не скачался: {error}", "The pose catalogue did not download: {error}"),
     "pose_add_hint": (
         "Выберите фото человека в нужной позе: поза будет распознана и положена в ячейку, "
         "а плитка для неё нарисуется следом",

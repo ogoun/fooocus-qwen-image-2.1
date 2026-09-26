@@ -795,7 +795,7 @@ def scenario_tools(browser, url, report: Report, fake: FakeGenerator, samples: P
     # --- поза из каталога — в третью ячейку ---
     page.locator(".qs-refpose:visible").nth(2).click()
     wait_modal(page, True)
-    catalog = len(library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR))
+    catalog = len(library.list_poses(config.POSE_LIBRARY_DIR, config.user_pose_dir()))
     wait_pose_tiles(page, catalog + 1)
     report.check(pose_tiles_loaded(page) == catalog + 1,
                  f"в окне {catalog} поз и плитка «Добавить позу»: {pose_tiles_loaded(page)}")
@@ -829,7 +829,7 @@ def scenario_tools(browser, url, report: Report, fake: FakeGenerator, samples: P
     page.wait_for_function(
         f"() => (({VISIBLE_MODAL_JS})()?.innerText || '').includes('Плитка готова')", timeout=60000,
     )
-    custom = library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR)[catalog:]
+    custom = library.list_poses(config.POSE_LIBRARY_DIR, config.user_pose_dir())[catalog:]
     report.check(len(custom) == 1 and custom[0].tile.exists() and custom[0].thumb.exists(),
                  f"своя поза сохранена с плиткой: {[entry.name for entry in custom]}")
     wait_pose_tiles(page, catalog + 2, timeout=20000)
@@ -1011,9 +1011,8 @@ def main() -> int:
     config.SETTINGS_FILE = work / "settings.json"
     config.INT8_DIR = work / "int8"
     config.TURBO_DIR = work / "turbo"
-    # Свои позы — тоже свои: сценарий инструментов ячейки добавляет позу по
-    # фото. Каталог openposes.com и веса DWPose — настоящие, только чтение.
-    config.USER_POSE_DIR = work / "poses"
+    # Свои позы живут в каталоге генераций (config.user_pose_dir) и уезжают во
+    # временный вместе с ним. Каталог поз и веса DWPose — настоящие, для чтения.
     config.ensure_directories()
 
     fake = FakeGenerator()

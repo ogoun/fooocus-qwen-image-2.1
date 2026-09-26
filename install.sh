@@ -38,7 +38,7 @@ esac
 step 4 "Выбираю точность весов и SageAttention"
 "$python" -m fooocus_qwen --setup-performance
 
-step 5 "Проверяю веса модели"
+step 5 "Проверяю веса модели и распознавания поз"
 "$python" -m fooocus_qwen --fetch-model
 
 step 6 "Настраиваю языковую модель для AI-буста промтов"

@@ -60,8 +60,18 @@ def selftest() -> int:
     else:
         print("[ок ] точность bf16")
     if chosen.sage_attention:
-        state = "[ок ] SageAttention включён" if attention.sage_available() else             "[--] SageAttention выбран, но не установлен — работаю штатным вниманием"
+        state = (
+            "[ок ] SageAttention включён" if attention.sage_available()
+            else "[--] SageAttention выбран, но не установлен — работаю штатным вниманием"
+        )
         print(state)
+    from .poses import detect
+
+    if fetch.missing_extra(config.DWPOSE_DIR, detect.FILES):
+        problems.append("нет весов распознавания позы (DWPose) — запустите --fetch-model")
+        print(f"[нет] распознавание позы: нет весов DWPose в {config.DWPOSE_DIR}")
+    else:
+        print("[ок ] распознавание позы: веса DWPose на месте")
     turbo_ready = not fetch.missing_extra(config.TURBO_DIR, fetch.TURBO_FILES)
     print("[ок ] Turbo: веса на месте" if turbo_ready else "[--] Turbo: веса скачаются при первом выборе пресета")
 
@@ -112,16 +122,20 @@ def fetch_model() -> int:
     """Доводит веса до полного состава под выбранную точность. Зовётся установкой.
 
     При INT8 bf16-шарды трансформера (14 ГБ) не качаются: их место занимает
-    INT8-трансформер Unsloth (7.3 ГБ).
+    INT8-трансформер Unsloth (7.3 ГБ). Вместе с моделью — веса распознавания
+    позы (DWPose, 350 МБ, «Добавить позу»): без них первое распознавание
+    ждало бы загрузки посреди работы.
     """
     from . import settings
     from .engine import fetch
+    from .poses import detect
 
     int8 = settings.load().precision == settings.PRECISION_INT8
     try:
         downloaded = fetch.ensure_model(config.MODEL_DIR, include_transformer=not int8)
         if int8:
             downloaded = fetch.ensure_int8(config.INT8_DIR) or downloaded
+        poses = fetch.ensure_files(config.DWPOSE_DIR, detect.REPO, detect.FILES)
     except fetch.ModelDownloadError as error:
         print(f"[нет] {error}")
         return 1
@@ -134,6 +148,7 @@ def fetch_model() -> int:
         print(f"[ок ] веса скачаны: {config.MODEL_DIR}")
     else:
         print(f"[ок ] веса на месте: {config.MODEL_DIR}")
+    print(f"[ок ] веса распознавания позы {'скачаны' if poses else 'на месте'}: {config.DWPOSE_DIR}")
     return 0
 
 

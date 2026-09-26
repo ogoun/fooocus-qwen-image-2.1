@@ -84,7 +84,7 @@ try {
     Step 4 'Выбираю точность весов и SageAttention'
     & $python -m fooocus_qwen --setup-performance
 
-    Step 5 'Проверяю веса модели'
+    Step 5 'Проверяю веса модели и распознавания поз'
     & $python -m fooocus_qwen --fetch-model
     if ($LASTEXITCODE -ne 0) { throw 'Не удалось получить веса модели' }
 

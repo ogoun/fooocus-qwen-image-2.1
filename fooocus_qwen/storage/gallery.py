@@ -6,8 +6,13 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
 from pathlib import Path
+
+# Каталог дня: ГГГГ-ММ-ДД (см. next_path). Рядом бывают и другие подкаталоги —
+# свои позы пользователя (``config.USER_POSE_SUBDIR``), — это не результаты.
+_DAY_DIR = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def next_path(directory: Path, when: datetime | None = None) -> Path:
@@ -35,7 +40,7 @@ def recent(directory: Path, limit: int = 60) -> list[Path]:
 
     files: list[Path] = []
     for day_dir in sorted(directory.iterdir(), reverse=True):
-        if not day_dir.is_dir():
+        if not day_dir.is_dir() or not _DAY_DIR.fullmatch(day_dir.name):
             continue
         files.extend(sorted(day_dir.glob("*.png"), reverse=True))
         if len(files) >= limit:

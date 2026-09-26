@@ -190,7 +190,7 @@ def test_fetch_catalog_downloads_archive_and_tiles(tmp_path):
 
     count = library.fetch_catalog(tmp_path, downloader=downloader)
     assert count == 2
-    assert library.catalog_ready(tmp_path)
+    assert all(entry.thumb.exists() for entry in library.list_poses(tmp_path, tmp_path / "none"))
     assert library.TILE_URL.format(name="sitting_02") in asked
     thumb = Image.open(tmp_path / "standing_01.thumb.jpg")
     assert max(thumb.size) == library.THUMB_SIDE
@@ -236,6 +236,37 @@ def test_custom_poses_follow_the_catalogue_and_show_their_skeleton_until_the_til
 def test_list_poses_skips_a_pose_without_its_skeleton(tmp_path):
     (tmp_path / "broken.json").write_text(_pose(STANDING).to_json(), encoding="utf-8")
     assert library.list_poses(tmp_path, tmp_path / "none") == []
+
+
+def test_the_catalogue_ships_with_the_repository():
+    """Каталог — часть поставки: 46 поз openposes.com, у каждой четыре файла."""
+    entries = library.list_poses(config.POSE_LIBRARY_DIR, config.POSE_LIBRARY_DIR / "none")
+    assert len(entries) == 46
+    for entry in entries:
+        assert entry.keypoints.exists() and entry.skeleton.exists(), entry.name
+        assert entry.tile.exists() and entry.thumb.exists(), entry.name
+    assert config.POSE_LIBRARY_DIR.is_relative_to(config.RESOURCES_DIR)
+
+
+def test_own_poses_live_with_the_generations(monkeypatch, tmp_path):
+    """Свои позы — данные пользователя: в каталоге генераций, а не в поставке."""
+    monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path / "outputs")
+    assert config.user_pose_dir() == tmp_path / "outputs" / "poses"
+    entry = library.add_custom(config.user_pose_dir(), _pose(STANDING))
+    assert entry.skeleton.parent == tmp_path / "outputs" / "poses"
+
+
+def test_the_gallery_does_not_show_own_poses(monkeypatch, tmp_path):
+    """В каталоге генераций рядом с днями лежат позы — это не результаты."""
+    from fooocus_qwen.storage import gallery
+
+    monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path)
+    day = tmp_path / "2026-09-26"
+    day.mkdir()
+    Image.new("RGB", (8, 8)).save(day / "12-00-00.png")
+    library.add_custom(config.user_pose_dir(), _pose(STANDING))
+    assert list((tmp_path / "poses").glob("*.png")), "поза сохранилась как PNG"
+    assert gallery.recent(tmp_path) == [day / "12-00-00.png"]
 
 
 # --- плитка ---

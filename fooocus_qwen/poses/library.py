@@ -7,14 +7,14 @@
 * ``<имя>.jpg`` — плитка: иллюстрация героини в этой позе (1024×1024);
 * ``<имя>.thumb.jpg`` — уменьшенная плитка для окна выбора.
 
-**Каталог** (``config.POSE_LIBRARY_DIR``) — позы openposes.com с одной
-моделью, Эммой Уотсон. Он скачивается при первом открытии окна поз (или
-``tools/fetch_poses.py``): архив скелетов и точек ``poses.zip`` и плитки
-``poses/emma_watson/jpg/<имя>.jpg`` из их хранилища. В репозиторий каталог
-не входит — лицензия на плитки сайтом не объявлена, и раздавать их от имени
-проекта нельзя; каждый пользователь качает их себе сам, как веса модели.
+**Каталог** (``config.POSE_LIBRARY_DIR``, ``resources/poses/catalog``) —
+позы openposes.com с одной моделью, Эммой Уотсон; лежит в репозитории, как
+стили и системные промты. Собран ``tools/fetch_poses.py``: архив скелетов и
+точек ``poses.zip`` и плитки ``poses/emma_watson/jpg/<имя>.jpg`` из их
+хранилища; тем же инструментом каталог обновляется.
 
-**Свои позы** (``config.USER_POSE_DIR``) — распознанные на фотографиях.
+**Свои позы** (``config.user_pose_dir()``, ``user/outputs/poses``) —
+распознанные на фотографиях, данные пользователя, рядом с его генерациями.
 Скелет сохраняется сразу, плитка — когда её нарисует Qwen-Image: до этого
 в окне стоит сам скелет, и позой уже можно пользоваться.
 """
@@ -84,11 +84,6 @@ def _entries(folder: Path, custom: bool) -> list[PoseEntry]:
 def list_poses(catalog: Path, user: Path) -> list[PoseEntry]:
     """Каталог по имени, затем свои позы в порядке добавления."""
     return _entries(catalog, custom=False) + _entries(user, custom=True)
-
-
-def catalog_ready(catalog: Path) -> bool:
-    entries = _entries(catalog, custom=False)
-    return bool(entries) and all(entry.thumb.exists() for entry in entries)
 
 
 def save_thumb(tile: Image.Image, destination: Path) -> None:

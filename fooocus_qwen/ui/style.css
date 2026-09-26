@@ -307,12 +307,36 @@ footer { display: none !important; }
     font-size: 14px !important;
     line-height: 1 !important;
     border-radius: 6px !important;
-    opacity: 0.85;
 }
 
-.qs-refpose:hover,
-.qs-refsketch:hover {
-    opacity: 1;
+/* Значок — маска поверх фона цветом значков Gradio (`--block-label-text-color`
+   — им же нарисованы значок загрузки и крестик ячейки; замерено в браузере),
+   и в тёмной теме тоже. Цветные эмодзи первой редакции (оранжевые человечек
+   и карандаш) выбивались из интерфейса, а цвет приглушённого текста
+   (`--body-text-color-subdued`) оказался заметно бледнее соседних значков. */
+.qs-refpose::before,
+.qs-refsketch::before {
+    content: "";
+    display: block;
+    width: 16px;
+    height: 16px;
+    margin: auto;
+    background-color: var(--block-label-text-color);
+    -webkit-mask: var(--qs-icon) center / contain no-repeat;
+    mask: var(--qs-icon) center / contain no-repeat;
+}
+
+.qs-refpose:hover::before,
+.qs-refsketch:hover::before {
+    background-color: var(--body-text-color);
+}
+
+.qs-refpose {
+    --qs-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='12' cy='4.5' r='2.2'/%3E%3Cpath d='M12 7.5v7M5 8.5l7 2.5 7-2.5M12 14.5l-4 7M12 14.5l4 7'/%3E%3C/svg%3E");
+}
+
+.qs-refsketch {
+    --qs-icon: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M16.5 3.5a2.1 2.1 0 0 1 3 3L8 18l-4 1 1-4z'/%3E%3Cpath d='M14.5 5.5l3 3'/%3E%3C/svg%3E");
 }
 
 /* --- окна поверх страницы ---------------------------------------------------- */

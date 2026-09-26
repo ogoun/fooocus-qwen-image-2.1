@@ -190,13 +190,18 @@ def build_grid(localizer: Localizer, lang: str) -> Grid:
                         ))
                         # Значки «поза» и «эскиз» — поверх нижних углов
                         # картинки (CSS): под ячейкой места нет, в ней стоит
-                        # тег. Окна — в reference_tools.
+                        # тег. Окна — в reference_tools. Сами значки рисует
+                        # CSS маской цветом темы, как остальные значки
+                        # Gradio: цветные эмодзи выбивались из серого
+                        # интерфейса. Подпись кнопки поэтому пустая, а имя
+                        # для подсказки и чтения с экрана ставит скрипт
+                        # (reference_tools.TITLES_JS).
                         with gr.Row(elem_classes=[layout.REF_TOOLS]):
                             pose_buttons.append(gr.Button(
-                                "🧍", size="sm", min_width=0, elem_classes=[layout.REF_POSE],
+                                "", size="sm", min_width=0, elem_classes=[layout.REF_POSE],
                             ))
                             sketch_buttons.append(gr.Button(
-                                "✏️", size="sm", min_width=0, elem_classes=[layout.REF_SKETCH],
+                                "", size="sm", min_width=0, elem_classes=[layout.REF_SKETCH],
                             ))
                         tags.append(gr.Markdown(_NO_TAG, elem_classes=[layout.REF_TAG]))
         clear = localizer.bind(

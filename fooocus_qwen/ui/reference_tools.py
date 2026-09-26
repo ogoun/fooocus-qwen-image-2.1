@@ -12,7 +12,7 @@
 экране ей даёт CSS.
 
 «Добавить позу» — три шага подряд: окно показывает поле загрузки, по фото
-DWPose (``poses.detect``) строит скелет, поза сохраняется в ``user/poses`` и
+DWPose (``poses.detect``) строит скелет, поза сохраняется в ``user/outputs/poses`` и
 сразу ложится в ячейку, а затем Qwen-Image рисует для неё плитку в стиле
 каталога (``poses.tile``). Плитка — последним шагом и в общей очереди GPU:
 скелет нужен человеку сразу, а плитке не к спеху.
@@ -195,21 +195,10 @@ def build(
 
         return open_pose_window
 
-    def load_tiles(lang, progress=gr.Progress()):
-        """Плитки в окно; при первом открытии — скачать каталог."""
-        catalog = config.POSE_LIBRARY_DIR
-        message = ""
-        if not library.catalog_ready(catalog):
-            progress(0, desc=say("pose_catalog_downloading", lang))
-            try:
-                library.fetch_catalog(
-                    catalog, progress=lambda done, total: progress((done, total), desc=say("pose_catalog_downloading", lang))
-                )
-            except Exception as error:  # noqa: BLE001 — сеть и диск: строка в окне, не трейсбек
-                LOGGER.exception("Каталог поз не скачался")
-                message = say("pose_catalog_failed", lang, error=error)
-        entries = library.list_poses(catalog, config.USER_POSE_DIR)
-        return [entry.name for entry in entries], pose_tiles(entries, lang), message
+    def load_tiles(lang):
+        """Плитки в окно: каталог из поставки, затем свои позы."""
+        entries = library.list_poses(config.POSE_LIBRARY_DIR, config.user_pose_dir())
+        return [entry.name for entry in entries], pose_tiles(entries, lang), ""
 
     def pick_pose(index, names, current, mode_value, lang, event: gr.EventData):
         """Выбор плитки: поза — в ячейку и окно закрыть; «Добавить позу» — поле загрузки."""
@@ -240,11 +229,11 @@ def build(
             LOGGER.exception("Поза не распознана")
             return (*keep, gr.update(), gr.update(), gr.update(), say("pose_failed", lang, error=error), None)
 
-        entry = library.add_custom(config.USER_POSE_DIR, found)
+        entry = library.add_custom(config.user_pose_dir(), found)
         with Image.open(entry.skeleton) as opened:
             image = opened.convert("RGB")
         placed = place(current, index, image, lang, say("pose_placed", lang, cell=index + 1), mode_value)
-        entries = library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR)
+        entries = library.list_poses(config.POSE_LIBRARY_DIR, config.user_pose_dir())
         return (
             *placed,
             [item.name for item in entries],
@@ -271,11 +260,11 @@ def build(
         if failure is not None or not produced:
             return gr.update(), gr.update(), say("pose_tile_failed", lang, error=failure or "—")
         library.set_tile(entry, produced[0].image)
-        entries = library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR)
+        entries = library.list_poses(config.POSE_LIBRARY_DIR, config.user_pose_dir())
         return [item.name for item in entries], pose_tiles(entries, lang), say("pose_tile_done", lang)
 
     def _entry(name: str) -> library.PoseEntry | None:
-        for entry in library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR):
+        for entry in library.list_poses(config.POSE_LIBRARY_DIR, config.user_pose_dir()):
             if entry.name == name:
                 return entry
         return None
@@ -320,7 +309,7 @@ def build(
         button.click(
             pose_opener(index), language, pose_outputs, queue=False, show_progress="hidden",
         ).then(
-            load_tiles, language, [entries_state, pose_grid, pose_message], show_progress="minimal",
+            load_tiles, language, [entries_state, pose_grid, pose_message], show_progress="hidden",
         )
     pose_grid.select(
         pick_pose,

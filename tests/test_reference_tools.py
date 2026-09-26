@@ -41,7 +41,9 @@ def poses(monkeypatch, tmp_path):
         skeleton.render(_pose()).save(catalog / f"{name}.png")
         library.set_tile(library.PoseEntry(name, catalog, False), Image.new("RGB", (64, 64), "teal"))
     monkeypatch.setattr(config, "POSE_LIBRARY_DIR", catalog)
-    monkeypatch.setattr(config, "USER_POSE_DIR", user)
+    # Свои позы — в каталоге генераций: он и подменяется.
+    monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path / "outputs")
+    user = config.user_pose_dir()
     monkeypatch.setattr(config, "PROMPT_DIR", tmp_path)
     return catalog, user
 
@@ -96,7 +98,7 @@ def test_each_pose_button_opens_the_window_for_its_own_cell(poses):
 
 def test_the_window_lists_the_catalogue_then_add_pose(poses):
     _studio, _components, found = _handlers()
-    names, tiles, message = found["load_tiles"][0].fn("ru", progress=lambda *a, **k: None)
+    names, tiles, message = found["load_tiles"][0].fn("ru")
     assert names == ["dance_01", "standing_01"]
     assert len(tiles) == 3 and tiles[-1] == (str(reference_tools.ADD_POSE_TILE), "Добавить позу")
     assert tiles[0][0].endswith("dance_01.thumb.jpg") and message == ""
@@ -161,7 +163,7 @@ def test_no_person_on_the_photo_is_said_in_the_window(poses, monkeypatch):
     _studio, _components, found = _handlers(studio)
     outputs = found["add_pose"][0].fn(Image.new("RGB", (300, 400)), 0, [], None, "ru")
     assert "не найден человек" in outputs[-2] and outputs[-1] is None
-    assert not list(config.USER_POSE_DIR.glob("*.json")), "нераспознанная поза не сохраняется"
+    assert not list(config.user_pose_dir().glob("*.json")), "нераспознанная поза не сохраняется"
 
 
 def test_sketch_opens_blank_and_accept_puts_the_drawing_into_the_cell(poses, monkeypatch, tmp_path):
