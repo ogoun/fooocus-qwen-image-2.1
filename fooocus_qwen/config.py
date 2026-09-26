@@ -19,6 +19,9 @@ MODEL_DIR = PROJECT_ROOT / "Qwen-Image-2.1"
 # дистиллята turbo (6 шагов вместо 16–40, 1.3 ГБ). Качаются по требованию.
 INT8_DIR = PROJECT_ROOT / "Qwen-Image-2.1-INT8"
 TURBO_DIR = PROJECT_ROOT / "Qwen-Image-2.1-turbo"
+# Распознавание позы на фотографии (DWPose, ONNX, 350 МБ) — для плитки
+# «Добавить позу»; качается при первом распознавании.
+DWPOSE_DIR = PROJECT_ROOT / "DWPose"
 RESOURCES_DIR = PROJECT_ROOT / "resources"
 STYLES_DIR = RESOURCES_DIR / "styles"
 SYSTEM_PROMPT_DIR = RESOURCES_DIR / "prompts"
@@ -26,6 +29,10 @@ SYSTEM_PROMPT_DIR = RESOURCES_DIR / "prompts"
 USER_DIR = PROJECT_ROOT / "user"
 OUTPUT_DIR = USER_DIR / "outputs"
 PROMPT_DIR = USER_DIR / "prompts"
+# Позы: каталог openposes.com (качается при первом открытии окна поз, в
+# репозиторий не входит) и позы, распознанные на фотографиях пользователя.
+POSE_LIBRARY_DIR = PROJECT_ROOT / "poses"
+USER_POSE_DIR = USER_DIR / "poses"
 
 LOG_DIR = PROJECT_ROOT / "logs"
 ENDPOINT_FILE = PROJECT_ROOT / "llm_endpoint.txt"

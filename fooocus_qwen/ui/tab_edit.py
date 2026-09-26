@@ -32,7 +32,7 @@ from ..prompting import boost as boost_module
 from ..storage import gallery
 from . import layout, painter
 from .i18n import Localizer, painter_labels, pick, say, sentences
-from .state import GPU_CONCURRENCY_ID, describe_failure
+from .state import GPU_CONCURRENCY_ID, describe_failure, seeds_phrase
 
 LOGGER = logging.getLogger(__name__)
 
@@ -477,7 +477,11 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             metadata.save_png(item.image, destination, item.parameters)
             paths.append(str(destination))
 
-        edit_done = say("edit_done", lang, memory=studio.memory_report(lang))
+        edit_done = say(
+            "edit_done", lang,
+            seeds=seeds_phrase([item.seed for item in produced], lang),
+            memory=studio.memory_report(lang),
+        )
 
         # Обрезанная склейкой работа модели — единственный случай, когда
         # результат формально безупречен (обещание о неприкосновенности

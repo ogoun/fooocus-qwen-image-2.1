@@ -67,6 +67,17 @@ def _is_out_of_memory(error: BaseException) -> bool:
     return out_of_memory is not None and isinstance(error, out_of_memory)
 
 
+def seeds_phrase(seeds: list[int], lang: str) -> str:
+    """«Сид: 5» для одной картинки, «Сиды: 5, 6» для нескольких.
+
+    Сид в строке состояния — то, чем результат повторяют: его показывают и
+    генерация, и правка (правка раньше молчала, и повторить удачную правку
+    было нечем, кроме как лезть в метаданные файла).
+    """
+    joined = ", ".join(str(seed) for seed in seeds)
+    return say("seed_one" if len(seeds) == 1 else "seed_many", lang, seeds=joined)
+
+
 def describe_failure(error: BaseException, lang: str) -> str:
     """Читаемая строка состояния вместо сырого traceback в тосте.
 
@@ -105,6 +116,7 @@ class Studio:
         # картинками. Живёт до перезапуска: сменил модель на сервере под тем
         # же именем — перезапуск оболочки вернёт попытку.
         self._text_only_models: set[tuple[str, str]] = set()
+        self._pose_detector: Any = None
 
     @property
     def generator(self):
@@ -168,6 +180,14 @@ class Studio:
         from ..engine import fetch
 
         return fetch.ensure_turbo(config.TURBO_DIR)
+
+    def pose_detector(self):
+        """Распознавание позы на фото — одно на процесс: сессии ONNX дороги в создании."""
+        if self._pose_detector is None:
+            from ..poses.detect import PoseDetector
+
+            self._pose_detector = PoseDetector(config.DWPOSE_DIR)
+        return self._pose_detector
 
     def turbo_weights_present(self) -> bool:
         from ..engine import fetch

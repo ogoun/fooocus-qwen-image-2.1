@@ -16,6 +16,10 @@ sentencepiece>=0.2
 Pillow>=10.3
 numpy>=1.26,<3
 opencv-python-headless>=4.10
+# Распознавание позы на фото (DWPose, «Добавить позу»): модели в ONNX, на
+# процессоре. rtmlib не берём: он тянет opencv-python и opencv-contrib-python,
+# которые перезаписывают opencv-python-headless (см. fooocus_qwen/poses/detect.py).
+onnxruntime>=1.20
 
 gradio==6.5.1
 

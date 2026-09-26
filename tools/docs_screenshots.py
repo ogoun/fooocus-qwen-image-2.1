@@ -112,6 +112,18 @@ def side_by_side(images: list[Image.Image], height: int = 640, gap: int = 12) ->
     return canvas
 
 
+# Пример позы: скелет из библиотеки в ячейке и промт, который на него ссылается
+# (один референс — без тега, по спецификации Qwen).
+POSE_EXAMPLE = "dance_02"
+POSE_PROMPT = ("A ballet dancer in a white tutu on a theatre stage under a warm spotlight, full body, "
+               "posed exactly like the pose skeleton in the reference image")
+# Набросок для снимка окна эскиза: домик — стены, крыша, дверь (доли холста).
+SKETCH_STROKES = [
+    [(0.25, 0.85), (0.25, 0.5), (0.75, 0.5), (0.75, 0.85), (0.25, 0.85)],
+    [(0.2, 0.52), (0.5, 0.22), (0.8, 0.52)],
+    [(0.45, 0.85), (0.45, 0.66), (0.57, 0.66), (0.57, 0.85)],
+]
+
 # --- фаза 1: витрина -----------------------------------------------------------
 
 def phase_showcase() -> None:
@@ -209,6 +221,42 @@ def phase_ui(mask_box: tuple[float, float, float, float]) -> None:
         u.click_text(page, "Generate")
         wait_for_output(before, page)
         shot(page, "generate")
+        page.close()
+
+        # Поза из библиотеки в ячейке и результат по ней; затем окно эскиза.
+        # Окно поз в документацию не снимается: в нём плитки openposes.com,
+        # лицензия на которые не объявлена, — раздавать их от имени проекта
+        # нельзя. Скелет — только точки позы, его показать можно.
+        print("поза и эскиз:")
+        from fooocus_qwen.poses import library
+
+        names = [entry.name for entry in library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR)]
+        page, _ = u.fresh_page(browser, url, 1920, 1080)
+        page.locator(".qs-refpose").nth(0).click()
+        page.wait_for_function(
+            f"() => [...document.querySelectorAll('.qs-posegrid img')]"
+            f".filter(i => i.complete && i.naturalWidth > 0).length > {len(names)}",
+            timeout=120000,
+        )
+        page.locator(".qs-posegrid img").nth(names.index(POSE_EXAMPLE)).click()
+        u.wait_loaded(page, [0])
+        visible(page.get_by_label("LowQuality", exact=True)).check()
+        visible(page.locator("textarea")).fill(POSE_PROMPT)
+        before = outputs()
+        u.click_text(page, "Generate")
+        produced = wait_for_output(before, page)
+        skeleton_image = Image.open(config.POSE_LIBRARY_DIR / f"{POSE_EXAMPLE}.png")
+        save_doc_image(side_by_side([skeleton_image, Image.open(produced)], height=520), "pose-result")
+
+        page.locator(".qs-refsketch").nth(1).click()
+        page.wait_for_function(
+            "() => (window.__qsPainters || {})['qs-sketch-painter']?.state().width > 0", timeout=20000
+        )
+        for points in SKETCH_STROKES:
+            u.stroke(page, points, painter="qs-sketch-painter")
+        shot(page, "sketch-window")
+        u.click_text(page, "Accept")
+        u.wait_loaded(page, [0, 1])
         page.close()
 
         # Правка по маске: кисть и результат рядом — широкое окно.

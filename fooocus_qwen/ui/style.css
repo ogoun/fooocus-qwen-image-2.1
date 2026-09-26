@@ -272,6 +272,120 @@ footer { display: none !important; }
     margin: 0 !important;
 }
 
+/* Значки «поза» и «эскиз» — поверх нижних углов картинки. Под ячейкой места
+   нет: там строка тега, а ячейка на FHD — около сотни пикселей. Строка
+   значков прозрачна для мыши, кроме самих кнопок: клик мимо них попадает в
+   поле картинки и открывает выбор файла, как и без значков. Отступ снизу —
+   высота строки тега (12 px × 1.3) и зазор. */
+.qs-refcell {
+    position: relative !important;
+}
+
+.qs-reftools {
+    position: absolute !important;
+    left: 4px !important;
+    right: 4px !important;
+    bottom: 22px !important;
+    width: auto !important;
+    min-height: 0 !important;
+    z-index: 3 !important;
+    flex-wrap: nowrap !important;
+    justify-content: space-between !important;
+    gap: 0 !important;
+    pointer-events: none !important;
+    background: transparent !important;
+}
+
+.qs-refpose,
+.qs-refsketch {
+    pointer-events: auto !important;
+    flex: 0 0 auto !important;
+    width: 26px !important;
+    min-width: 0 !important;
+    height: 26px !important;
+    padding: 0 !important;
+    font-size: 14px !important;
+    line-height: 1 !important;
+    border-radius: 6px !important;
+    opacity: 0.85;
+}
+
+.qs-refpose:hover,
+.qs-refsketch:hover {
+    opacity: 1;
+}
+
+/* --- окна поверх страницы ---------------------------------------------------- */
+
+/* Колонка на весь экран с затемнением. Видимостью управляет Gradio (скрытую
+   колонку он не рисует вовсе), поэтому `display` здесь без `!important`:
+   правило не должно спорить с его скрытием. */
+.qs-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 1000 !important;
+    margin: 0 !important;
+    width: auto !important;
+    max-width: none !important;
+    padding: 3vh 3vw !important;
+    background: rgba(15, 23, 42, 0.55) !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+
+.qs-modalbox {
+    flex: 0 0 auto !important;
+    width: min(1400px, 94vw) !important;
+    max-height: 94vh !important;
+    overflow: auto !important;
+    padding: 16px !important;
+    border-radius: 12px !important;
+    background: var(--background-fill-primary) !important;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.35) !important;
+}
+
+.qs-sketchbox {
+    width: min(1100px, 94vw) !important;
+}
+
+.qs-modaltitle * {
+    margin: 0 !important;
+}
+
+/* Строка сообщения держит высоту и пустой: иначе появление текста сдвигало
+   бы кнопки под курсором. */
+.qs-modalmessage {
+    min-height: 1.5em !important;
+}
+
+/* Плитки поз — список, высота от окна, как у галереи. */
+.qs-posegrid {
+    height: min(62vh, 760px) !important;
+}
+
+.qs-posegrid > div {
+    height: 100% !important;
+}
+
+.qs-posephoto {
+    height: 280px !important;
+}
+
+/* Холст эскиза: та же кисть, что на вкладке правки, — её узлам нужно
+   занять карточку целиком (см. .qs-painter). */
+.qs-sketch {
+    width: 100% !important;
+    height: min(68vh, 860px) !important;
+    padding: 0 !important;
+    border: none !important;
+    background: transparent !important;
+}
+
+.qs-sketch > div,
+.qs-sketch > div > div {
+    height: 100% !important;
+}
+
 /* --- два холста вкладки правки -------------------------------------------- */
 
 /* Правка — это сравнение «было и стало»: рядом их видно разом. Но только

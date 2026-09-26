@@ -35,6 +35,7 @@ from fooocus_qwen.logging_setup import use_utf8_console
 use_utf8_console()
 
 import argparse
+import shutil
 import statistics
 import tempfile
 import threading
@@ -162,18 +163,19 @@ def stage_box(page) -> dict:
     return page.locator(f"#{PAINTER} .qp-stage").bounding_box()
 
 
-def image_rect(page) -> dict:
+def image_rect(page, painter: str = PAINTER) -> dict:
     """Где на экране лежит картинка внутри холста кисти."""
     return page.evaluate(f"""() => {{
-        const host = [...document.querySelectorAll('#{PAINTER} *')].find(n => n.shadowRoot);
+        const host = [...document.querySelectorAll('#{painter} *')].find(n => n.shadowRoot);
         const r = host.shadowRoot.querySelector('.qp-image').getBoundingClientRect();
         return {{x: r.left, y: r.top, width: r.width, height: r.height}};
     }}""")
 
 
-def stroke(page, points: list[tuple[float, float]], steps: int = 25, button: str = "left") -> None:
+def stroke(page, points: list[tuple[float, float]], steps: int = 25, button: str = "left",
+           painter: str = PAINTER) -> None:
     """Мазок по долям картинки: (0,0) — левый верхний угол, (1,1) — правый нижний."""
-    rect = image_rect(page)
+    rect = image_rect(page, painter)
 
     def to_screen(fx: float, fy: float) -> tuple[float, float]:
         return rect["x"] + rect["width"] * fx, rect["y"] + rect["height"] * fy
@@ -705,6 +707,168 @@ def scenario_references(browser, url, report: Report, fake: FakeGenerator, sampl
     page.close()
 
 
+def modal_open(page, index: int = 0) -> bool:
+    """Открыто ли окно: Gradio скрытую колонку не рисует, открытая — видна."""
+    return page.evaluate(f"""() => {{
+        const m = [...document.querySelectorAll('.qs-modal')][{index}];
+        if (!m) return false;
+        const r = m.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && getComputedStyle(m).display !== 'none';
+    }}""")
+
+
+def wait_modal(page, index: int, opened: bool, timeout: int = 20000) -> None:
+    page.wait_for_function(
+        f"""() => {{
+            const m = [...document.querySelectorAll('.qs-modal')][{index}];
+            const shown = !!m && m.getBoundingClientRect().width > 0 && getComputedStyle(m).display !== 'none';
+            return shown === {str(opened).lower()};
+        }}""",
+        timeout=timeout,
+    )
+
+
+def pose_tiles_loaded(page) -> int:
+    return page.evaluate(
+        "() => [...document.querySelectorAll('.qs-posegrid img')]"
+        ".filter(i => i.complete && i.naturalWidth > 0).length"
+    )
+
+
+def modal_message(page, index: int) -> str:
+    return page.evaluate(
+        f"() => ([...document.querySelectorAll('.qs-modal')][{index}]"
+        f"?.querySelector('.qs-modalmessage')?.innerText || '').trim()"
+    )
+
+
+def scenario_tools(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
+    """Значки ячейки: окно поз (каталог, «Добавить позу» по фото) и окно эскиза.
+
+    Проверяется вся дорога до модели: скелет каталога, скелет с фото и эскиз
+    оказываются в запросе генерации ровно в тех ячейках, куда их положили.
+    Распознавание позы — настоящее (DWPose на процессоре), генератор —
+    подставной: плитка новой позы — его ответ, важно лишь, что запрос пришёл
+    с тем промтом и единственным референсом-скелетом.
+    """
+    from fooocus_qwen.poses import library, tile
+
+    print("поза и эскиз в ячейке:")
+    page, errors = fresh_page(browser, url)
+
+    icons = page.evaluate("""() => [...document.querySelectorAll('.qs-refcell')].map(cell => {
+        const slot = cell.querySelector('.qs-refslot').getBoundingClientRect();
+        return [...cell.querySelectorAll('.qs-refpose, .qs-refsketch')].map(b => {
+            const r = b.getBoundingClientRect();
+            return {inside: r.left >= slot.left - 1 && r.right <= slot.right + 1
+                            && r.top >= slot.top - 1 && r.bottom <= slot.bottom + 1,
+                    title: b.title, size: Math.round(r.width)};
+        });
+    })""")
+    flat = [icon for cell in icons for icon in cell]
+    report.check(len(icons) == 10 and all(len(cell) == 2 for cell in icons),
+                 f"на каждой из десяти ячеек два значка: {[len(cell) for cell in icons]}")
+    report.check(all(icon["inside"] for icon in flat), "значки лежат поверх картинки ячейки")
+    report.check(all(icon["title"] for icon in flat),
+                 f"у значков есть подсказки: «{flat[0]['title']}», «{flat[1]['title']}»")
+
+    # --- поза из каталога — в третью ячейку ---
+    page.locator(".qs-refpose").nth(2).click()
+    wait_modal(page, 0, True)
+    catalog = len(library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR))
+    page.wait_for_function(
+        f"() => [...document.querySelectorAll('.qs-posegrid img')]"
+        f".filter(i => i.complete && i.naturalWidth > 0).length >= {catalog + 1}",
+        timeout=60000,
+    )
+    report.check(pose_tiles_loaded(page) == catalog + 1,
+                 f"в окне {catalog} поз и плитка «Добавить позу»: {pose_tiles_loaded(page)}")
+    box = page.evaluate("() => { const r = [...document.querySelectorAll('.qs-modal')][0].getBoundingClientRect();"
+                        " return [r.left, r.top, r.width, r.height].map(Math.round); }")
+    report.check(box[0] == 0 and box[1] == 0 and box[2] >= 1900 and box[3] >= 1070,
+                 f"окно накрывает страницу целиком: {box}")
+    shot = samples.parent / "pose-window.png"
+    page.screenshot(path=str(shot))
+    print(f"  снимок окна поз: {shot}")
+    page.locator(".qs-posegrid img").first.click()
+    wait_loaded(page, [2])
+    wait_modal(page, 0, False)
+    report.check(True, "плитка каталога: скелет в ячейке 3, окно закрылось")
+
+    # --- «Добавить позу» по фото — в первую ячейку ---
+    page.locator(".qs-refpose").nth(0).click()
+    wait_modal(page, 0, True)
+    page.wait_for_function(
+        f"() => document.querySelectorAll('.qs-posegrid img').length >= {catalog + 1}", timeout=60000
+    )
+    page.locator(".qs-posegrid img").last.click()
+    page.wait_for_selector(".qs-posephoto input[type=file]", state="attached", timeout=20000)
+    report.check("распозна" in modal_message(page, 0), f"подсказка к фото: «{modal_message(page, 0)[:60]}…»")
+    photo = samples / "pose_photo.jpg"
+    shutil.copy(config.POSE_LIBRARY_DIR / "dance_02.jpg", photo)
+    before = len(fake.requests)
+    page.locator(".qs-posephoto input[type=file]").set_input_files(str(photo))
+    wait_loaded(page, [0, 2], timeout=60000)
+    request = fake.wait(before + 1, timeout=60)
+    report.check(request.prompt == tile.PROMPT and len(request.references) == 1,
+                 f"плитка новой позы заказана модели: скелет-референс {request.references[0].size}")
+    page.wait_for_function(
+        "() => ([...document.querySelectorAll('.qs-modal')][0]?.innerText || '').includes('Плитка готова')",
+        timeout=60000,
+    )
+    custom = library.list_poses(config.POSE_LIBRARY_DIR, config.USER_POSE_DIR)[catalog:]
+    report.check(len(custom) == 1 and custom[0].tile.exists() and custom[0].thumb.exists(),
+                 f"своя поза сохранена с плиткой: {[entry.name for entry in custom]}")
+    page.wait_for_function(
+        f"() => [...document.querySelectorAll('.qs-posegrid img')]"
+        f".filter(i => i.complete && i.naturalWidth > 0).length >= {catalog + 2}",
+        timeout=20000,
+    )
+    report.check(True, "новая поза встала в окно перед «Добавить позу»")
+    click_text(page, "Закрыть")
+    wait_modal(page, 0, False)
+
+    # --- эскиз — во вторую ячейку; «Отмена» — пятая остаётся пустой ---
+    page.locator(".qs-refsketch").nth(1).click()
+    wait_modal(page, 1, True)
+    page.wait_for_function(
+        "() => (window.__qsPainters || {})['qs-sketch-painter']?.state().width > 0", timeout=20000
+    )
+    shot = samples.parent / "sketch-window.png"
+    stroke(page, [(0.2, 0.2), (0.8, 0.8)], painter="qs-sketch-painter")
+    stroke(page, [(0.2, 0.8), (0.8, 0.2)], painter="qs-sketch-painter")
+    page.screenshot(path=str(shot))
+    print(f"  снимок окна эскиза: {shot}")
+    click_text(page, "Принять")
+    wait_loaded(page, [0, 1, 2])
+    wait_modal(page, 1, False)
+    report.check(True, "«Принять»: эскиз в ячейке 2, окно закрылось")
+
+    page.locator(".qs-refsketch").nth(4).click()
+    wait_modal(page, 1, True)
+    click_text(page, "Отмена")
+    wait_modal(page, 1, False)
+    report.check(not reference_slots(page)[4]["loaded"], "«Отмена» закрывает окно, ячейка 5 пуста")
+
+    # --- модель получает ровно это и в этом порядке ---
+    for box in page.locator("textarea").all():
+        if box.is_visible():
+            box.fill("a dancer <image1>")
+            break
+    count = len(fake.requests)
+    click_text(page, "Сгенерировать")
+    request = fake.wait(count + 1)
+    sizes = [image.size for image in request.references]
+    report.check(sizes == [(768, 768), (1024, 1024), (768, 768)],
+                 f"в запрос ушли поза с фото, эскиз, поза каталога: {sizes}")
+    pose_img, sketch_img = np.asarray(request.references[0]), np.asarray(request.references[1].convert("L"))
+    report.check(pose_img.mean() < 40, f"поза — скелет на чёрном: средняя яркость {pose_img.mean():.0f}")
+    centre, corner = sketch_img[500:524, 500:524].mean(), sketch_img[40:80, 900:980].mean()
+    report.check(centre < 128 < corner,
+                 f"эскиз: мазок в центре тёмный ({centre:.0f}), холст белый ({corner:.0f})")
+    report.check(not errors, "без ошибок страницы" + (f": {errors[:2]}" if errors else ""))
+
+
 def scenario_performance(browser, url, report: Report, fake: FakeGenerator) -> None:
     """Секция «Производительность»: состояние, точность, SageAttention на лету."""
     print("производительность:")
@@ -772,7 +936,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Проверка интерфейса в браузере")
     parser.add_argument("--port", type=int, default=7899)
     parser.add_argument("--only", nargs="*", default=None,
-                        help="layout language painter annotation outpaint latency paste gallery send references performance secret")
+                        help="layout language painter annotation outpaint latency paste gallery send references tools performance secret")
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
@@ -795,6 +959,9 @@ def main() -> int:
     config.SETTINGS_FILE = work / "settings.json"
     config.INT8_DIR = work / "int8"
     config.TURBO_DIR = work / "turbo"
+    # Свои позы — тоже свои: сценарий инструментов ячейки добавляет позу по
+    # фото. Каталог openposes.com и веса DWPose — настоящие, только чтение.
+    config.USER_POSE_DIR = work / "poses"
     config.ensure_directories()
 
     fake = FakeGenerator()
@@ -815,6 +982,7 @@ def main() -> int:
         "gallery": lambda b, r: scenario_gallery(b, url, r, fake, samples),
         "send": lambda b, r: scenario_send(b, url, r, fake),
         "references": lambda b, r: scenario_references(b, url, r, fake, samples),
+        "tools": lambda b, r: scenario_tools(b, url, r, fake, samples),
         "performance": lambda b, r: scenario_performance(b, url, r, fake),
         "secret": lambda b, r: scenario_secret(b, url, r),
     }

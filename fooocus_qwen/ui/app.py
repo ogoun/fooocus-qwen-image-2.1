@@ -9,7 +9,7 @@ from pathlib import Path
 import gradio as gr
 
 from .. import config
-from . import layout, tab_edit, tab_gallery, tab_generate, tab_settings
+from . import layout, reference_tools, tab_edit, tab_gallery, tab_generate, tab_settings
 from .i18n import LANGUAGES, Localizer, pick
 from .state import Studio
 
@@ -200,6 +200,8 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
         # управление возвращается на первую. Это стоит четверть секунды на
         # старте и избавляет от наполовину переведённой полосы вкладок.
         demo.load(None, None, None, js=WARM_UP_TABS)
+        # Подсказки к значкам ячеек референсов: у gr.Button нет своего title.
+        demo.load(None, language, None, js=reference_tools.TITLES_JS)
 
         # Регистрация именно здесь, после сборки вкладок: до неё
         # ``localizer.components`` ещё пуст, и клик обновлял бы одну кнопку.
@@ -208,7 +210,7 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
             language,
             [language, language_button, *localizer.components],
             queue=False,
-        )
+        ).then(None, language, None, js=reference_tools.TITLES_JS)
 
     return (demo, studio) if return_studio else demo
 

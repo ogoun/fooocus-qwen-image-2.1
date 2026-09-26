@@ -59,6 +59,9 @@ INVENTED = [
     "mountain", "house", "animal", "dog", "bird", "sign",
 ]
 INVENTED_CJK = ["建筑", "人物", "车辆", "树", "山", "房屋", "道路"]
+# Синонимы предмета самой инструкции — не выдумка: «vehicle» при «make the
+# car red» и «people» при «remove the person» называют то, о чём просили.
+SYNONYMS = {"people": ("person",), "vehicle": ("car",), "person": ("people",), "car": ("vehicle",)}
 CJK = re.compile(r"[一-鿿]")
 
 
@@ -67,7 +70,8 @@ def invented(instruction: str, answer: str) -> list[str]:
     text = answer.lower()
     found = [
         word for word in INVENTED
-        if word not in said and re.search(rf"{word}s?", text)
+        if word not in said and not any(same in said for same in SYNONYMS.get(word, ()))
+        and re.search(rf"\b{word}s?\b", text)
     ]
     return found + [word for word in INVENTED_CJK if word in answer]
 

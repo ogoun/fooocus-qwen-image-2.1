@@ -52,6 +52,25 @@ REF_ROW = "qs-refrow"
 REF_CELL = "qs-refcell"
 REF_SLOT = "qs-refslot"
 REF_TAG = "qs-reftag"
+# Кнопки-значки поверх ячейки: «поза» и «эскиз» (ui/reference_tools.py).
+REF_TOOLS = "qs-reftools"
+REF_POSE = "qs-refpose"
+REF_SKETCH = "qs-refsketch"
+
+# --- окна поверх страницы -------------------------------------------------
+# Колонка на весь экран с затемнением и карточка в ней. Своего модального
+# окна в Gradio 6.5.1 нет: окно — обычная колонка, которую показывают и
+# прячут, а место поверх страницы ей даёт CSS.
+MODAL = "qs-modal"
+MODAL_BOX = "qs-modalbox"
+MODAL_TITLE = "qs-modaltitle"
+MODAL_MESSAGE = "qs-modalmessage"
+# Окно поз: сетка плиток и поле фото для «Добавить позу».
+POSE_GRID = "qs-posegrid"
+POSE_PHOTO = "qs-posephoto"
+# Окно эскиза: карточка шире обычной и холст кисти в ней.
+SKETCH_BOX = "qs-sketchbox"
+SKETCH = "qs-sketch"
 # Результат правки: тот же холст, но на узком экране он под редактором и
 # занимает меньше места.
 PREVIEW = "qs-preview"

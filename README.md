@@ -38,7 +38,8 @@ reference images. Everything runs on your own GPU.
   steps). Pick them during installation or switch later in Settings; missing
   weights download with a progress bar.
 - **Reference images**: up to ten, each addressed in the prompt as
-  `<image1>`…`<image10>`.
+  `<image1>`…`<image10>`. Any cell can take a **pose** — from a pose library
+  or recognised from your own photo — or a hand-drawn **sketch**.
 - **Instruction-based editing** in four region modes:
   - **Mask** — paint the area to change; every pixel outside it stays byte-for-byte intact.
   - **Annotation** — circle several areas in different colours and describe each change by its colour in one prompt.
@@ -72,6 +73,16 @@ Edit tab; **Send to references** puts it into the first free reference cell. Bot
 also sit under the Edit tab's result.
 
 ![Generate tab: a short prompt, its AI-boosted rewrite and the result](docs/images/generate.webp)
+
+Each reference cell has two icons. 🧍 opens a pose library: pick a pose and
+its OpenPose skeleton goes into the cell, and the model follows it.
+
+![A pose skeleton in a reference cell and the result that follows it](docs/images/pose-result.webp)
+
+✏️ opens a sketch canvas: draw, press **Accept**, and the sketch becomes the
+reference.
+
+![The sketch window](docs/images/sketch-window.webp)
 
 ### Edit with a mask
 
@@ -259,6 +270,25 @@ not the cell number: empty cells are not sent to the model, so cells 1, 3
 and 7 are `<image1>`, `<image2>` and `<image3>`. With exactly one reference,
 don't use a tag at all.
 
+**Poses.** 🧍 on a cell opens the pose library: the poses of
+[openposes.com](https://openposes.com/) (model: Emma Watson), then your own.
+Clicking a tile puts its skeleton into the cell. The catalogue (about 11 MB)
+downloads the first time the window opens; `tools\fetch_poses.py` does it in
+advance, also from an already downloaded `poses.zip` (`--archive`). The tiles
+are not part of this repository — the site declares no licence for them.
+
+The last tile, **Add a pose**, takes a photo of a person. The pose is
+recognised on the CPU in a fraction of a second with
+[DWPose](https://github.com/IDEA-Research/DWPose) (its 350 MB of ONNX weights
+download on first use), the skeleton goes into the cell at once, and the pose
+is saved to `user/poses/`. Qwen-Image then draws a tile for it in the
+catalogue's style (about 13 s with Turbo if its adapter is already downloaded,
+LowQuality otherwise).
+
+**Sketches.** ✏️ opens a white canvas with the same brush as the Edit tab:
+palette, size, eraser, undo/redo, zoom. **Accept** puts the drawing into the
+cell, **Cancel** closes the window.
+
 More references use more memory. **Reference detail** (under Advanced) sets
 the resolution the references are scaled to; *Auto* picks it from the number
 of condition images and says so in the status line. At full detail, five
@@ -360,8 +390,9 @@ fooocus_qwen/
   prompting/   AI boost, styles, saved prompts
   llm/         OpenAI-compatible client, endpoint file, installer dialogue
   storage/     output folders by date
-  ui/          Gradio tabs, the mask brush (ui/painter/), layout, translations
-resources/     Fooocus styles and the Qwen system prompts
+  poses/       OpenPose skeletons, pose recognition (DWPose), the pose library, pose tiles
+  ui/          Gradio tabs, the mask brush (ui/painter/), reference tools, layout, translations
+resources/     Fooocus styles, the Qwen system prompts, the "Add a pose" tile
 tools/         smoke test, benchmark, UI check, screenshot builder, experiments
 docs/          architecture, usage guide, benchmark, research notes (in Russian)
 tests/         unit tests (no GPU needed)
