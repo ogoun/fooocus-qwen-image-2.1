@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import unicodedata
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -42,7 +43,7 @@ _THINK = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 # Иероглифы и текст в кавычках — для проверки языка описания.
 _CJK = re.compile(r"[\u3400-\u9fff\uf900-\ufaff]")
-_QUOTED = re.compile(r'"[^"]*"|“[^”]*”|「[^」]*」|『[^』]*』')
+_QUOTED = re.compile(r'"[^"]*"|“[^”]*”|«[^»]*»|「[^」]*」|『[^』]*』')
 
 # Пометка к запросу правки, когда изображений переписыватель не видит.
 # Системный промт правки целиком построен на чтении картинки; пометка говорит
@@ -51,12 +52,21 @@ _QUOTED = re.compile(r'"[^"]*"|“[^”]*”|「[^」]*」|『[^』]*』')
 # языка не нашлось ни с пометкой, ни без — редкий сбой, увиденный вживую,
 # она не лечит (это делает проверка языка ниже); зато ответ короче и быстрее,
 # 4.5 с против 5.4. Пометка по-английски: так написан системный промт.
+#
+# Язык описания пометка не переопределяет, а напоминает правило (A). Прежняя
+# редакция кончалась словами «Write the description in the language of the
+# instruction» — для английских инструкций опыта это совпадало с правилом, а
+# для русских противоречило ему, и пометка, стоящая последней, побеждала:
+# tools/experiments/boost_language.py (qwen3.8-27b, русские инструкции) —
+# 75 % ответов по-русски с прежней редакцией, 0 % без пометки и 0 % из 20
+# с нынешней.
 BLIND_NOTE = (
     "\n\nNote: the input image is NOT available to you — you cannot see it. "
     "Do not guess, describe or name anything the image might contain. Rewrite "
     "only the instruction itself: make the requested change concrete and say "
     "that everything else in the image stays exactly as it is, without listing "
-    "what that is. Write the description in the language of the instruction."
+    "what that is. Language decision (A) still applies: write the description "
+    "in English unless the instruction is in Chinese."
 )
 
 
@@ -96,32 +106,41 @@ def parse_response(text: str) -> BoostResult:
         except json.JSONDecodeError:
             payload = None
         if isinstance(payload, dict):
-            rewritten = _clean(payload.get("rewritten_prompt"))
-            if rewritten:
-                return BoostResult(
-                    prompt=rewritten,
-                    wh_ratio=_clean(payload.get("wh_ratio")),
-                    ratio_follow=_clean(payload.get("ratio_follow")),
-                    raw=text,
-                )
+            # Ответ по форме, но без текста — это пустой ответ, а не проза.
+            # Раньше он уходил «как есть», и промтом становился сам JSON
+            # (`{"rewritten_prompt": "", …}` — увидено в опыте boost_language).
+            # Пустой промт `_ask` переспрашивает, а затем оставляет исходный.
+            return BoostResult(
+                prompt=_clean(payload.get("rewritten_prompt")) or "",
+                wh_ratio=_clean(payload.get("wh_ratio")),
+                ratio_follow=_clean(payload.get("ratio_follow")),
+                raw=text,
+            )
 
-    LOGGER.warning("Ответ переписывателя не содержит поля rewritten_prompt, беру текст как есть")
+    LOGGER.warning("Ответ переписывателя — не JSON, беру текст как есть")
     return BoostResult(prompt=raw, raw=text)
 
 
 def off_language(instruction: str, rewritten: str) -> bool:
-    """Описание по-китайски при инструкции без иероглифов.
+    """Описание не по-английски при инструкции без иероглифов.
 
     Оба системных промта требуют: инструкция на китайском — описание на
     китайском, на любом другом языке — по-английски. Модель изредка
-    нарушает правило и отвечает по-китайски на английскую инструкцию
-    (увидено вживую на qwen3.8-27b). Текст в кавычках не считается: это
-    надписи, которые модель изображения нарисует, и их язык решается
-    отдельным правилом (B).
+    нарушает правило: отвечает по-китайски на английскую инструкцию
+    (увидено вживую на qwen3.8-27b) или на языке самой инструкции — русском
+    и любом другом. Поэтому проверяется не «нет иероглифов», а «все буквы
+    латинские»: английский узнаётся по письменности, а чужих языков много.
+    Текст в кавычках не считается: это надписи, которые модель изображения
+    нарисует, и их язык решается отдельным правилом (B).
     """
     if _CJK.search(instruction):
         return False
-    return bool(_CJK.search(_QUOTED.sub("", rewritten)))
+    prose = _QUOTED.sub("", rewritten)
+    return any(char.isalpha() and not _latin(char) for char in prose)
+
+
+def _latin(char: str) -> bool:
+    return unicodedata.name(char, "").startswith("LATIN")
 
 
 def build_user_message(prompt: str, reference_count: int) -> str:
@@ -190,15 +209,23 @@ def _ask(
     instruction: str,
     images: list[Image.Image] | None = None,
 ) -> BoostResult:
-    """Один запрос и, если описание пришло не на том языке, один повтор.
+    """Один запрос и, если описание пришло пустым или не на том языке, один повтор.
 
     Повтор ровно один: сбой редкий, и второй ответ почти наверняка верный;
-    если нет — лучше отдать его, чем задерживать генерацию дальше.
+    если нет — лучше отдать его, чем задерживать генерацию дальше. Пустой
+    второй ответ заменяется исходной инструкцией: генерация с пустым промтом
+    рисовала бы что попало.
     """
     result = parse_response(client.complete(system, user, images=images))
-    if off_language(instruction, result.prompt):
-        LOGGER.warning("Переписанный промт пришёл не на языке инструкции, спрашиваю ещё раз")
+    if not result.prompt:
+        LOGGER.warning("Переписыватель вернул пустой промт, спрашиваю ещё раз")
         result = parse_response(client.complete(system, user, images=images))
+    elif off_language(instruction, result.prompt):
+        LOGGER.warning("Переписанный промт пришёл не по-английски, спрашиваю ещё раз")
+        result = parse_response(client.complete(system, user, images=images))
+    if not result.prompt:
+        LOGGER.warning("Переписыватель снова вернул пустой промт, оставляю исходный")
+        return replace(result, prompt=instruction)
     return result
 
 

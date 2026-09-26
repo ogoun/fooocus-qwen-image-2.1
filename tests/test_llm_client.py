@@ -28,7 +28,7 @@ class Handler(BaseHTTPRequestHandler):
         length = int(self.headers["Content-Length"])
         body = json.loads(self.rfile.read(length).decode("utf-8"))
         RECEIVED.append({"body": body, "auth": self.headers.get("Authorization")})
-        self._reply({"choices": [{"message": {"content": "переписанный промт"}}]})
+        self._reply({"choices": [{"message": {"content": "rewritten prompt"}}]})
 
     def _reply(self, payload):
         data = json.dumps(payload).encode("utf-8")
@@ -62,7 +62,7 @@ def test_complete_sends_system_and_user_messages(server):
     client = LlmClient(LlmEndpoint(base_url=server, token="SECRET"), model="qwen3")
     answer = client.complete("системный", "пользовательский")
 
-    assert answer == "переписанный промт"
+    assert answer == "rewritten prompt"
     body = RECEIVED[0]["body"]
     assert body["model"] == "qwen3"
     assert body["messages"][0] == {"role": "system", "content": "системный"}
@@ -190,7 +190,7 @@ class FailingHandler(Handler):
         if isinstance(body["messages"][1]["content"], list):
             self.send_error(500, "Internal Server Error")
         else:
-            self._reply({"choices": [{"message": {"content": "готово"}}]})
+            self._reply({"choices": [{"message": {"content": "done"}}]})
 
 
 @pytest.fixture
@@ -265,7 +265,7 @@ def test_boost_rewrites_by_text_when_the_model_refuses_images(blind_server, tmp_
         client, "make it red", mode=boost.MODE_EDIT, prompt_dir=_prompt_dir(tmp_path),
         references=[Image.new("RGB", (8, 8))],
     )
-    assert result.prompt == "готово"
+    assert result.prompt == "done"
     assert result.images_skipped
     assert _posts() == [True, False], "сначала с картинкой, затем тот же запрос одним текстом"
 
@@ -276,7 +276,7 @@ def test_boost_skips_images_for_a_known_text_model(blind_server, tmp_path):
         client, "make it red", mode=boost.MODE_EDIT, prompt_dir=_prompt_dir(tmp_path),
         references=[Image.new("RGB", (8, 8))], send_images=False,
     )
-    assert result.prompt == "готово" and result.images_skipped
+    assert result.prompt == "done" and result.images_skipped
     assert _posts() == [False]
 
 
@@ -302,11 +302,11 @@ def test_studio_remembers_a_text_model_and_says_so(blind_server, tmp_path, monke
     picture = [Image.new("RGB", (8, 8))]
 
     text, _, message = studio.boost_prompt("make it red", boost.MODE_EDIT, "ru", picture)
-    assert text == "готово"
+    assert text == "done"
     assert "по тексту" in message and "не выполнен" not in message
     assert _posts() == [True, False]
 
     RECEIVED.clear()
     text, _, message = studio.boost_prompt("make it blue", boost.MODE_EDIT, "en", picture)
-    assert text == "готово" and "text alone" in message
+    assert text == "done" and "text alone" in message
     assert _posts() == [False], "известная текстовая модель — без заведомо неудачного запроса"

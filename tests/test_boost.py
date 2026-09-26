@@ -39,9 +39,12 @@ def test_empty_answer_yields_empty_prompt():
     assert result.prompt == ""
 
 
-def test_json_without_rewritten_prompt_falls_back_to_raw():
-    result = boost.parse_response('{"wh_ratio": "3:2"}')
-    assert result.prompt == '{"wh_ratio": "3:2"}'
+def test_json_without_rewritten_prompt_is_an_empty_answer_not_prose():
+    """JSON без текста промтом не становится: раньше промтом уходил сам JSON."""
+    for text in ('{"wh_ratio": "3:2"}', '{"rewritten_prompt": "", "ratio_follow": "<image1>"}'):
+        result = boost.parse_response(text)
+        assert result.prompt == ""
+    assert boost.parse_response('{"rewritten_prompt": "", "wh_ratio": "3:2"}').wh_ratio == "3:2"
 
 
 def test_user_message_without_references_has_no_tags():
@@ -168,6 +171,44 @@ def test_a_chinese_instruction_may_get_a_chinese_description():
 def test_quoted_text_is_rendered_text_not_the_description_language():
     """Надпись в кавычках — для картинки; её язык решает правило (B), не (A)."""
     assert not boost.off_language("add a sign saying sale", 'Add a shop sign reading "特价" above the door')
+
+
+def test_russian_prose_for_a_russian_instruction_is_off_language():
+    """Описание — по-английски для любой инструкции, кроме китайской (правило A)."""
+    assert boost.off_language("сделай небо закатным", "Заменить текущее небо на закатное")
+    assert not boost.off_language("сделай небо закатным", "Replace the sky with a warm sunset")
+
+
+def test_russian_text_in_quotes_is_rendered_text():
+    assert not boost.off_language("добавь вывеску «Распродажа»", 'Add a shop sign reading "Распродажа"')
+    assert not boost.off_language("добавь вывеску", "Add a shop sign reading «Распродажа»")
+
+
+def test_latin_accents_count_as_english_script():
+    """Заимствования вроде «café» и «naïve» — латиница, не чужой язык."""
+    assert not boost.off_language("кафе", "A cozy café with a naïve mural, 25 °C")
+
+
+def test_the_blind_note_keeps_the_english_rule():
+    """Пометка напоминает правило (A), а не велит писать на языке инструкции:
+    прежняя редакция давала 75 % русских ответов (boost_language.py)."""
+    assert "language of the instruction" not in boost.BLIND_NOTE
+    assert "English unless the instruction is in Chinese" in boost.BLIND_NOTE
+
+
+def test_an_empty_answer_is_asked_again(tmp_path):
+    client = SequenceClient([
+        '{"rewritten_prompt": "", "ratio_follow": "<image1>"}',
+        '{"rewritten_prompt": "A cat in glasses reads a newspaper"}',
+    ])
+    result = boost.boost(client, "кот в очках", mode=boost.MODE_T2I, prompt_dir=_prompts(tmp_path))
+    assert result.prompt == "A cat in glasses reads a newspaper" and len(client.calls) == 2
+
+
+def test_two_empty_answers_keep_the_original_prompt(tmp_path):
+    client = SequenceClient(['{"rewritten_prompt": ""}', "   "])
+    result = boost.boost(client, "кот в очках", mode=boost.MODE_T2I, prompt_dir=_prompts(tmp_path))
+    assert result.prompt == "кот в очках" and len(client.calls) == 2
 
 
 def test_an_off_language_answer_is_asked_again(tmp_path):
