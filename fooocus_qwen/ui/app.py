@@ -129,13 +129,18 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
             )
             # Результат правки — в референсы генерации, с переходом туда: список
             # референсов и сообщение о нём живут на вкладке генерации.
+            # Два шага, а не один: значение слота на скрытой вкладке не
+            # отрисовывается (см. tab_generate.open_generate_tab).
             edit_components["send_to_references"].click(
-                tab_generate.send_reference_from_edit,
+                tab_generate.open_generate_tab, None, tabs, queue=False,
+            ).then(
+                tab_generate.send_to_references,
                 [
                     edit_components["result"], edit_components["selected"],
-                    generate_components["reference_upload"], generate_components["sent_references"], language,
+                    generate_components["references"], language,
                 ],
-                [*generate_components["reference_targets"], tabs],
+                generate_components["reference_targets"],
+                show_progress="hidden",
             )
 
             gallery_tab = localizer.bind(

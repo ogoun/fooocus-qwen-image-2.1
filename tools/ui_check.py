@@ -212,7 +212,7 @@ def scenario_layout(browser, url, report: Report) -> None:
             problems = page.evaluate("""() => {
                 const doc = document.documentElement, out = [];
                 if (doc.scrollWidth > doc.clientWidth + 1) out.push(`прокрутка вбок ${doc.scrollWidth}>${doc.clientWidth}`);
-                document.querySelectorAll('.qs-board, .qs-browse, .qs-side, .qs-canvas').forEach(el => {
+                document.querySelectorAll('.qs-board, .qs-browse, .qs-side, .qs-canvas, .qs-refs').forEach(el => {
                     const r = el.getBoundingClientRect();
                     if (!r.width) return;
                     const name = (el.className.toString().match(/qs-[a-z-]+/) || ['?'])[0];
@@ -505,10 +505,97 @@ def scenario_send(browser, url, report: Report, fake: FakeGenerator) -> None:
     page.close()
 
 
+SLOTS_JS = """() => [...document.querySelectorAll('.qs-refslot')].map(slot => {
+    const img = slot.querySelector('img');
+    return {loaded: !!(img && img.complete && img.naturalWidth > 0), text: slot.innerText.trim()};
+})"""
+
+
+def reference_slots(page) -> list[dict]:
+    """Состояние десяти слотов: загружена ли картинка и что написано в ячейке.
+
+    «Загружена» — не «тег img на месте»: битая ссылка тоже оставляет тег.
+    Смотрится, что браузер картинку действительно получил и разобрал.
+    """
+    return page.evaluate(SLOTS_JS)
+
+
+def wait_loaded(page, indices: list[int], timeout: int = 20000) -> None:
+    """Ждёт, пока загруженными станут ровно эти слоты.
+
+    При неудаче сообщает, что в слотах на самом деле: голый таймаут не
+    говорит, картинка не пришла, пришла не туда или пришла битой.
+    """
+    expected = sorted(indices)
+    try:
+        page.wait_for_function(
+            f"""() => JSON.stringify(({SLOTS_JS})().flatMap((s, i) => s.loaded ? [i] : []))
+                    === '{expected}'.replace(/ /g, '')""",
+            timeout=timeout,
+        )
+    except Exception as error:
+        actual = [i for i, s in enumerate(reference_slots(page)) if s["loaded"]]
+        raise AssertionError(f"ждали слоты {expected}, загружены {actual}") from error
+
+
+def wait_label(page, index: int, fragment: str, timeout: int = 20000) -> str:
+    """Ждёт подпись слота: она приходит ответом обработчика, позже картинки."""
+    try:
+        page.wait_for_function(
+            f"() => ({SLOTS_JS})()[{index}].text.includes({fragment!r})", timeout=timeout
+        )
+    except Exception as error:
+        raise AssertionError(
+            f"в слоте {index} нет «{fragment}»: «{reference_slots(page)[index]['text']}»"
+        ) from error
+    return reference_slots(page)[index]["text"]
+
+
 def scenario_references(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
-    """«Отправить в референсы» с генерации и с правки: лента референсов растёт."""
-    print("отправка в референсы:")
+    """Сетка референсов: два ряда по пять слева от результата, клик и перетаскивание.
+
+    Проверяется вся дорога: ячейка в сетке → подпись тегом → запрос к модели.
+    Подпись и запрос обязаны сходиться: тег считается по порядку заполненных
+    слотов, и слоты с дырами (заполнены первый, второй и третий, но положены
+    в разном порядке) — ровно тот случай, где позиционная подпись соврала бы.
+    """
+    print("сетка референсов:")
     page, errors = fresh_page(browser, url)
+
+    geometry = page.evaluate("""() => {
+        const visible = el => el && el.getBoundingClientRect().width > 0;
+        const refs = [...document.querySelectorAll('.qs-refs')].find(visible);
+        const canvas = [...document.querySelectorAll('.qs-canvas')].find(visible);
+        const cells = [...document.querySelectorAll('.qs-refslot')]
+            .map(s => s.getBoundingClientRect()).filter(r => r.width > 0);
+        return {
+            refsRight: refs.getBoundingClientRect().right,
+            canvasLeft: canvas.getBoundingClientRect().left,
+            rows: [...new Set(cells.map(r => Math.round(r.top)))].length,
+            count: cells.length,
+            squares: cells.every(r => Math.abs(r.width - r.height) <= 2),
+            width: Math.round(cells[0].width),
+        };
+    }""")
+    report.check(geometry["count"] == 10, f"слотов десять: {geometry['count']}")
+    report.check(geometry["rows"] == 2, f"слоты в два ряда: {geometry['rows']}")
+    report.check(geometry["refsRight"] <= geometry["canvasLeft"] + 1,
+                 f"сетка левее результата: {geometry['refsRight']:.0f} ≤ {geometry['canvasLeft']:.0f}")
+    report.check(geometry["squares"], f"ячейки квадратные, {geometry['width']} px")
+    report.check(not any(slot["loaded"] for slot in reference_slots(page)), "по умолчанию все пусты")
+
+    # Картинка кладётся прямо в третью ячейку — как это сделал бы человек,
+    # перетащив файл или выбрав его кликом (оба пути ведут в тот же input).
+    page.locator(".qs-refslot").nth(2).locator('input[type="file"]').set_input_files(
+        str(sample_image(samples, 300, 200))
+    )
+    wait_loaded(page, [2])
+    # Не «тега нет», а «подпись о том, что тег не нужен, есть»: отсутствие
+    # тега выполняется и тогда, когда подписи нет вовсе.
+    label = wait_label(page, 2, "без тега")
+    report.check("<image" not in label, f"один референс — подписан без тега: «{label}»")
+
+    # Результат генерации — в первый свободный слот, то есть в первый.
     for box in page.locator("textarea").all():
         if box.is_visible():
             box.fill("a gray square")
@@ -518,18 +605,44 @@ def scenario_references(browser, url, report: Report, fake: FakeGenerator, sampl
     fake.wait(before + 1)
     page.wait_for_function("() => document.querySelector('.preview img')", timeout=20000)
     click_text(page, "Отправить в референсы")
-    page.wait_for_function("() => document.querySelectorAll('.qs-strip .thumbnail-item').length === 1", timeout=20000)
-    report.check(True, "результат генерации — в референсах")
+    wait_loaded(page, [0, 2])
+    first, third = wait_label(page, 0, "<image1>"), wait_label(page, 2, "<image2>")
+    report.check(True, f"теги по порядку заполненных: «{first}», «{third}»")
 
+    # С правки — снова в первый свободный, то есть во второй, и переход сюда.
     open_tab(page, 1)
     load_into_painter(page, sample_image(samples, 1024, 768))
     apply_edit(page)
     fake.wait(before + 2)
     page.wait_for_function("() => document.querySelector('.qs-slot-result .preview img')", timeout=20000)
     click_text(page, "Отправить в референсы")
-    page.wait_for_function("() => document.querySelectorAll('.qs-strip .thumbnail-item').length === 2", timeout=20000)
+    try:
+        wait_loaded(page, [0, 1, 2])
+    except AssertionError as error:
+        statuses = [box.input_value() for box in page.locator(".qs-status textarea").all()]
+        tab = page.locator('button[role="tab"][aria-selected="true"]').inner_text()
+        slot = page.evaluate("""() => {
+            const s = document.querySelectorAll('.qs-refslot')[1];
+            const img = s.querySelector('img');
+            return {text: s.innerText.trim(), img: img ? img.getAttribute('src') : null,
+                    html: s.innerHTML.replace(/\\s+/g, ' ').slice(0, 300)};
+        }""")
+        raise AssertionError(f"{error}; вкладка «{tab}»; строки: {statuses[-3:]}; слот 2: {slot}") from error
     active = page.locator('button[role="tab"][aria-selected="true"]').inner_text()
     report.check(active == "Генерация", f"с правки — переход на генерацию: {active}")
+    tags = [wait_label(page, index, f"<image{index + 1}>") for index in (0, 1, 2)]
+    report.check(True, f"теги трёх слотов сдвинулись по порядку: {tags}")
+
+    # Модель получает ровно заполненные слоты и ровно в порядке тегов.
+    click_text(page, "Сгенерировать")
+    request = fake.wait(before + 3)
+    sizes = [image.size for image in request.references]
+    report.check(sizes == [(256, 256), (1024, 768), (300, 200)],
+                 f"в запрос ушли слоты 1, 2, 3 по порядку: {sizes}")
+
+    click_text(page, "Очистить референсы")
+    wait_loaded(page, [])
+    report.check(True, "«Очистить референсы» опустошает сетку")
     report.check(not errors, "без ошибок страницы" + (f": {errors[:2]}" if errors else ""))
     page.close()
 

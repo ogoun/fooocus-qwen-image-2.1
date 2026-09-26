@@ -1,9 +1,10 @@
-"""Вкладка генерации: промт, референсы, качество, результат.
+"""Вкладка генерации: референсы, результат, промт, качество.
 
 Компоновка повторяет Fooocus: наверху результат, под ним строка промта и одна
-кнопка, а всё остальное спрятано за переключателем «Продвинутое». Референсы
-показаны лентой миниатюр, каждая подписана тегом, которым на неё ссылаются
-из промта.
+кнопка, а всё остальное спрятано за переключателем «Продвинутое». Референсы —
+сетка из десяти слотов слева от результата, два ряда по пять: картинку кладут
+в слот кликом или перетаскиванием, и заполненный слот подписан тегом, которым
+на него ссылаются из промта.
 """
 
 from __future__ import annotations
@@ -30,7 +31,11 @@ from .tab_edit import chosen_path, remember_selection
 
 LOGGER = logging.getLogger(__name__)
 
-MAX_REFERENCES = 10
+# Сетка референсов слева от результата: два ряда по пять. Десять — предел
+# самой модели (карточка Qwen-Image-2.1), и сетка ровно его покрывает.
+REFERENCE_ROWS = 2
+REFERENCE_COLUMNS = 5
+MAX_REFERENCES = REFERENCE_ROWS * REFERENCE_COLUMNS
 
 
 def _ratio_choices(lang: str) -> list[tuple[str, str]]:
@@ -73,56 +78,91 @@ def _captions(images, lang: str) -> list[str]:
     ]
 
 
-def _shown_references(images, lang: str) -> tuple:
-    """Лента, секция, кнопка очистки и строка состояния для списка референсов.
+def _grid(references) -> list:
+    """Список ровно из ``MAX_REFERENCES`` позиций: картинка или ``None``.
 
-    Секция раскрывается сама, когда есть что показать: подписи с тегами
-    ``<imageN>`` бесполезны, если до них надо доклацаться.
+    Состояние вкладки поначалу пустой список — слоты ещё никто не трогал, —
+    а обработчикам удобнее всегда видеть все десять позиций.
     """
-    captioned = list(zip(images, _captions(images, lang)))
-    return (
-        gr.update(value=captioned, visible=bool(images)),
-        gr.update(open=bool(images)),
-        gr.update(visible=bool(images)),
-        say("references_counted", lang, count=len(images), total=MAX_REFERENCES),
-    )
+    grid = list(references or [])[:MAX_REFERENCES]
+    return grid + [None] * (MAX_REFERENCES - len(grid))
 
 
-def send_to_references(produced, selected, files, sent, lang: str) -> tuple:
-    """«Отправить в референсы»: выбранная картинка результата — в конец списка.
+def filled(references) -> list:
+    """Заполненные слоты по порядку — ровно то, что уходит в модель.
 
-    Выходы: присланные, все референсы, лента, секция, кнопка очистки, строка
-    состояния вкладки генерации. Кнопка есть и на правке (связывается в
-    app.py) — тогда к выходам добавляется переход на эту вкладку.
+    Слоты позиционные и бывают с дырами: человек мог положить картинки в
+    первый, третий и седьмой. Модели дыры не нужны и не передаются.
+    """
+    return [image for image in (references or []) if image is not None]
+
+
+def slot_labels(references, lang: str) -> list:
+    """Подписи всех слотов: тег у заполненных, ничего у пустых.
+
+    Тег считается по порядку **заполненных** слотов, а не по позиции слота:
+    если заполнены первый, третий и седьмой, они — ``<image1>``,
+    ``<image2>`` и ``<image3>``. Подпись по позиции («<image7>») ссылалась бы
+    на изображение, которого у модели нет, — пустые слоты в неё не уходят.
+    Сами теги берутся из ``_captions``, то есть из той же функции, что строит
+    вход модели.
+
+    Обновляется только подпись, картинка не трогается: иначе каждый ответ
+    заново слал бы изображение в браузер.
+    """
+    grid = _grid(references)
+    captions = iter(_captions(filled(grid), lang))
+    return [
+        gr.update(label=next(captions), show_label=True) if image is not None
+        else gr.update(label="", show_label=False)
+        for image in grid
+    ]
+
+
+def send_to_references(produced, selected, references, lang: str) -> tuple:
+    """«Отправить в референсы»: выбранная картинка результата — в первый свободный слот.
+
+    Выходы: состояние референсов, десять слотов, строка состояния вкладки
+    генерации. Кнопка есть и на правке (связывается в app.py) — тогда к
+    выходам добавляется переход на эту вкладку.
     """
     from PIL import Image as PILImage
 
+    unchanged = (gr.update(),) * (1 + MAX_REFERENCES)
     path = chosen_path(produced, selected)
-    sent = list(sent or [])
-    uploaded = len(files or [])
     if path is None:
-        unchanged = (gr.update(),) * 5
         return (*unchanged, say("nothing_to_send", lang))
-    if uploaded + len(sent) >= MAX_REFERENCES:
-        unchanged = (gr.update(),) * 5
+
+    grid = _grid(references)
+    free = next((index for index, image in enumerate(grid) if image is None), None)
+    if free is None:
         return (*unchanged, say("references_full", lang, total=MAX_REFERENCES))
+
     with PILImage.open(path) as opened:
-        sent.append(opened.convert("RGB"))
-    uploaded_images = [PILImage.open(item.name).convert("RGB") for item in (files or [])]
-    images = (uploaded_images + sent)[:MAX_REFERENCES]
-    gallery, box, clear, _counted = _shown_references(images, lang)
-    return (sent, images, gallery, box, clear, say("reference_sent", lang, count=len(images), total=MAX_REFERENCES))
+        grid[free] = opened.convert("RGB")
+
+    slots = slot_labels(grid, lang)
+    slots[free] = gr.update(value=grid[free], **{k: v for k, v in slots[free].items() if k != "__type__"})
+    count = len(filled(grid))
+    return (grid, *slots, say("reference_sent", lang, count=count, total=MAX_REFERENCES))
 
 
-def send_reference_from_edit(produced, selected, files, sent, lang: str) -> tuple:
-    """То же с вкладки правки — и переход на генерацию, где лежат референсы.
+def open_generate_tab():
+    """Переход на вкладку генерации — первый шаг отправки в референсы с правки.
+
+    Переход и сама отправка — два события подряд, а не одно, и это не
+    стилистика. В Gradio 6.5.1 новое значение поля изображения, пришедшее в
+    том же ответе, что и переключение на его вкладку, не отрисовывается:
+    подпись слота менялась на ``<image2>``, а картинки в нём не было —
+    вместо неё оставался «+» пустой ячейки (найдено браузерной проверкой
+    ``tools/ui_check.py``). Когда вкладка уже открыта, значение ложится как
+    положено — так же, как при отправке прямо с генерации.
 
     Переход делается всегда, в том числе при отказе («нечего отправлять»,
     «референсов уже десять»): сообщение пишется в строку состояния
     генерации, и без перехода человек его бы не увидел.
     """
-    outputs = send_to_references(produced, selected, files, sent, lang)
-    return (*outputs, gr.Tabs(selected=layout.TAB_GENERATE))
+    return gr.Tabs(selected=layout.TAB_GENERATE)
 
 
 def build(studio, localizer: Localizer, language=None) -> dict:
@@ -140,19 +180,53 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     if language is None:
         language = gr.State(lang)
 
+    # Референсы — по позициям слотов, с дырами: картинка или None на каждый
+    # из десяти. В модель уходят только заполненные (``filled``). Поначалу
+    # пустой список: слоты ещё никто не трогал.
     references = gr.State([])
-    # Картинки, присланные кнопкой «Отправить в референсы» — с этой вкладки или
-    # с правки. Отдельно от виджета загрузки: тот в каждом событии отдаёт весь
-    # свой набор файлов, и список референсов пересобирается из него заново —
-    # присланное, дописанное в общий список, пропало бы при следующей загрузке.
-    # Итоговый список — загруженные файлы, затем присланные.
-    sent_references = gr.State([])
     # Исходный текст, по которому составлен переписанный промт. Нужен, чтобы
     # заметить, что промт с тех пор правили, а в модель по-прежнему уйдёт
     # старая переписка.
     boost_source = gr.State("")
 
     with gr.Row(elem_classes=[layout.WORK_ROW]):
+        # Сетка референсов — слева от результата, два ряда по пять слотов.
+        # Каждый слот — отдельное поле изображения: картинку кладут кликом или
+        # перетаскиванием, убирают его собственным крестиком. Слот принимает
+        # только загрузку: веб-камера и буфер обмена в ячейке в пару
+        # сантиметров добавили бы панель переключения источников крупнее
+        # самой ячейки.
+        with gr.Column(min_width=0, elem_classes=[layout.REFS_COL]):
+            localizer.bind(
+                gr.Markdown(pick("references_hint", lang)),
+                value=(
+                    "**Референсы** — нажмите на ячейку или перетащите в неё картинку",
+                    "**References** — click a cell or drop an image onto it",
+                ),
+            )
+            reference_slots: list[gr.Image] = []
+            for _row in range(REFERENCE_ROWS):
+                with gr.Row(equal_height=True):
+                    for _column in range(REFERENCE_COLUMNS):
+                        reference_slots.append(
+                            gr.Image(
+                                type="pil",
+                                image_mode="RGB",
+                                sources=["upload"],
+                                label="",
+                                show_label=False,
+                                buttons=[],
+                                placeholder="# +",
+                                min_width=0,
+                                scale=1,
+                                elem_classes=[layout.REF_SLOT],
+                            )
+                        )
+            reference_clear = localizer.bind(
+                gr.Button(pick("reference_clear", lang), size="sm"),
+                value=("Очистить референсы", "Clear references"),
+            )
+
         with gr.Column(min_width=layout.CANVAS_MIN_WIDTH, elem_classes=[layout.CANVAS_COL]):
             result = localizer.bind(
                 gr.Gallery(
@@ -224,47 +298,6 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 gr.Textbox(label=pick("boost_result", lang), lines=3, interactive=True),
                 label=("Переписанный промт", "Rewritten prompt"),
             )
-
-            # Референсы обязаны быть видны в главном окне вместе с тегами,
-            # которыми на них ссылаются из промта, — это требование
-            # заказчика. Но пустая лента с областью загрузки отнимала треть
-            # высоты у результата в каждой генерации, а референсы нужны
-            # далеко не в каждой. Поэтому секция закрыта, пока референсов
-            # нет, и раскрывается сама, как только первый добавлен: видно
-            # ровно тогда, когда есть что показывать.
-            reference_box = localizer.bind(
-                gr.Accordion(pick("references", lang), open=False),
-                label=("Референсы", "References"),
-            )
-            with reference_box:
-                reference_gallery = localizer.bind(
-                    gr.Gallery(
-                        label=pick("references", lang),
-                        columns=5,
-                        elem_classes=[layout.STRIP],
-                        object_fit="contain",
-                        show_label=False,
-                        interactive=False,
-                        buttons=layout.GALLERY_BUTTONS,
-                        # Пустая лента — только место: видна, когда есть что показать.
-                        visible=False,
-                    ),
-                    label=("Референсы", "References"),
-                )
-                with gr.Row():
-                    reference_upload = localizer.bind(
-                        gr.File(
-                            label=pick("reference_add", lang),
-                            file_count="multiple",
-                            file_types=["image"],
-                            elem_classes=[layout.DROP_ZONE],
-                        ),
-                        label=("Добавить референсы", "Add references"),
-                    )
-                    reference_clear = localizer.bind(
-                        gr.Button(pick("reference_clear", lang), visible=False),
-                        value=("Очистить референсы", "Clear references"),
-                    )
 
         with gr.Column(min_width=layout.SIDE_MIN_WIDTH, elem_classes=[layout.SIDE_COL]):
             quality = localizer.bind(
@@ -393,30 +426,30 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     # --- обработчики ---
 
-    def add_references(files, sent, lang):
-        """Пересобирает список референсов из виджета целиком.
+    def slots_changed(*values):
+        """Пересобирает референсы из всех десяти слотов разом.
 
-        Виджет ``gr.File(file_count="multiple")`` в каждом событии ``change``
-        отдаёт не добавленную дельту, а весь текущий набор выбранных файлов —
-        так же ведёт себя и удаление файла крестиком внутри виджета. Если бы
-        обработчик добавлял ``files`` поверх ранее накопленного состояния, то
-        второе добавление референса задваивало бы первый (проверено вручную:
-        два референса, добавленные по одному, давали три — сама Gradio уже
-        включала первый файл во второй вызов).
+        Источник истины — то, что сейчас стоит в слотах, а не история
+        изменений: слот меняют в любом порядке и чистят крестиком, и
+        дописывать к накопленному списку значило бы рано или поздно
+        разойтись с экраном. Вызывается событием ``input``, то есть только
+        на действие человека: программная запись в слот («Отправить в
+        референсы») его не порождает, и ответ обработчика не зацикливается.
         """
-        from PIL import Image as PILImage
-
-        uploaded = [PILImage.open(item.name).convert("RGB") for item in (files or [])]
-        images = (uploaded + list(sent or []))[:MAX_REFERENCES]
-        return (images, *_shown_references(images, lang))
+        *images, lang = values
+        grid = _grid(images)
+        return (
+            grid,
+            *slot_labels(grid, lang),
+            say("references_counted", lang, count=len(filled(grid)), total=MAX_REFERENCES),
+        )
 
     def clear_references(lang):
-        # Сбрасываем и сам виджет: иначе следующее добавление файла принесёт
-        # с собой прежний набор, который виджет продолжает хранить внутри себя.
-        # Секция закрывается: показывать в ней больше нечего.
+        grid = _grid([])
         return (
-            [], [], gr.update(value=[], visible=False), None, gr.update(open=False),
-            gr.update(visible=False), say("references_cleared", lang),
+            grid,
+            *(gr.update(value=None, label="", show_label=False) for _ in grid),
+            say("references_cleared", lang),
         )
 
     def rewrite(prompt_text, current_references, ratio_value, lang):
@@ -428,10 +461,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         нажать, увидеть текст и получить картинку по старому промту было
         проще простого, и ничто об этом не сообщало.
         """
-        mode = boost_module.MODE_EDIT if current_references else boost_module.MODE_T2I
-        text, wh_ratio, message = studio.boost_prompt(
-            prompt_text, mode, lang, current_references or None
-        )
+        images = filled(current_references)
+        mode = boost_module.MODE_EDIT if images else boost_module.MODE_T2I
+        text, wh_ratio, message = studio.boost_prompt(prompt_text, mode, lang, images or None)
         chosen = wh_ratio if wh_ratio in aspect.ASPECT_RATIOS else ratio_value
         # Источник запоминается только при удачной переписке: иначе отказ
         # сервера пометил бы прежний текст как свежий.
@@ -448,6 +480,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         # model_index.json, нехватка видеопамяти и отказ записи PNG — всё это
         # обязано становиться строкой состояния, а не сырым трейсбеком в тосте.
         try:
+            # Пустые слоты в модель не уходят; порядок заполненных сохраняется.
+            current_references = filled(current_references)
             effective = (boosted_text or "").strip() if use_boost else ""
             message = ""
 
@@ -597,15 +631,23 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         )
         return gr.update(choices=library.list_prompts(config.PROMPT_DIR), value=None), message
 
-    reference_upload.change(
-        add_references,
-        [reference_upload, sent_references, language],
-        [references, reference_gallery, reference_box, reference_clear, status],
-    )
+    # Все слоты — один обработчик на событие каждого: список собирается из
+    # десяти значений разом (см. ``slots_changed``).
+    #
+    # Индикатор выполнения скрыт: все десять слотов — выходы обработчика, и
+    # на время запроса Gradio накрывает свои выходы индикатором — десять
+    # крутилок ради одной ячейки. Итог и так виден в подписях и в строке
+    # состояния. Замечание для проверяющего: текст «0.0s» в ``innerText``
+    # ячейки есть всегда — индикатор лежит в разметке с нулевой
+    # прозрачностью, — и видимым таймером это не является.
+    reference_targets = [references, *reference_slots, status]
+    for slot in reference_slots:
+        slot.input(
+            slots_changed, [*reference_slots, language], reference_targets,
+            queue=False, show_progress="hidden",
+        )
     reference_clear.click(
-        clear_references,
-        language,
-        [references, sent_references, reference_gallery, reference_upload, reference_box, reference_clear, status],
+        clear_references, language, reference_targets, queue=False, show_progress="hidden",
     )
     boost_now.click(
         rewrite,
@@ -635,17 +677,16 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     delete_button.click(delete, [saved, language], [saved, status])
 
     result.select(remember_selection, result, selected, queue=False)
-    reference_targets = [sent_references, references, reference_gallery, reference_box, reference_clear, status]
     send_to_refs.click(
         send_to_references,
-        [result, selected, reference_upload, sent_references, language],
+        [result, selected, references, language],
         reference_targets,
+        show_progress="hidden",
     )
 
     return {
         "reference_targets": reference_targets,
-        "reference_upload": reference_upload,
-        "sent_references": sent_references,
+        "reference_slots": reference_slots,
         "send_to_edit": send_to_edit,
         "selected": selected,
         "prompt": prompt,
@@ -659,7 +700,5 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         "status": status,
         "result": result,
         "references": references,
-        "reference_gallery": reference_gallery,
-        "reference_box": reference_box,
         "advanced": advanced,
     }

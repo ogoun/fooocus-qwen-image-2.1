@@ -153,18 +153,25 @@ def test_no_variables_are_redefined_inside_media_queries():
         )
 
 
-def test_no_gallery_offers_the_share_button():
+def test_no_gallery_or_image_offers_the_share_button():
     """«Share» публикует в обсуждения Hugging Face Spaces и работает только там;
-    у локального приложения нажатие кончалось ошибкой."""
+    у локального приложения нажатие кончалось ошибкой.
+
+    Поля изображений проверяются наравне с галереями: у ``gr.Image`` та же
+    кнопка, и десять слотов сетки референсов — ровно столько мест, где она
+    могла вернуться.
+    """
     import gradio as gr
 
     from fooocus_qwen.ui import app
 
     demo = app.build(config.AppConfig())
     galleries = [block for block in demo.blocks.values() if isinstance(block, gr.Gallery)]
-    assert len(galleries) >= 4
-    for gallery in galleries:
-        assert "share" not in (gallery.buttons or []), gallery.label
+    images = [block for block in demo.blocks.values() if isinstance(block, gr.Image)]
+    # Проверка без предмета прошла бы молча: число — страховка от этого.
+    assert len(galleries) >= 3 and len(images) >= 10
+    for block in galleries + images:
+        assert "share" not in (block.buttons or []), block.label
 
 
 def test_the_generate_result_can_be_sent_to_the_editor():

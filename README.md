@@ -68,7 +68,7 @@ on, the prompt is first rewritten by your language model. **Rewrite now**
 shows the rewritten text before you generate, so you can review or edit it.
 Whatever is in the *Rewritten prompt* box is what the model receives.
 **Send to editor** puts the selected result into the mask brush and opens the
-Edit tab; **Send to references** adds it to the reference images. Both buttons
+Edit tab; **Send to references** puts it into the first free reference cell. Both buttons
 also sit under the Edit tab's result.
 
 ![Generate tab: a short prompt, its AI-boosted rewrite and the result](docs/images/generate.webp)
@@ -247,11 +247,17 @@ RTX 3090 it makes a step 15–25% faster at 1536 px and above.
 
 ### Reference images
 
-Add up to ten images under **References** on the Generate tab. Each thumbnail
-is labelled with its tag. With two or more references, the prompt must refer
-to them as `<image1>`, `<image2>`, … in the order they were added — the model
-does not understand “the first photo”. With exactly one reference, don't use a
-tag at all.
+References live in a grid of ten cells to the left of the result on the
+Generate tab — two rows of five, empty by default. Click a cell to pick a
+file or drop an image onto it; the cross in a cell's corner clears it, and
+**Clear references** under the grid empties them all.
+
+Each filled cell is labelled with its tag. With two or more references, the
+prompt must refer to them as `<image1>`, `<image2>`, … — the model does not
+understand “the first photo”. Tags follow the order of the **filled** cells,
+not the cell number: empty cells are not sent to the model, so cells 1, 3
+and 7 are `<image1>`, `<image2>` and `<image3>`. With exactly one reference,
+don't use a tag at all.
 
 More references use more memory. **Reference detail** (under Advanced) sets
 the resolution the references are scaled to; *Auto* picks it from the number

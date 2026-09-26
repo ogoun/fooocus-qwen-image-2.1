@@ -30,6 +30,8 @@ CANVAS_MIN_WIDTH = 480
 # не форме. Подробности — в style.css рядом с правилами.
 CANVAS_COL = "qs-canvas"
 SIDE_COL = "qs-side"
+# Колонка сетки референсов — слева от холста результата.
+REFS_COL = "qs-refs"
 
 # Колонки вкладки настроек: короткая форма и колонка с длинным текстом.
 FORM_COL = "qs-form"
@@ -41,8 +43,8 @@ LONG_TEXT = "qs-longtext"
 BOARD = "qs-board"
 # Сетка галереи: это список, а не один кадр, и высота у неё по окну.
 BROWSE = "qs-browse"
-# Лента референсов — одна строка миниатюр.
-STRIP = "qs-strip"
+# Слот референса: квадратная ячейка сетки два на пять.
+REF_SLOT = "qs-refslot"
 # Результат правки: тот же холст, но на узком экране он под редактором и
 # занимает меньше места.
 PREVIEW = "qs-preview"
@@ -69,7 +71,6 @@ SLOT_RESULT = "qs-slot-result"
 # некуда отправлять, и нажатие кончалось ошибкой.
 GALLERY_BUTTONS: list[str] = ["download", "fullscreen"]
 PROMPT_BAR = "qs-bar"
-DROP_ZONE = "qs-drop"
 STATUS = "qs-status"
 # Переключатель языка висит в правом верхнем углу поверх полосы вкладок.
 LANG = "qs-lang"
