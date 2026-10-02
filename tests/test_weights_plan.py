@@ -59,6 +59,7 @@ def test_the_encoder_shards_are_needed_until_the_int8_copy_exists(monkeypatch):
 
 def test_gguf_fetches_its_file_and_not_the_bf16_transformer(monkeypatch):
     calls = []
+    monkeypatch.setattr(plan.importlib.util, "find_spec", lambda name: object())  # пакет gguf «на месте»
     monkeypatch.setattr(text_encoder, "is_current", lambda *_a, **_k: False)
     monkeypatch.setattr(fetch, "ensure_model", lambda *a, **k: calls.append(("model", k)) or False)
     monkeypatch.setattr(fetch, "ensure_gguf", lambda directory, variant, *a: calls.append(("gguf", variant)) or True)
@@ -71,3 +72,35 @@ def test_the_encoder_is_built_only_in_the_low_profile(monkeypatch):
     monkeypatch.setattr(text_encoder, "ensure", lambda source, target, **_k: built.append(target) or True)
     assert _plan("bf16").ensure_text_encoder() is False and not built
     assert _plan("Q4_K_M", vram=8.0).ensure_text_encoder() is True and built == [config.TE_INT8_DIR]
+
+
+def test_gguf_needs_its_package_and_it_is_installed_before_the_weights(monkeypatch):
+    """Регресс: окружение без пакета gguf качало веса Q4_K_M и падало на загрузке."""
+    calls = []
+    monkeypatch.setattr(plan.importlib.util, "find_spec", lambda name: None if not calls else object())
+    monkeypatch.setattr(plan.subprocess, "run", lambda args, **_k: calls.append(args[-1]) or
+                        type("Done", (), {"returncode": 0, "stdout": "", "stderr": ""})())
+    monkeypatch.setattr(fetch, "ensure_model", lambda *a, **k: calls.append("model") or False)
+    monkeypatch.setattr(fetch, "ensure_gguf", lambda *a: calls.append("gguf file") or False)
+    monkeypatch.setattr(text_encoder, "is_current", lambda *_a, **_k: False)
+    chosen = _plan("Q4_K_M", vram=8.0)
+    chosen.ensure_weights()
+    assert calls == [plan.requirement("gguf"), "model", "gguf file"], "пакет — раньше весов"
+    assert plan.requirement("gguf").startswith("gguf>="), "версия — из requirements.txt"
+
+
+def test_a_failed_package_install_is_reported(monkeypatch):
+    monkeypatch.setattr(plan.importlib.util, "find_spec", lambda name: None)
+    monkeypatch.setattr(plan.subprocess, "run", lambda *a, **k: type(
+        "Failed", (), {"returncode": 1, "stdout": "", "stderr": "no network"})())
+    try:
+        _plan("Q4_K_M", vram=8.0).ensure_packages()
+    except plan.PackageInstallError as error:
+        assert "no network" in str(error)
+    else:
+        raise AssertionError("отказ установки обязан стать ошибкой")
+
+
+def test_bf16_and_int8_need_no_extra_packages():
+    assert _plan("bf16").missing_packages() == [] and _plan("int8").missing_packages() == []
+

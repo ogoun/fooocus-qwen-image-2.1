@@ -141,6 +141,8 @@ class Studio:
 
                     chosen = settings_module.load()
                     plan = self.weights_plan()
+                    # Окружение могли поставить до того, как выбор понадобился.
+                    plan.ensure_packages()
                     plan.ensure_text_encoder()
                     pipe, residency, cache = loader.load(
                         self.config.model_dir,

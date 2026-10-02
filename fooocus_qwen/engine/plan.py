@@ -10,10 +10,21 @@ INT8-энкодер, как раскладывать веса по памяти,
 
 Модуль не импортирует torch: самопроверка и установка спрашивают его до
 того, как модель понадобится.
+
+План знает и о пакетах, без которых выбор не загрузится: GGUF читает пакет
+``gguf``. Окружение, поставленное до появления GGUF, его не имеет, и смена
+точности в настройках падала на загрузке с ``No module named 'gguf'`` —
+после того как веса уже скачались. Теперь недостающий пакет ставится
+(``ensure_packages``) там же, где докачиваются веса, и перед загрузкой.
 """
 
 from __future__ import annotations
 
+import importlib
+import importlib.util
+import logging
+import subprocess
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -21,6 +32,27 @@ from pathlib import Path
 from .. import config
 from .. import settings as settings_module
 from . import fetch
+
+LOGGER = logging.getLogger(__name__)
+
+REQUIREMENTS = config.PROJECT_ROOT / "requirements.txt"
+
+
+class PackageInstallError(RuntimeError):
+    """Пакет, нужный выбору, не поставился."""
+
+
+def requirement(name: str) -> str:
+    """Строка пакета из ``requirements.txt`` (с версией) — одна правда на установку и докачку."""
+    try:
+        for line in REQUIREMENTS.read_text(encoding="utf-8").splitlines():
+            spec = line.split("#", 1)[0].strip()
+            if spec and spec.replace("=", " ").replace(">", " ").replace("<", " ").split()[0] == name:
+                return spec
+    except OSError:
+        pass
+    return name
+
 
 # Политики размещения (``engine/residency.py``); здесь — строками, чтобы не
 # тянуть torch ради двух имён.
@@ -87,6 +119,28 @@ class WeightsPlan:
         """Нужны ли bf16-шарды энкодера (16.3 ГБ): нет, если INT8-копия уже собрана."""
         return not (self.low and self.text_encoder_ready())
 
+    def missing_packages(self) -> list[str]:
+        """Пакеты, без которых этот выбор не загрузится (пусто — все на месте)."""
+        needed = ["gguf"] if self.gguf_file is not None else []
+        return [name for name in needed if importlib.util.find_spec(name) is None]
+
+    def ensure_packages(self, out: Callable[[str], None] | None = None) -> bool:
+        """Ставит недостающие пакеты в текущее окружение. ``True`` — что-то ставилось."""
+        missing = self.missing_packages()
+        if not missing:
+            return False
+        specs = [requirement(name) for name in missing]
+        (out or LOGGER.info)(f"Installing missing packages: {' '.join(specs)}")
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install", *specs], capture_output=True, text=True, check=False,
+        )
+        importlib.invalidate_caches()
+        still = self.missing_packages()
+        if result.returncode != 0 or still:
+            tail = (result.stderr or result.stdout).strip().splitlines()[-1:] or [""]
+            raise PackageInstallError(f"Could not install {' '.join(specs)}: {tail[0]}")
+        return True
+
     def loader_arguments(self) -> dict:
         """Аргументы ``loader.load``, зависящие от выбора."""
         return {
@@ -114,6 +168,8 @@ class WeightsPlan:
         INT8-копия уже собрана.
         """
         bf16 = self.int8_file is None and self.gguf_file is None
+        # Пакеты — раньше весов: без них скачанное всё равно не загрузится.
+        self.ensure_packages()
         downloaded = fetch.ensure_model(
             self.model_dir, include_transformer=bf16, include_text_encoder=self.needs_text_encoder_shards()
         )

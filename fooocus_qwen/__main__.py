@@ -58,6 +58,10 @@ def selftest() -> int:
     title = settings.PRECISION_INFO[chosen.precision].title
     if plan.int8_file is not None or plan.gguf_file is not None:
         missing = plan.missing_transformer()
+        packages = plan.missing_packages()
+        if packages:
+            problems.append(f"{title} precision needs the package {', '.join(packages)}: run --fetch-model")
+            print(f"[no ] {title} precision: package {', '.join(packages)} is not installed")
         if missing:
             problems.append(f"{title} precision is selected but its weights are missing: run --fetch-model")
             print(f"[no ] {title} precision: missing {missing[0]}")
@@ -170,7 +174,7 @@ def fetch_model() -> int:
         if plan.ensure_text_encoder(out=lambda line: print(f"  {line}")):
             print(f"[ok ] INT8 text encoder built: {config.TE_INT8_DIR}")
         poses = fetch.ensure_files(config.DWPOSE_DIR, detect.REPO, detect.FILES)
-    except fetch.ModelDownloadError as error:
+    except (fetch.ModelDownloadError, plan_module.PackageInstallError) as error:
         print(f"[no ] {error}")
         return 1
     except OSError as error:
