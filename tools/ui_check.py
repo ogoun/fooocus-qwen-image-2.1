@@ -1273,6 +1273,62 @@ def visible_label_box(page, text: str):
     return None
 
 
+def make_loras(directory: Path) -> Path:
+    """Две крошечные LoRA: годная для 2.1 (с триггером) и от Qwen-Image 1."""
+    import torch
+    from safetensors.torch import save_file
+
+    directory.mkdir(parents=True, exist_ok=True)
+    good = "transformer.transformer_blocks.0.attn.to_q"
+    save_file({f"{good}.lora_A.weight": torch.zeros(4, 4096), f"{good}.lora_B.weight": torch.zeros(4096, 4)},
+              str(directory / "zzz-style.safetensors"), metadata={"trigger_word": "zenlesszonezero"})
+    old = "transformer.transformer_blocks.0.attn.add_q_proj"
+    save_file({f"{old}.lora_A.weight": torch.zeros(4, 3072), f"{old}.lora_B.weight": torch.zeros(3072, 4)},
+              str(directory / "qwen1-style.safetensors"))
+    return directory
+
+
+def pick_lora(page, slot: int, name: str) -> None:
+    box = page.locator(f"input[aria-label='LoRA {slot}']:visible").first
+    box.click()
+    page.get_by_role("option", name=name, exact=True).first.click()
+    page.wait_for_timeout(400)
+
+
+def scenario_loras(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
+    """Ячейки LoRA: выбор файла включает ячейку, строка о файле, чужая LoRA пропускается."""
+    print("LoRA slots:")
+    page, errors = fresh_page(browser, url)
+    page.get_by_text("LoRA", exact=True).first.click()
+    page.wait_for_timeout(500)
+    pick_lora(page, 1, "zzz-style")
+    page.wait_for_function("() => document.body.innerText.includes('rank 4 · 1 layers')", timeout=10000)
+    report.check(visible_input(page, "On").is_checked(), "picking a file ticks the slot")
+    report.check("zenlesszonezero" in page.inner_text("body"), "trigger words are shown under the slot")
+    pick_lora(page, 2, "qwen1-style")
+    page.wait_for_function("() => document.body.innerText.includes('Not for Qwen-Image 2.1')", timeout=10000)
+    report.check(True, "a Qwen-Image 1 LoRA is flagged before generating")
+    weight = page.locator(".qs-lora:visible input[type=number]").first
+    weight.fill("0.75")
+    weight.press("Enter")
+    page.wait_for_timeout(500)
+    shot = samples.parent / "loras.png"
+    page.screenshot(path=str(shot))
+    print(f"  screenshot: {shot}")
+
+    before = len(fake.requests)
+    page.locator("textarea:visible").first.fill("a cat")
+    click_text(page, "Generate")
+    request = fake.wait(before + 1)
+    names = [(item.name, item.weight) for item in request.loras]
+    page.wait_for_timeout(800)
+    status = " ".join(box.input_value() for box in page.locator("textarea").all())
+    report.check(names == [("zzz-style", 0.75)], f"only the fitting LoRA goes to the model, with its weight: {names}")
+    report.check("“qwen1-style” skipped" in status, "the status line names the skipped LoRA")
+    report.check(not errors, "no page errors" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
 def scenario_quality(browser, url, report: Report, samples: Path) -> None:
     """«Качество и скорость» на генерации и правке: столбцом и словами, значение — имя пресета."""
     from fooocus_qwen.ui import quality
@@ -1403,7 +1459,8 @@ def main() -> int:
     fake = FakeGenerator()
     # Сценарии ищут на странице подписи английского интерфейса — он по
     # умолчанию; русский проверяет сценарий языка переключением.
-    cfg = config.AppConfig(host="127.0.0.1", port=args.port, preload=False, lang="en")
+    lora_dir = make_loras(work / "loras")
+    cfg = config.AppConfig(host="127.0.0.1", port=args.port, preload=False, lang="en", lora_dir=lora_dir)
     app.start(cfg, prepare=lambda studio: setattr(studio, "_generator", fake))
     url = f"http://127.0.0.1:{args.port}/"
     samples = work / "samples"
@@ -1425,6 +1482,7 @@ def main() -> int:
         "sketch": lambda b, r: scenario_sketch_colour(b, url, r, fake, samples),
         "poses": lambda b, r: scenario_pose_edit(b, url, r, fake, samples),
         "quality": lambda b, r: scenario_quality(b, url, r, samples),
+        "loras": lambda b, r: scenario_loras(b, url, r, fake, samples),
         "performance": lambda b, r: scenario_performance(b, url, r, fake, samples),
         "secret": lambda b, r: scenario_secret(b, url, r),
     }

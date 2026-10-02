@@ -55,6 +55,12 @@ T: dict[str, tuple[str, str]] = {
     "stop": ("Прервать", "Stop"),
     "advanced": ("Продвинутое", "Advanced"),
     "quality": ("Качество и скорость", "Quality and speed"),
+    "lora": ("LoRA", "LoRA"),
+    "lora_enabled": ("Вкл.", "On"),
+    "lora_weight": ("Вес", "Weight"),
+    "lora_none": ("Нет", "None"),
+    "lora_refresh": ("Обновить список", "Refresh list"),
+    "lora_open": ("Открыть папку", "Open folder"),
     "aspect": ("Соотношение сторон", "Aspect ratio"),
     # Единственный пункт выпадающего списка соотношений, который на самом деле
     # текст интерфейса, а не идентификатор: остальные семь — числовые
@@ -370,6 +376,28 @@ MESSAGES: dict[str, tuple[str, str]] = {
         "The pose is shown as a skeleton; the cover is kept — untick to bring it back",
     ),
     "pose_schematic_off": ("Обложка снова на месте", "The cover is back"),
+    # LoRA: строка под ячейкой и сообщения генерации.
+    "lora_ok": ("ранг {rank} · слоёв: {layers}", "rank {rank} · {layers} layers"),
+    "lora_triggers": (" · триггеры: {words}", " · trigger words: {words}"),
+    "lora_other_model": (
+        "⚠ Не для Qwen-Image 2.1 — {family}. Такая LoRA не подключается.",
+        "⚠ Not for Qwen-Image 2.1 — {family}. This LoRA will not be applied.",
+    ),
+    "lora_family_qwen1": ("обучена для Qwen-Image 1 / 2512 / Edit", "trained for Qwen-Image 1 / 2512 / Edit"),
+    "lora_family_flux": ("обучена для FLUX", "trained for FLUX"),
+    "lora_family_sd": ("обучена для Stable Diffusion / SDXL", "trained for Stable Diffusion / SDXL"),
+    "lora_family_unknown": ("слои другой модели", "layers of another model"),
+    "lora_unsupported": (
+        "⚠ {kind} не поддерживается — только обычная LoRA",
+        "⚠ {kind} is not supported — only plain LoRA",
+    ),
+    "lora_empty": ("⚠ В файле нет слоёв LoRA", "⚠ The file has no LoRA layers"),
+    "lora_unreadable": ("⚠ Файл не читается как safetensors", "⚠ The file cannot be read as safetensors"),
+    "lora_outside": ("⚠ Файл вне каталога LoRA", "⚠ The file is outside the LoRA folder"),
+    "lora_missing": ("⚠ Файла «{name}» нет в каталоге LoRA", "⚠ “{name}” is not in the LoRA folder"),
+    "lora_skipped": ("LoRA «{name}» пропущена: {reason}", "LoRA “{name}” skipped: {reason}"),
+    "lora_found": ("LoRA в каталоге: {count} — `{path}`", "LoRA in the folder: {count} — `{path}`"),
+    "lora_folder": ("Каталог: `{path}`", "Folder: `{path}`"),
     "pose_delete_ask": (
         "Удалить позу «{title}» вместе с её скелетом и обложкой? Вернуть её будет нельзя.",
         "Delete the pose “{title}” with its skeleton and cover? It cannot be undone.",

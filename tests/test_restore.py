@@ -43,7 +43,7 @@ PARAMS = {
 
 
 def test_fields_come_back_in_the_declared_order():
-    prompt, boosted, negative, styles, preset, seed, cfg, ratio = tab_gallery.restore_fields(PARAMS)
+    prompt, boosted, negative, styles, preset, seed, cfg, ratio = tab_gallery.restore_fields(PARAMS)[:8]
     assert prompt == "кот в шляпе"
     assert boosted == "a cat wearing a hat"
     assert negative == "blurry"
@@ -55,7 +55,7 @@ def test_fields_come_back_in_the_declared_order():
 
 
 def test_missing_parameters_fall_back_to_defaults():
-    prompt, boosted, negative, styles, preset, seed, cfg, ratio = tab_gallery.restore_fields({})
+    prompt, boosted, negative, styles, preset, seed, cfg, ratio = tab_gallery.restore_fields({})[:8]
     assert prompt == "" and boosted == "" and negative == ""
     assert styles == []
     assert preset == "MiddleQuality"
@@ -99,7 +99,7 @@ def test_non_numeric_seed_and_cfg_fall_back_to_defaults_instead_of_raising():
     # обработчик кнопки «Восстановить» внутри int()/float().
     prompt, boosted, negative, styles, preset, seed, cfg, ratio = tab_gallery.restore_fields(
         {"seed": "не число", "true_cfg_scale": "тоже не число"}
-    )
+    )[:8]
     assert seed == -1
     assert cfg == 1.0
     assert ratio == "1:1"
@@ -121,7 +121,7 @@ def test_foreign_png_yields_full_defaults_without_raising(tmp_path):
     assert parameters is None
 
     restored = tab_gallery.restore_fields(parameters)
-    assert restored == ("", "", "", [], "MiddleQuality", -1, 1.0, "1:1")
+    assert restored == ("", "", "", [], "MiddleQuality", -1, 1.0, "1:1", *((False, "", 1.0) * 5))
 
 
 def test_restore_output_order_matches_generate_components(monkeypatch, tmp_path):
@@ -154,7 +154,8 @@ def test_restore_output_order_matches_generate_components(monkeypatch, tmp_path)
     # Из полного списка выходов restore() оставляем только те, что и правда
     # принадлежат вкладке генерации — остаток (например, поле статуса самой
     # галереи) к контракту порядка не относится.
-    generate_component_ids = {id(component) for component in generate_components.values()}
+    slots = generate_components["loras"].components
+    generate_component_ids = {id(component) for component in [*generate_components.values(), *slots]}
     generation_outputs = [output for output in restore_fn.outputs if id(output) in generate_component_ids]
 
     expected_components = [
@@ -166,6 +167,7 @@ def test_restore_output_order_matches_generate_components(monkeypatch, tmp_path)
         generate_components["seed"],
         generate_components["cfg"],
         generate_components["ratio"],
+        *slots,
     ]
     assert generation_outputs == expected_components
 
@@ -173,6 +175,8 @@ def test_restore_output_order_matches_generate_components(monkeypatch, tmp_path)
     assert len(sample) == len(generation_outputs)
 
     def _expected_type(component):
+        if isinstance(component, gr.Checkbox):
+            return bool
         if isinstance(component, gr.Dropdown) and component.multiselect:
             return list
         if isinstance(component, (gr.Number, gr.Slider)):

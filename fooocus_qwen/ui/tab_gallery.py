@@ -24,11 +24,11 @@ from pathlib import Path
 import gradio as gr
 
 from .. import config
-from ..engine import presets
+from ..engine import lora, presets
 from ..imaging import aspect as aspect_module
 from ..imaging import metadata
 from ..storage import gallery
-from . import layout
+from . import layout, lora_slots
 from .i18n import Localizer, pick, say
 from .tab_edit import editor_value_for, selected_path
 
@@ -61,14 +61,16 @@ DEFAULT_ASPECT = "1:1"
 # Сколько полей вкладки генерации восстанавливает restore_fields(). Держится
 # рядом с самой функцией, чтобы «сколько gr.update() вернуть, когда
 # восстанавливать нечего» не приходилось пересчитывать руками в двух местах.
-RESTORED_FIELDS = 8
+RESTORED_FIELDS = 8 + 3 * lora.SLOTS
 
 
-def restore_fields(parameters: dict | None) -> tuple:
+def restore_fields(parameters: dict | None, lora_dir: Path | None = None) -> tuple:
     """Значения полей вкладки генерации в фиксированном порядке.
 
     Порядок: промт, переписанный промт, негатив, стили, пресет, сид, guidance,
-    соотношение сторон. Отсутствующий или незнакомый пресет (например, из
+    соотношение сторон, затем ячейки LoRA (вкл., файл, вес на каждую;
+    ``lora_slots.values_for`` — файл узнаётся и по отпечатку). Кадр без LoRA
+    очищает ячейки: параметры повторяются такими, какими были. Отсутствующий или незнакомый пресет (например, из
     старой сборки) тихо заменяется дефолтным — таблица пресетов меняется
     быстрее, чем метаданные в уже сохранённых PNG; с соотношением сторон
     поступаем так же, и по той же причине к нему добавляется ещё одна: PNG,
@@ -96,6 +98,7 @@ def restore_fields(parameters: dict | None) -> tuple:
         _safe_int(data.get("seed", -1), -1),
         _safe_float(data.get("true_cfg_scale", 1.0), 1.0),
         ratio,
+        *lora_slots.values_for(lora_dir or config.LORA_DIR, data.get("loras")),
     )
 
 
@@ -247,7 +250,7 @@ def build(
         if not parameters:
             return (gr.update(),) * RESTORED_FIELDS + (say("parameters_not_found", lang),) + _switch(None)
         message = say("parameters_restored", lang, name=source.name)
-        return restore_fields(parameters) + (message,) + _switch(layout.TAB_GENERATE)
+        return restore_fields(parameters, studio.config.lora_dir) + (message,) + _switch(layout.TAB_GENERATE)
 
     def restore(path, lang):
         return _restore_from(Path(path) if path else None, lang)
@@ -269,6 +272,7 @@ def build(
         generate_components["seed"],
         generate_components["cfg"],
         generate_components["ratio"],
+        *generate_components["loras"].components,
         status,
     ]
     switch_output = [tabs] if tabs is not None else []

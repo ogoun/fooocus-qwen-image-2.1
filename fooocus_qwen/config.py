@@ -27,6 +27,9 @@ TE_INT8_DIR = PROJECT_ROOT / "Qwen-Image-2.1-TE-INT8"
 # Распознавание позы на фотографии (DWPose, ONNX, 350 МБ) — для плитки
 # «Добавить позу»; качает установка (--fetch-model).
 DWPOSE_DIR = PROJECT_ROOT / "DWPose"
+# Пользовательские LoRA (``*.safetensors``) — как ``models/loras`` у Fooocus.
+# Ключ ``--lora-dir`` указывает другой каталог, например каталог ComfyUI.
+LORA_DIR = PROJECT_ROOT / "loras"
 RESOURCES_DIR = PROJECT_ROOT / "resources"
 STYLES_DIR = RESOURCES_DIR / "styles"
 SYSTEM_PROMPT_DIR = RESOURCES_DIR / "prompts"
@@ -63,6 +66,7 @@ class AppConfig:
     verbose: bool = False
     open_browser: bool = False
     model_dir: Path = MODEL_DIR
+    lora_dir: Path = LORA_DIR
 
 
 def user_pose_dir() -> Path:
@@ -88,6 +92,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--lang", choices=("en", "ru"), default="en", help="interface language")
     parser.add_argument("--preset", choices=PRESET_NAMES, default="MiddleQuality", help="quality preset")
     parser.add_argument("--verbose", action="store_true", help="verbose logging")
+    parser.add_argument(
+        "--lora-dir", type=Path, default=LORA_DIR,
+        help="folder with LoRA files (*.safetensors), for example the ComfyUI loras folder",
+    )
     # Закрепление памяти ускоряет переброску весов, но занимает десятки гигабайт
     # неперемещаемой оперативной памяти — на чужой машине это может не подойти.
     parser.add_argument(
@@ -161,4 +169,5 @@ def parse_args(argv: list[str] | None = None) -> AppConfig:
         preset=args.preset,
         verbose=args.verbose,
         open_browser=args.open_browser,
+        lora_dir=args.lora_dir,
     )

@@ -110,10 +110,10 @@ def test_load_restores_the_saved_fields(monkeypatch, tmp_path):
     handlers = _build_handlers(monkeypatch, tmp_path)
 
     handlers["save"]("пресет", "промт", "негатив", ["sai-anime"], "MaxQuality", "16:9", 7, 2.5, "ru")
-    (
-        prompt_text, negative_text, style_names, quality_name,
-        ratio_value, seed_value, cfg_value, message,
-    ) = handlers["load"]("пресет", "ru")
+    loaded = handlers["load"]("пресет", "ru")
+    prompt_text, negative_text, style_names, quality_name, ratio_value, seed_value, cfg_value = loaded[:7]
+    message = loaded[-1]
+    assert loaded[7:-1] == (False, "", 1.0) * 5, "промт без LoRA очищает ячейки"
 
     assert prompt_text == "промт"
     assert negative_text == "негатив"

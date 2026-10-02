@@ -28,6 +28,7 @@ from ..prompting.styles import Style, apply_styles
 from . import presets as presets_module
 from . import turbo as turbo_module
 from .embeds_cache import EmbedsCache
+from .lora import LoraAdapters, ResolvedLora
 from .presets import QualityPreset
 from .residency import ResidencyManager
 
@@ -76,6 +77,9 @@ class GenerationRequest:
     keep_outside: bool = True
 
     prompt_original: str = ""
+    # Пользовательские LoRA, уже проверенные и привязанные к файлам
+    # (``lora.resolve``); пустой кортеж — без них.
+    loras: tuple[ResolvedLora, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -260,6 +264,7 @@ class Generator:
         catalogue: dict[str, Style],
         turbo=None,
         turbo4=None,
+        adapters: LoraAdapters | None = None,
     ) -> None:
         self._pipe = pipe
         self._residency = residency
@@ -271,6 +276,9 @@ class Generator:
         # Подмена трансформера на 4-шаговый дистиллят (``Turbo4Transformer``)
         # или None: без неё пресет Turbo4 недоступен.
         self._turbo4 = turbo4
+        # Адаптеры peft на трансформере (``engine/lora.py``): пользовательские
+        # LoRA и включение Turbo — одним списком. Подставляется тестами.
+        self._adapters = adapters if adapters is not None else LoraAdapters(pipe, residency)
         self._interrupted = False
         self._lock = threading.Lock()
 
@@ -358,10 +366,16 @@ class Generator:
             # Сначала трансформер: адаптер Turbo живёт на основном, и
             # включать его можно только когда основной на месте.
             self._turbo4.activate(use_turbo4)
+        # Пользовательские LoRA — на том трансформере, что сейчас стоит (после
+        # подмены Turbo4 — на нём): подключить недостающие, выгрузить неотмеченные.
+        self._adapters.sync(prepared.loras)
         if self._turbo is not None and not use_turbo4:
             # Внутри замка генерации: адаптер и планировщик — общее состояние
             # пайплайна, и переключать их посреди чужого цикла нельзя.
             self._turbo.activate(use_turbo)
+        # Один список активных адаптеров на всех: Turbo и пользовательские.
+        active = self._turbo.adapter_weights() if self._turbo is not None and not use_turbo4 else []
+        self._adapters.activate(active + [(item.adapter, item.weight) for item in prepared.loras])
         positive, negative = apply_styles(
             prepared.prompt, prepared.negative_prompt, prepared.styles, self._catalogue
         )
@@ -527,6 +541,11 @@ class Generator:
             "prompt_boosted": positive,
             "negative_prompt": negative,
             "styles": list(original_request.styles),
+            # Имя, вес и отпечаток файла (AutoV2): по отпечатку LoRA узнаётся,
+            # даже если файл переименовали.
+            "loras": [
+                {"name": item.name, "weight": item.weight, "hash": item.hash} for item in prepared.loras
+            ],
             "seed": seed,
             "steps": prepared.preset.num_inference_steps,
             "preset": prepared.preset.name,

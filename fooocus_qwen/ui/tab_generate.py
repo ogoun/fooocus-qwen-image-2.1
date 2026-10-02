@@ -14,7 +14,7 @@ import logging
 import gradio as gr
 
 from .. import config
-from ..engine import presets
+from ..engine import lora, presets
 from ..engine.generator import (
     GenerationRequest,
     resolve_reference_scale,
@@ -23,7 +23,7 @@ from ..imaging import aspect, metadata
 from ..prompting import boost as boost_module
 from ..prompting import library
 from ..storage import gallery
-from . import layout, reference_tools
+from . import layout, lora_slots, reference_tools
 from . import quality as quality_choices
 from . import references as references_module
 from .i18n import Localizer, T, pick, say, sentences
@@ -337,6 +337,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         gr.Button(pick("delete_prompt", lang)), value=("Удалить промт", "Delete prompt")
                     )
 
+            # LoRA — аккордеоном под «Продвинутым», как вкладка Models у Fooocus.
+            loras = lora_slots.build(localizer, lang, language, studio.config.lora_dir)
+
     # --- обработчики ---
 
     def rewrite(prompt_text, current_references, ratio_value, lang):
@@ -360,7 +363,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     def run(
         prompt_text, boosted_text, boost_source_text, use_boost, current_references,
         quality_name, ratio_value, count, style_names, negative_text, cfg_value, seed_value,
-        kv_value, scale_value, lang,
+        kv_value, scale_value, lang, lora_state=None,
         progress=gr.Progress(track_tqdm=True),
     ):
         # Обработчик целиком под try: отсутствующие веса, испорченный
@@ -387,6 +390,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 if wh_ratio in aspect.ASPECT_RATIOS:
                     ratio_value = wh_ratio
 
+            # Негодные LoRA не подключаются, а строка состояния говорит почему.
+            chosen_loras, skipped = lora_slots.resolve(studio.config.lora_dir, lora_state, lang)
+            message = sentences(message, skipped)
             request = GenerationRequest(
                 prompt=effective or prompt_text,
                 prompt_original=prompt_text,
@@ -400,6 +406,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 true_cfg_scale=float(cfg_value),
                 use_kv_cache=bool(kv_value),
                 reference_scale=int(scale_value or 0),
+                loras=chosen_loras,
             )
 
             # Автоматический выбор масштаба обязан быть виден: пользователь,
@@ -460,7 +467,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     def save(
         name, prompt_text, negative_text, style_names, quality_name, ratio_value,
-        seed_value, cfg_value, lang,
+        seed_value, cfg_value, lang, lora_state=None,
     ):
         if not (name or "").strip():
             return gr.update(), say("preset_name_required", lang)
@@ -474,6 +481,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 "aspect": ratio_value,
                 "seed": int(seed_value),
                 "true_cfg_scale": float(cfg_value),
+                "loras": list(lora_state or []),
             },
             config.PROMPT_DIR,
         )
@@ -483,8 +491,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         )
 
     def load(name, lang):
+        keep = (gr.update(),) * (7 + 3 * lora.SLOTS)
         if not name:
-            return (gr.update(),) * 7 + (say("preset_not_selected", lang),)
+            return keep + (say("preset_not_selected", lang),)
         # Пресет мог быть удалён или испорчен мимо приложения: файлы лежат в
         # user/prompts/ и правятся чем угодно. load_prompt() сообщает об этом
         # исключением (FileNotFoundError либо ValueError), и выбор строки в
@@ -494,7 +503,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             payload = library.load_prompt(name, config.PROMPT_DIR)
         except (FileNotFoundError, ValueError, OSError) as error:
             LOGGER.warning("Preset '%s' not loaded: %s", name, error)
-            return (gr.update(),) * 7 + (say("preset_load_failed", lang, name=name, error=error),)
+            return keep + (say("preset_load_failed", lang, name=name, error=error),)
         return (
             payload.get("prompt", ""),
             payload.get("negative_prompt", ""),
@@ -503,6 +512,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             payload.get("aspect", "1:1"),
             payload.get("seed", -1),
             payload.get("true_cfg_scale", 1.0),
+            *lora_slots.values_for(studio.config.lora_dir, payload.get("loras")),
             say("preset_loaded", lang, name=name),
         )
 
@@ -534,7 +544,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     run_button.click(
         run,
         [prompt, boosted, boost_source, boost_enabled, references, quality, ratio,
-         image_number, styles, negative, cfg, seed, kv_cache, reference_scale, language],
+         image_number, styles, negative, cfg, seed, kv_cache, reference_scale, language, loras.state],
         [result, status],
         # Общая с вкладкой редактирования группа очереди: без неё предел
         # concurrency в единицу действовал бы только внутри этого обработчика,
@@ -546,10 +556,12 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     save_button.click(
         save,
-        [preset_name, prompt, negative, styles, quality, ratio, seed, cfg, language],
+        [preset_name, prompt, negative, styles, quality, ratio, seed, cfg, language, loras.state],
         [saved, status],
     )
-    saved.change(load, [saved, language], [prompt, negative, styles, quality, ratio, seed, cfg, status])
+    saved.change(
+        load, [saved, language], [prompt, negative, styles, quality, ratio, seed, cfg, *loras.components, status],
+    )
     delete_button.click(delete, [saved, language], [saved, status])
 
     result.select(remember_selection, result, selected, queue=False)
@@ -581,4 +593,5 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         "result": result,
         "references": references,
         "advanced": advanced,
+        "loras": loras,
     }

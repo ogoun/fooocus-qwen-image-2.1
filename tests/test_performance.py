@@ -232,9 +232,11 @@ def test_turbo_loads_lazily_once_and_restores_the_base_model(tmp_path):
     assert residency.restaged == 1, "подключение — однократно, через перерегистрацию трансформера"
     assert pipe.scheduler != "base"
 
+    assert adapter.adapter_weights() == [("turbo", 1.0)], "включает его общий set_adapters генератора"
+
     adapter.activate(False)
-    assert pipe.scheduler == "base"
-    assert pipe.events == [("load", fetch.TURBO_LORA, "turbo"), "enable", "disable"]
+    assert pipe.scheduler == "base" and adapter.adapter_weights() == []
+    assert pipe.events == [("load", fetch.TURBO_LORA, "turbo")]
 
 
 def test_turbo_without_weights_says_so(tmp_path):

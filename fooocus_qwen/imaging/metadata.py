@@ -44,6 +44,13 @@ def to_readable(parameters: dict[str, Any]) -> str:
     styles = parameters.get("styles") or []
     if styles:
         tail.append(f"Styles: {', '.join(styles)}")
+    # Как у A1111 и Fooocus: по «Lora hashes» Civitai узнаёт использованные LoRA.
+    loras = [item for item in parameters.get("loras") or [] if isinstance(item, dict) and item.get("name")]
+    if loras:
+        hashes = ", ".join(f"{item['name']}: {item.get('hash', '')}" for item in loras)
+        weights = ", ".join(f"{item['name']}: {item.get('weight')}" for item in loras)
+        tail.append(f'Lora hashes: "{hashes}"')
+        tail.append(f'Lora weights: "{weights}"')
     lines.append(", ".join(tail))
 
     return "\n".join(lines)

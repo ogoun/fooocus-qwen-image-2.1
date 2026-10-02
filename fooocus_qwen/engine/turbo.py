@@ -101,18 +101,23 @@ class TurboAdapter:
         self._active = False
 
     def activate(self, enabled: bool) -> None:
-        """Включает turbo для следующего вызова пайплайна или выключает его."""
+        """Готовит turbo к следующему вызову пайплайна или убирает: адаптер и планировщик.
+
+        Включает сам адаптер не он, а генератор — одним ``set_adapters``
+        вместе с пользовательскими LoRA (``lora.LoraAdapters.activate``): у
+        peft один список активных адаптеров на всех. Здесь — подключение при
+        первом запросе и смена планировщика.
+        """
         if enabled and not self.loaded:
             self._load()
         if enabled == self._active:
             return
-        if enabled:
-            self._pipe.enable_lora()
-            self._pipe.scheduler = self._turbo_scheduler
-        else:
-            self._pipe.disable_lora()
-            self._pipe.scheduler = self._base_scheduler
+        self._pipe.scheduler = self._turbo_scheduler if enabled else self._base_scheduler
         self._active = enabled
+
+    def adapter_weights(self) -> list[tuple[str, float]]:
+        """Адаптер turbo с весом 1, если он сейчас нужен, — для общего ``set_adapters``."""
+        return [(ADAPTER, 1.0)] if self._active else []
 
 
 def call_arguments(arguments: dict, sigmas: tuple[float, ...] = SIGMAS) -> dict:

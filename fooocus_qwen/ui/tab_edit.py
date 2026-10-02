@@ -31,7 +31,7 @@ from ..imaging import aspect as aspect_module
 from ..imaging import masking, metadata, outpaint
 from ..prompting import boost as boost_module
 from ..storage import gallery
-from . import layout, painter, reference_tools
+from . import layout, lora_slots, painter, reference_tools
 from . import quality as quality_choices
 from . import references as references_module
 from .i18n import Localizer, T, painter_labels, pick, say, sentences
@@ -340,6 +340,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     gr.Number(value=-1, precision=0, label=pick("seed", lang)), label=("Сид", "Seed")
                 )
 
+            loras = lora_slots.build(localizer, lang, language, studio.config.lora_dir)
+
             outpaint_accordion = localizer.bind(
                 gr.Accordion(pick("outpaint", lang), open=False),
                 label=("Расширить холст", "Outpaint"),
@@ -398,7 +400,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     def run(
         raw, prompt_text, use_boost, mode_value, quality_name,
-        grow_value, feather_value, keep_value, seed_value, current_references, lang,
+        grow_value, feather_value, keep_value, seed_value, current_references, lang, lora_state=None,
         progress=gr.Progress(track_tqdm=True),
     ):
         # Обработчик целиком под try по тем же причинам, что и на вкладке
@@ -406,7 +408,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         try:
             return _apply(
                 raw, prompt_text, use_boost, mode_value, quality_name,
-                grow_value, feather_value, keep_value, seed_value, current_references, lang, progress,
+                grow_value, feather_value, keep_value, seed_value, current_references, lora_state, lang, progress,
             )
         except Exception as error:  # noqa: BLE001
             LOGGER.exception("Edit handler failed")
@@ -414,7 +416,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     def _apply(
         raw, prompt_text, use_boost, mode_value, quality_name,
-        grow_value, feather_value, keep_value, seed_value, current_references, lang, progress,
+        grow_value, feather_value, keep_value, seed_value, current_references, lora_state, lang, progress,
     ):
         value, failure = read_painter(raw, lang)
         if failure:
@@ -458,6 +460,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         if images and actual != references_module._captions(images, lang, mode_value):
             message = sentences(message, say("edit_tags_shifted", lang, tags=", ".join(actual)))
 
+        chosen_loras, skipped = lora_slots.resolve(studio.config.lora_dir, lora_state, lang)
+        message = sentences(message, skipped)
         request = GenerationRequest(
             prompt=effective or prompt_text,
             prompt_original=prompt_text,
@@ -474,6 +478,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             mask_grow=int(grow_value),
             mask_feather=int(feather_value),
             keep_outside=bool(keep_value),
+            loras=chosen_loras,
         )
 
         # Автоматически урезанный масштаб условных изображений обязан быть
@@ -565,7 +570,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     run_button.click(
         run,
         [editor, prompt, boost_enabled, mode, quality, grow, feather, keep_outside, seed,
-         grid.state, language],
+         grid.state, language, loras.state],
         [result, status],
         # Та же группа очереди, что и у «Сгенерировать»: видеокарта одна.
         concurrency_id=GPU_CONCURRENCY_ID,
@@ -586,6 +591,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     return {
         **tools,
+        "loras": loras,
         "references": grid.state,
         "reference_slots": grid.slots,
         "reference_tags": grid.tags,

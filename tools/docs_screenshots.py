@@ -376,10 +376,83 @@ def phase_ui(mask_box: tuple[float, float, float, float]) -> None:
     print(f"done; working files: {WORK.relative_to(ROOT)}")
 
 
+# --- фаза 3: LoRA ------------------------------------------------------------------
+
+# LoRA для снимка — SimpleTuner «photo aesthetics» для Qwen-Image-2.1 (формат
+# peft, 64 МБ): нейтральная по содержанию, а эффект виден на любом фото.
+LORA_REPO = "SimpleTuner/Qwen-Image-2.1-LoRA-photo-aesthetics-v2"
+LORA_FILE = "pytorch_lora_weights.safetensors"
+LORA_NAME = "photo-aesthetics"
+LORA_PROMPT = (
+    "a photograph of an elderly fisherman mending a net on a wooden pier at sunrise, "
+    "weathered hands, soft morning light, harbour in the background"
+)
+LORA_SEED = 4
+
+
+def phase_loras() -> None:
+    """Ячейка LoRA в интерфейсе и кадр с LoRA рядом с тем же кадром без неё."""
+    import ui_check as u
+    from huggingface_hub import hf_hub_download
+    from playwright.sync_api import sync_playwright
+
+    from fooocus_qwen.ui import app
+
+    lora_dir = WORK / "loras"
+    lora_dir.mkdir(parents=True, exist_ok=True)
+    target = lora_dir / f"{LORA_NAME}.safetensors"
+    if not target.is_file():
+        shutil.copy(hf_hub_download(LORA_REPO, LORA_FILE, local_dir=str(WORK / "hub")), target)
+
+    demo, studio = app.start(config.AppConfig(host="127.0.0.1", port=PORT, lang="en", preload=False,
+                                              lora_dir=lora_dir))
+    studio.generator  # noqa: B018 — модель грузится до первого снимка
+    url = f"http://127.0.0.1:{PORT}/"
+    turbo = quality.label("Turbo", "en")
+
+    def generate(page) -> Path:
+        before = set(config.OUTPUT_DIR.rglob("*.png"))
+        u.click_text(page, "Generate")
+        deadline = time.time() + 600
+        while time.time() < deadline:
+            fresh = set(config.OUTPUT_DIR.rglob("*.png")) - before
+            if fresh:
+                page.wait_for_timeout(2500)
+                return fresh.pop()
+            page.wait_for_timeout(1000)
+        raise TimeoutError("no result appeared")
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        page, _ = u.fresh_page(browser, url, 1920, 1240)
+        page.get_by_label(turbo, exact=True).first.check()
+        page.locator("textarea:visible").first.fill(LORA_PROMPT)
+        page.get_by_text("Advanced", exact=True).first.click()
+        page.wait_for_timeout(400)
+        for box in page.get_by_label("Seed", exact=True).all():
+            if box.is_visible():
+                box.fill(str(LORA_SEED))
+                break
+        page.get_by_text("Advanced", exact=True).first.click()
+        without = generate(page)
+        page.get_by_text("LoRA", exact=True).first.click()
+        page.wait_for_timeout(500)
+        u.pick_lora(page, 1, LORA_NAME)
+        page.wait_for_function("() => document.body.innerText.includes('layers')", timeout=10000)
+        with_lora = generate(page)
+        path = WORK / "loras.raw.png"
+        page.screenshot(path=str(path))
+        save_doc_image(Image.open(path), "loras")
+        save_doc_image(side_by_side([Image.open(without), Image.open(with_lora)], height=560), "lora-result")
+        page.close()
+        browser.close()
+    print(f"done; working files: {WORK.relative_to(ROOT)}")
+
+
 def main() -> int:
     use_utf8_console()
     parser = argparse.ArgumentParser(description="Screenshots and examples for the README")
-    parser.add_argument("--phase", choices=["showcase", "ui"], required=True)
+    parser.add_argument("--phase", choices=["showcase", "ui", "loras"], required=True)
     parser.add_argument("--mask", type=float, nargs=4, default=(0.68, 0.64, 0.92, 0.86),
                         metavar=("X0", "Y0", "X1", "Y1"), help="mask area on the mug frame, as fractions")
     args = parser.parse_args()
@@ -387,6 +460,8 @@ def main() -> int:
     configure()
     if args.phase == "showcase":
         phase_showcase()
+    elif args.phase == "loras":
+        phase_loras()
     else:
         phase_ui(tuple(args.mask))
     return 0

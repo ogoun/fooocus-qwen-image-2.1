@@ -42,6 +42,12 @@ down to an 8 GB laptop.
   SageAttention (15–25% faster steps). The installer proposes what fits your
   card; switch later in Settings, where every option states what it costs.
   Missing weights download with a progress bar.
+- **LoRA**, as in Fooocus: five slots with on/off, file and weight, on both
+  tabs. Each file is checked before use — LoRA made for Qwen-Image 1 / 2512 /
+  Edit, FLUX or SDXL are flagged instead of silently doing nothing — and all
+  common Qwen-Image-2.1 formats load, including the ComfyUI / ai-toolkit fused
+  `gate_up` that diffusers' own loader drops. Trigger words are shown, and
+  LoRA names, weights and hashes go into the PNG.
 - **Reference images**: up to ten, each addressed in the prompt as
   `<image1>`…`<image10>`. Any cell can take a **pose** — from a pose library
   or recognised from your own photo — or a hand-drawn **sketch**.
@@ -96,6 +102,19 @@ The pencil opens a sketch canvas: draw, press **Accept**, and the sketch
 becomes the reference.
 
 ![The sketch window](docs/images/sketch-window.webp)
+
+### LoRA
+
+Open **LoRA** under *Advanced*, pick a file in a slot and set its weight.
+The line under the slot shows the rank, the number of layers and trigger
+words, or why the file won't be applied.
+
+![LoRA slots on the Generate tab](docs/images/loras.webp)
+
+The same prompt and seed on Turbo, without and with
+[SimpleTuner's photo-aesthetics LoRA](https://huggingface.co/SimpleTuner/Qwen-Image-2.1-LoRA-photo-aesthetics-v2):
+
+![The same frame without and with a LoRA](docs/images/lora-result.webp)
 
 ### Edit with a mask
 
@@ -249,6 +268,7 @@ Arguments are passed through to the application:
 | `--host`, `--port` | listen address (default `0.0.0.0:7865`) |
 | `--lang en\|ru` | interface language at start (default `en`; switch any time with the EN/RU button) |
 | `--preset LowQuality\|MiddleQuality\|MaxQuality\|Turbo\|TurboDraft\|Turbo4` | default quality preset |
+| `--lora-dir PATH` | folder with LoRA files (default `loras/`; point it at your ComfyUI loras folder) |
 | `--no-open-browser` | don't open the browser |
 | `--no-preload` | load the model on first use instead of at start |
 | `--no-pin-memory` | don't pin the text encoder in RAM (saves 16+ GB, slower model swaps) |
@@ -370,6 +390,30 @@ the resolution the references are scaled to; *Auto* picks it from the number
 of condition images and says so in the status line. At full detail, five
 references at 1536 px overflow a 24 GB card and a frame takes minutes instead
 of seconds.
+
+### LoRA
+
+Put `*.safetensors` files into `loras/` in the project root, or start with
+`--lora-dir` pointing at an existing folder (subfolders show as `a/b`).
+Five slots sit under **LoRA** on the Generate and Edit tabs: tick, file,
+weight from −2 to 2. Picking a file ticks its slot; *Refresh list* rereads
+the folder.
+
+Only LoRA made for **Qwen-Image 2.1** fit. The 2.1 transformer is a
+different architecture from Qwen-Image 1 / 2512 / Edit (32 single-stream
+blocks, width 4096, SwiGLU MLP), so their LoRA are refused with a note under
+the slot, and the status line names any LoRA skipped at generation.
+Supported formats: diffusers/peft (alpha from the file metadata),
+DiffSynth/ModelScope, ComfyUI and ai-toolkit (the fused `img_mlp.gate_up` is
+split into `gate_layer` and `proj`), kohya. DoRA, LoKr, LoHa and full weight
+diffs are not supported.
+
+LoRA stay separate from the weights (not fused), so weights change without
+reloading: one LoRA costs about 7% per Turbo frame on an RTX 3090, two about
+10%; attaching a file takes 1–2 s once. Style LoRA work with Turbo; speed-up
+LoRA (Pruna, Lightning) on top of Turbo do not stack. Trigger words are
+shown under the slot but not added to the prompt. Details:
+[docs/research/2026-10-02-lora.md](docs/research/2026-10-02-lora.md) (in Russian).
 
 ### Editing
 
@@ -510,6 +554,7 @@ fooocus_qwen/
   poses/       OpenPose skeletons, pose recognition (DWPose), the pose library, pose tiles
   ui/          Gradio tabs, the mask brush (ui/painter/), reference tools, layout, translations
 resources/     Fooocus styles, the Qwen system prompts, the "Add a pose" tile
+loras/         your LoRA files (git-ignored; --lora-dir points elsewhere)
 tools/         smoke test, benchmark, UI check, screenshot builder, experiments
 docs/          architecture, usage guide, benchmark, research notes (in Russian)
 tests/         unit tests (no GPU needed)
