@@ -2,7 +2,7 @@
 
 Три режима области сами по себе проверяются отдельно, в
 ``test_edit_collect.py`` — там же, где живёт ``collect``. Здесь — то, что
-нельзя проверить без сборки вкладки: обработчик кнопки «Расширить холст»
+нельзя проверить без сборки вкладки: обработчик кнопки «Расширить»
 достаёт значение редактора, строит план расширения и должен вернуть редактору
 новый холст с помеченной новой площадью, переключив режим области на «маска»;
 и обработчик «Применить правку» — как результат ``collect()`` превращается в
@@ -11,7 +11,6 @@
 
 from __future__ import annotations
 
-import numpy as np
 import pytest
 from PIL import Image
 
@@ -20,7 +19,7 @@ gr = pytest.importorskip("gradio")
 from fooocus_qwen import config
 from fooocus_qwen.engine import generator as gen
 from fooocus_qwen.imaging import aspect as aspect_module
-from fooocus_qwen.ui import painter, tab_edit
+from fooocus_qwen.ui import tab_edit
 from fooocus_qwen.ui.i18n import Localizer
 from fooocus_qwen.ui.state import Studio
 
@@ -134,48 +133,54 @@ def test_run_reconstructs_mask_mode_from_what_collect_actually_returned(
     assert request.aspect == aspect_module.FOLLOW_REFERENCE
 
 
-def test_expand_canvas_enlarges_the_background_and_marks_only_the_new_area(painter_value):
+class _ImageGenerator(_FakeGenerator):
+    """Возвращает холст как «нарисованный» кадр — проверить вклейку и запрос."""
+
+    def generate(self, request, progress=None):
+        self.captured = request
+        return [gen.GeneratedImage(image=request.source.copy(), seed=5, parameters={"seconds": 0.0})]
+
+
+def test_extend_draws_the_extended_picture_in_one_step(painter_value, monkeypatch, tmp_path):
+    from fooocus_qwen.engine import lora
+
+    monkeypatch.setattr(config, "OUTPUT_DIR", tmp_path)
+    fake = _ImageGenerator()
+    studio = _NoLoadStudio(config.AppConfig(), fake)
+    outpaint_file = tmp_path / "outpaint.safetensors"
+    outpaint_file.write_bytes(b"x")
+    marker = lora.ResolvedLora("outpaint", 1.0, outpaint_file, "abc")
+    monkeypatch.setattr(studio, "outpaint_lora", lambda lang, progress=None: (marker, None))
+    monkeypatch.setattr(studio, "weights_for", lambda *a, **k: None)
+    handlers, _studio = _build_handlers(studio)
+
+    gallery_update, message = handlers["extend"](
+        painter_value(*_editor_images((64, 48))), "16:9", [], 0.5, "", False, "Turbo", -1, "ru",
+        progress=lambda *a, **k: None,
+    )
+    request = fake.captured
+    assert request.mask is None and request.mask_mode == gen.MASK_NONE, "маски нет — сразу расширение"
+    assert request.size == request.source.size, "кадр ровно размера холста"
+    assert request.loras == (marker,) and request.prompt.startswith("Outpaint the image")
+    saved = Image.open(next(tmp_path.glob("20*/*.png")))
+    assert saved.size == (86, 48) and "86×48" in message
+
+
+def test_extend_without_source_asks_to_upload_first():
     handlers, _studio = _build_handlers()
-
-    raw, mode, message = handlers["expand_canvas"](painter_value(*_editor_images((64, 64))), ["right"], 0.5, "ru")
-
-    # Ответ — значение кисти, как его разберёт сервер при следующем нажатии:
-    # проверяется весь круг «кодирование → разбор», а не промежуточный словарь.
-    new_value = painter.decode(raw).as_editor_value()
-    background = new_value["background"]
-    assert background.size[0] > 64
-    assert background.size[1] == 64
-    assert mode == gen.MASK_MASK
-    assert "64" not in message or "×" in message  # сообщение содержит итоговый размер
-
-    # Painted-слой обязан покрывать ровно новую площадь: старая область — там,
-    # где был оригинал, — не должна оказаться помечена как правочная.
-    layer = new_value["layers"][0]
-    alpha = np.asarray(layer)[..., 3]
-    assert alpha[32, 4] == 0  # исходная область (прижата влево) не помечена
-    assert alpha[32, background.size[0] - 4] == 255  # новая площадь помечена
+    paths, message = handlers["extend"](None, "", ["right"], 0.5, "", False, "Turbo", -1, "ru")
+    assert paths == [] and message
 
 
-def test_expand_canvas_without_source_asks_to_upload_first():
+def test_extend_without_sides_or_ratio_asks_to_choose(painter_value):
     handlers, _studio = _build_handlers()
-
-    update, mode, message = handlers["expand_canvas"](None, ["right"], 0.5, "ru")
-    assert mode == gen.MASK_MASK
-    assert message  # сообщение непустое — просит сначала загрузить изображение
-
-
-def test_expand_canvas_without_sides_asks_to_choose_one(painter_value):
-    handlers, _studio = _build_handlers()
-
-    update, mode, message = handlers["expand_canvas"](painter_value(*_editor_images()), [], 0.5, "ru")
-    assert mode == gen.MASK_MASK
-    assert message
+    paths, message = handlers["extend"](painter_value(*_editor_images()), "", [], 0.5, "", False, "Turbo", -1, "ru")
+    assert paths == [] and "сторону" in message
 
 
 @pytest.mark.parametrize("prompt", ["", "   "])
 def test_an_edit_without_a_prompt_is_not_started(prompt, painter_value):
-    """Без инструкции модели правки нечего делать, а после расширения холста
-    пустой промт даёт прозрачную новую площадь — просим описать правку."""
+    """Без инструкции модели правки нечего делать — просим описать правку."""
     fake = _FakeGenerator()
     handlers, _studio = _build_handlers(_NoLoadStudio(config.AppConfig(), fake))
 
@@ -185,7 +190,7 @@ def test_an_edit_without_a_prompt_is_not_started(prompt, painter_value):
     )
 
     assert paths == [] and fake.captured is None
-    assert "Промт" in message and "прозрачной" in message
+    assert "Промт" in message
 
 
 # --- картинку результата — в кисть -------------------------------------------

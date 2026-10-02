@@ -56,7 +56,10 @@ down to an 8 GB laptop.
   - **Annotation** — circle several areas in different colours and describe each change by its colour in one prompt.
   - **Exact region** — edit a crop around the mask at full detail, then paste it back.
   - **No region** — edit the whole frame.
-- **Outpainting**: extend the canvas on any side; the new area becomes the mask.
+- **Outpainting in one click**: pick a side or a target aspect ratio and press
+  **Extend** — the picture grows with a seamless continuation, the original
+  pixels pasted back untouched. An outpaint LoRA keeps the picture in place;
+  no mask, no second step, the prompt is optional.
 - **A responsive mask brush** with size, eraser, undo/redo, zoom, pan,
   clipboard paste and touch support. Stroke cost stays constant — no lag on
   4K images (the stock Gradio editor's strokes slowed from 16.7 to 44 ms per
@@ -141,10 +144,16 @@ This makes several independent edits in a single pass.
 
 ### Outpaint
 
-Choose the sides to extend and describe the **whole scene** in the prompt;
-the original pixels stay untouched.
+Open **Outpaint**, pick a target aspect ratio (or sides and how far) and press
+**Extend**: the extended picture appears right away, with your original
+pasted back pixel for pixel. The prompt is optional — it says what should
+appear in the new area.
 
-![Before and after extending the canvas to the left and right](docs/images/outpaint-result.webp)
+![Edit tab: the Outpaint block, the source in the brush and the extended result](docs/images/outpaint.webp)
+
+A square watercolour extended to 16:9 in one click:
+
+![Before and after extending a square picture to 16:9](docs/images/outpaint-result.webp)
 
 ### Gallery
 
@@ -457,12 +466,27 @@ the gallery. On a touch screen, draw with one finger; pinch and drag with two.
 
 ### Outpainting
 
-Open **Outpaint**, tick the sides and the amount, press **Outpaint**. The new
-area becomes the mask and the edit is an ordinary mask edit.
+Open **Outpaint**, choose a target aspect ratio — the picture grows to it,
+centred — or the sides and how far, and press **Extend**. There is no mask to
+paint and no second button: the new area is filled in one pass.
 
-**Describe the whole picture, not the operation.** Prompts like “continue the
-scene” or “extend the background” make the model fill the new area with
-transparency. A description of the finished picture works every time.
+How it works: the picture is placed on a canvas whose new area is flat gray,
+the whole canvas goes to the model as the image to edit (a mask would leave a
+visible box at the seam on Qwen 2.1), and
+[AusBoss's outpaint LoRA](https://huggingface.co/ausboss/Qwen-Image-2.1-Outpaint-LoRA)
+(159 MB, downloaded on first use) keeps the picture in place while the gray is
+painted over. The original is then pasted back at its own resolution with a
+32 px feather and a tone match. Without the LoRA the model often reframes the
+picture (19–29 dB PSNR of the kept area against 30–40 dB with it, measured
+here), and the paste-back shows a seam.
+
+The prompt is optional: words there are added as what belongs in the new
+area. With **AI boost** on, a language model describes the scene first,
+which makes the continuation more faithful. Extend by at most the picture's
+own size per side at once — beyond that a second scene can appear; for more,
+**Send to editor** and extend again. Works with every preset, Turbo
+included, and with your own LoRA. Details:
+[docs/research/2026-10-02-outpaint.md](docs/research/2026-10-02-outpaint.md) (in Russian).
 
 ### AI boost
 

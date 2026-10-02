@@ -305,47 +305,41 @@ def scenario_region(engine: Generator, source: Image.Image) -> None:
 
 
 def scenario_outpaint(engine: Generator, source: Image.Image) -> None:
+    """Расширение кадра одной кнопкой: серый холст, лора outpaint, вклейка оригинала.
+
+    Мера — серое, оставшееся незаполненным в новой площади, и то, что кадр
+    вырос до холста; оригинал вклеивается точно (``outpaint.stitch``).
+    """
     print("\n== item 11: outpaint ==")
+    from fooocus_qwen.engine import fetch, lora
+
+    fetch.ensure_outpaint(config.OUTPAINT_DIR)
+    path_lora = config.OUTPAINT_DIR / fetch.OUTPAINT_FILE
+    outpaint_lora = lora.ResolvedLora(path_lora.stem, 1.0, path_lora, lora.short_hash(path_lora))
+    preset = presets.get("LowQuality")
     for sides, tag in ((["right"], "right"), (["top"], "top"), (["left", "bottom"], "left-bottom")):
         plan = outpaint.plan(source.size, sides, 0.35)
-        canvas, mask = outpaint.expand(source, plan)
-        image = one(
-            engine,
-            # Описание сцены, а не действия. «Continue the scene naturally»
-            # стояло здесь в первой редакции и давало прозрачную заливку во
-            # всей новой площади: модель принимала задачу за вырезание
-            # наклейки. Та же дорисовка с описанием картины даёт сто
-            # процентов непрозрачности — измерено, см.
-            # docs/research/2026-09-22-maska-kak-alfa.md.
-            prompt=(
-                "a full photograph of a woman with long dark hair, bare shoulders, "
-                "looking at the camera, standing against a plain light grey studio "
-                "backdrop, soft even studio lighting, the whole frame filled with "
-                "the studio wall"
-            ),
-            preset=presets.get("LowQuality"),
-            aspect=aspect.FOLLOW_REFERENCE,
-            source=canvas,
-            mask=mask,
-            mask_mode=MASK_MASK,
-            keep_outside=True,
-            seed=66,
+        job = outpaint.prepare(source, plan, outpaint.generation_area(preset.output_resolution))
+        drawn = one(
+            engine, prompt=outpaint.prompt(), preset=preset, aspect=aspect.FOLLOW_REFERENCE,
+            source=job.canvas, size=job.size, reference_scale=job.resolution, seed=66, loras=(outpaint_lora,),
         )
-        if image is None:
+        if drawn is None:
             record(f"outpaint {tag}", "FAIL", "no image")
             continue
+        image = outpaint.stitch(source, drawn, job)
         path = save(image, f"outpaint-{tag}")
-        grew = image.size == plan.canvas_size
-        new_area = np.asarray(mask.resize(image.size, Image.NEAREST)) > 127
-        opaque = opaque_share(image, new_area)
-        good = grew and opaque >= 99.0
+        left, top, right, bottom = plan.paste_box
+        array = np.asarray(image.convert("RGB")).astype(np.int16)
+        new_area = np.ones(array.shape[:2], dtype=bool)
+        new_area[top:bottom, left:right] = False
+        gray = float((np.abs(array[new_area] - 128).max(axis=1) < 4).mean() * 100)
+        good = image.size == plan.canvas_size and gray < 5.0
         record(
             f"outpaint {tag}",
             "ok" if good else "FAIL",
-            f"{source.size} -> {image.size}, opaque in the new area {opaque:.1f} % "
-            f"-> {path.name}",
+            f"{source.size} -> {image.size}, gray left unfilled {gray:.1f} % -> {path.name}",
         )
-
 
 def scenario_references(engine: Generator) -> None:
     print("\n== items 12-13: ten references and one ==")

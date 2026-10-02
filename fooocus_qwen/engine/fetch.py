@@ -65,6 +65,11 @@ GGUF_REPO = "unsloth/Qwen-Image-2.1-GGUF"
 # влитый в трансформер и сжатый Abiray в GGUF Q4_K_M — отдельный трансформер,
 # 4.2 ГБ. Ложится рядом с GGUF основной модели; планировщик — тот же, что у
 # Turbo (``TURBO_SCHEDULER``, ``shift_terminal: null``).
+# Расширение кадра: лора outpaint (ausboss, ai-toolkit, ранг 32, 159 МБ) —
+# держит исходный кадр на месте, пока модель заполняет серое поле
+# (``imaging/outpaint.py``). Лицензия — та же, что у модели.
+OUTPAINT_REPO = "ausboss/Qwen-Image-2.1-Outpaint-LoRA"
+OUTPAINT_FILE = "qwen-image-2.1-outpaint-v2.safetensors"
 TURBO4_REPO = "Abiray/Qwen-Image-2.1-viggle-4-steps-turbo-GGUF"
 TURBO4_FILE = "qwen_image_2.1_turbo_Q4_K_M.gguf"
 # Шарды bf16-энкодера: без них модель работает на собранном INT8-энкодере.
@@ -248,6 +253,11 @@ def ensure_gguf(directory: Path, variant: str, downloader: Callable[..., object]
 
 def turbo4_missing(gguf_dir: Path, turbo_dir: Path) -> list[str]:
     return missing_extra(gguf_dir, (TURBO4_FILE,)) + missing_extra(turbo_dir, (TURBO_SCHEDULER,))
+
+
+def ensure_outpaint(directory: Path, downloader: Callable[..., object] | None = None) -> bool:
+    """Лора outpaint. ``True`` — качалась."""
+    return ensure_files(directory, OUTPAINT_REPO, (OUTPAINT_FILE,), downloader)
 
 
 def ensure_turbo4(gguf_dir: Path, turbo_dir: Path, downloader: Callable[..., object] | None = None) -> bool:

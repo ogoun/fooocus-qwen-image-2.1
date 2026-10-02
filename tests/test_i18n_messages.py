@@ -175,7 +175,8 @@ def test_every_status_line_a_user_can_reach_without_the_model_is_english(monkeyp
     _assert_english(handlers["delete"]("нет такого", "en")[1], "удаление несуществующего")
 
     # вкладка «Редактирование»
-    _assert_english(handlers["expand_canvas"](None, ["right"], 0.5, "en")[2], "расширение без картинки")
+    _assert_english(handlers["extend"](None, "", ["right"], 0.5, "", False, "Turbo", -1, "en")[1],
+                    "расширение без картинки")
     _assert_english(handlers["take_back"](None, None, "en")[1], "пустая отправка в редактор")
 
     # вкладка «Настройки»

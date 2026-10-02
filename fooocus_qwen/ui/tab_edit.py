@@ -170,6 +170,12 @@ def send_to_editor(produced, selected, lang: str) -> tuple:
     )
 
 
+def _outpaint_ratios(lang: str) -> list[tuple[str, str]]:
+    """Соотношения для расширения: «по сторонам» (пусто) и семь соотношений карточки модели."""
+    ratios = [ratio for ratio in aspect_module.ASPECT_RATIOS if ratio != aspect_module.FOLLOW_REFERENCE]
+    return [(pick("outpaint_ratio_none", lang), ""), *[(ratio, ratio) for ratio in ratios]]
+
+
 def read_painter(raw, lang: str) -> tuple[dict | None, str | None]:
     """Значение кисти → словарь формы ``gr.ImageEditor`` и сообщение об ошибке.
 
@@ -342,51 +348,130 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
             loras = lora_slots.build(localizer, lang, language, studio.config.lora_dir)
 
+            # Расширение кадра — одной кнопкой: серый холст, лора outpaint и
+            # вклейка оригинала (imaging/outpaint.py). Маска не рисуется.
             outpaint_accordion = localizer.bind(
-                gr.Accordion(pick("outpaint", lang), open=False),
-                label=("Расширить холст", "Outpaint"),
+                gr.Accordion(pick("outpaint", lang), open=False), label=T["outpaint"],
             )
             with outpaint_accordion:
+                outpaint_ratio = localizer.bind(
+                    gr.Dropdown(
+                        choices=_outpaint_ratios(lang), value="", label=pick("outpaint_ratio", lang),
+                    ),
+                    label=T["outpaint_ratio"],
+                    choices=(_outpaint_ratios("ru"), _outpaint_ratios("en")),
+                )
                 sides = localizer.bind(
                     gr.CheckboxGroup(
                         choices=[("←", "left"), ("→", "right"), ("↑", "top"), ("↓", "bottom")],
+                        value=["left", "right"],
                         label=pick("outpaint_sides", lang),
                     ),
-                    label=("Стороны", "Sides"),
+                    label=T["outpaint_sides"],
                 )
                 amount = localizer.bind(
                     gr.Slider(0.1, 1.0, value=0.35, step=0.05, label=pick("outpaint_amount", lang)),
-                    label=("Насколько расширить", "How far to expand"),
+                    label=T["outpaint_amount"],
                 )
+                localizer.bind(gr.Markdown(pick("outpaint_hint", lang)), value=T["outpaint_hint"])
                 expand_button = localizer.bind(
-                    gr.Button(pick("outpaint", lang)), value=("Расширить холст", "Outpaint")
+                    gr.Button(pick("outpaint_run", lang), variant="primary"), value=T["outpaint_run"]
                 )
 
     # --- обработчики ---
 
-    def expand_canvas(raw, chosen_sides, ratio_amount, lang):
+    def extend(
+        raw, ratio_value, chosen_sides, share, prompt_text, use_boost, quality_name, seed_value, lang,
+        lora_state=None, progress=gr.Progress(track_tqdm=True),
+    ):
+        """«Расширить»: сразу готовый расширенный кадр, без маски и второго шага."""
+        try:
+            return _extend(
+                raw, ratio_value, chosen_sides, share, prompt_text, use_boost, quality_name, seed_value,
+                lang, lora_state, progress,
+            )
+        except Exception as error:  # noqa: BLE001 — сбой модели — строка состояния
+            LOGGER.exception("Outpaint handler failed")
+            return [], describe_failure(error, lang)
+
+    def _extend(
+        raw, ratio_value, chosen_sides, share, prompt_text, use_boost, quality_name, seed_value,
+        lang, lora_state, progress,
+    ):
         value, failure = read_painter(raw, lang)
         if failure:
-            return gr.update(), MASK_MASK, failure
+            return [], failure
         source, _ = collect(value, MASK_NONE)
         if source is None:
-            return gr.update(), MASK_MASK, say("upload_first", lang)
-        if not chosen_sides:
-            return gr.update(), MASK_MASK, say("choose_a_side", lang)
+            return [], say("upload_first", lang)
+        if ratio_value:
+            plan = outpaint.plan_for_ratio(source.size, ratio_value)
+        elif chosen_sides:
+            plan = outpaint.plan(source.size, chosen_sides, float(share))
+        else:
+            return [], say("choose_a_side", lang)
+        if plan.canvas_size == source.size:
+            return [], say("outpaint_same", lang)
 
-        canvas, mask = outpaint.expand(source, outpaint.plan(source.size, chosen_sides, ratio_amount))
+        message = ""
+        if plan.canvas_size[0] > 3 * source.size[0] or plan.canvas_size[1] > 3 * source.size[1]:
+            message = say("outpaint_too_far", lang)
+        preset = presets.get(quality_name)
+        job = outpaint.prepare(source, plan, outpaint.generation_area(preset.output_resolution))
 
-        # Новая площадь показывается пользователю как нарисованная область,
-        # чтобы её было видно и можно было поправить кистью.
-        layer = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
-        painted = Image.new("RGBA", canvas.size, (255, 0, 0, 255))
-        layer.paste(painted, (0, 0), mask)
+        outpaint_lora, failure = studio.outpaint_lora(lang, progress)
+        if failure:
+            return [], failure
+        missing = studio.weights_for(preset, lang, progress)
+        if missing:
+            return [], missing
 
-        return (
-            painter.encode(canvas, layer),
-            MASK_MASK,
-            say("canvas_expanded", lang, width=canvas.size[0], height=canvas.size[1]),
+        description = ""
+        if use_boost:
+            description, said = studio.describe_for_outpaint(job.canvas, lang)
+            message = sentences(message, said)
+        user_loras, skipped = lora_slots.resolve(studio.config.lora_dir, lora_state, lang)
+        message = sentences(message, skipped)
+
+        request = GenerationRequest(
+            prompt=outpaint.prompt(description, prompt_text or ""),
+            prompt_original=prompt_text or "",
+            preset=preset,
+            aspect=aspect_module.FOLLOW_REFERENCE,
+            seed=int(seed_value),
+            source=job.canvas,
+            # Холст — исходник целиком, кадр — ровно его размера: иначе
+            # вклейка оригинала разойдётся с нарисованным.
+            size=job.size,
+            reference_scale=job.resolution,
+            loras=(outpaint_lora, *user_loras),
         )
+
+        def report(index: int, step: int, total: int) -> None:
+            progress((step, total), desc=say("progress_edit", lang))
+
+        progress(0, desc=say("stage_loading" if not studio.model_loaded else "stage_preparing", lang))
+        produced, failure = studio.run_generation(request, lang, progress=report)
+        if failure is not None:
+            return [], sentences(message, failure)
+        if not produced:
+            return [], sentences(message, say("edit_interrupted", lang))
+
+        paths = []
+        for item in produced:
+            final = outpaint.stitch(source, item.image, job)
+            parameters = dict(item.parameters, width=final.width, height=final.height, outpaint={
+                "ratio": ratio_value or "", "sides": [] if ratio_value else list(chosen_sides),
+                "amount": None if ratio_value else float(share), "source_size": list(source.size),
+            })
+            destination = gallery.next_path(config.OUTPUT_DIR)
+            metadata.save_png(final, destination, parameters)
+            paths.append(str(destination))
+        done = say(
+            "outpaint_done", lang, width=plan.canvas_size[0], height=plan.canvas_size[1],
+            seeds=seeds_phrase([item.seed for item in produced], lang), memory=studio.memory_report(lang),
+        )
+        return gr.Gallery(value=paths, selected_index=0), sentences(message, done)
 
     def describe(raw, lang):
         value, failure = read_painter(raw, lang)
@@ -563,8 +648,18 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     # значение: синхронизация со страницы отложенная, и без этого последний
     # мазок перед нажатием мог не успеть. Кисть — первый вход у всех трёх.
     flush = painter.flush_js(PAINTER_ID)
+    # Соотношение задаёт холст само: стороны и доля тогда не действуют —
+    # и не показываются, чтобы не обещать того, чего не будет.
+    outpaint_ratio.change(
+        lambda value: (gr.update(visible=not value), gr.update(visible=not value)),
+        outpaint_ratio, [sides, amount], queue=False, show_progress="hidden",
+    )
     expand_button.click(
-        expand_canvas, [editor, sides, amount, language], [editor, mode, status], js=flush
+        extend,
+        [editor, outpaint_ratio, sides, amount, prompt, boost_enabled, quality, seed, language, loras.state],
+        [result, status],
+        concurrency_id=GPU_CONCURRENCY_ID,
+        js=flush,
     )
     describe_button.click(describe, [editor, language], [prompt, status], js=flush)
     run_button.click(

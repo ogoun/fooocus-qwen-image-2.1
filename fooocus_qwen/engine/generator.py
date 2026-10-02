@@ -80,6 +80,12 @@ class GenerationRequest:
     # Пользовательские LoRA, уже проверенные и привязанные к файлам
     # (``lora.resolve``); пустой кортеж — без них.
     loras: tuple[ResolvedLora, ...] = ()
+    # Точный размер кадра (ширина, высота) — мимо пресета и соотношения.
+    # Нужен расширению кадра: холст идёт в модель в своём размере, и кадр
+    # обязан совпасть с ним пиксель в пиксель, иначе вклейка оригинала
+    # разойдётся с нарисованным (``imaging/outpaint.py``). С ним же
+    # ``reference_scale`` не урезается до пресета.
+    size: tuple[int, int] | None = None
 
 
 @dataclass(frozen=True)
@@ -197,6 +203,8 @@ def resolve_reference_scale(request: GenerationRequest) -> int:
     лишь подробность, с которой модель разглядывает исходник.
     """
     limit = request.preset.output_resolution
+    if request.size is not None and request.reference_scale:
+        return request.reference_scale
     if request.reference_scale:
         return min(request.reference_scale, limit)
 
@@ -222,6 +230,8 @@ def resolve_size(request: GenerationRequest) -> tuple[int | None, int | None]:
     случае размеры вычисляются здесь, по соотношению сторон опорного
     изображения.
     """
+    if request.size is not None:
+        return request.size
     if request.aspect != aspect.FOLLOW_REFERENCE:
         return aspect.dimensions(request.aspect, request.preset.output_resolution)
 

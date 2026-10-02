@@ -366,30 +366,37 @@ def scenario_annotation(browser, url, report: Report, fake: FakeGenerator, sampl
 
 
 def scenario_outpaint(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
+    """«Расширить»: одна кнопка — расширенный кадр, без маски и второго шага."""
     print("outpaint and result round trip:")
     page, errors = fresh_page(browser, url)
     open_tab(page, 1)
     load_into_painter(page, sample_image(samples, 1024, 768))
     page.get_by_text("Outpaint", exact=True).first.click()
     page.wait_for_timeout(500)
-    page.get_by_label("→", exact=True).check()
-    page.get_by_role("button", name="Outpaint", exact=True).last.click()
-    page.wait_for_function(f"() => {API}.state().width > 1024", timeout=20000)
-    page.wait_for_timeout(800)
-    state = painter_state(page)
-    report.check(state["width"] > 1024 and state["height"] == 768, f"canvas widened: {state['width']}x{state['height']}")
+    box = page.locator("input[aria-label='To an aspect ratio']:visible").first
+    box.click()
+    page.get_by_role("option", name="16:9", exact=True).first.click()
+    page.wait_for_timeout(300)
 
     before = len(fake.requests)
-    apply_edit(page)
+    click_text(page, "Extend")
     request = fake.wait(before + 1)
-    ok = request.mask is not None and mask_at(request.mask, 0.97, 0.5) == 255 and mask_at(request.mask, 0.1, 0.5) == 0
-    report.check(ok, "new area is marked, old area is not")
+    report.check(request.mask is None and request.size == request.source.size
+                 and request.prompt.startswith("Outpaint the image"),
+                 f"one click: no mask, the frame is the gray canvas {request.size}")
+    canvas = np.asarray(request.source.convert("RGB"))
+    report.check(tuple(canvas[canvas.shape[0] // 2, 3]) == (128, 128, 128),
+                 "the new area goes to the model as flat gray")
+    page.wait_for_function(
+        "() => [...document.querySelectorAll('textarea')].some(t => t.value.includes('1366×768'))", timeout=20000,
+    )
+    report.check(painter_state(page)["width"] == 1024, "the painter keeps the source; the result is separate")
 
-    page.wait_for_timeout(1500)
+    page.wait_for_timeout(1000)
     old_source = painter_state(page)["source"]
     click_text(page, "Send to editor")
     page.wait_for_function(f"() => {API}.state().source !== {old_source!r}".replace("'", '"'), timeout=20000)
-    report.check(painter_state(page)["strokes"] == 0, "result came back to the painter without old marks")
+    report.check(painter_state(page)["width"] == 1366, "the extended picture goes back to the editor for another round")
     report.check(not errors, "no page errors" + (f": {errors[:2]}" if errors else ""))
     page.close()
 
@@ -1329,6 +1336,28 @@ def scenario_loras(browser, url, report: Report, fake: FakeGenerator, samples: P
     page.close()
 
 
+def scenario_tall(browser, url, report: Report, samples: Path) -> None:
+    """Высокие окна, вкладка правки: кисть и сетка кончаются над строкой промта.
+
+    В раскладке столбцом высота строки «сетка + кисть» раньше выводилась по
+    кругу, и на 1920×1500 кисть уезжала под промт (снимок для README).
+    """
+    print("tall windows on the Edit tab:")
+    for width, height in ((1920, 1500), (1280, 1440), (1920, 1080)):
+        page, errors = fresh_page(browser, url, width, height)
+        open_tab(page, 1)
+        load_into_painter(page, sample_image(samples, 1024, 1024))
+        page.wait_for_timeout(500)
+        boxes = page.evaluate("""() => {
+            const r = s => { const n = [...document.querySelectorAll(s)].find(e => e.offsetParent); return n && n.getBoundingClientRect(); };
+            return {bar: r('.qs-bar').top, row: r('.qs-slot-editor > .qs-resultrow').bottom, refs: r('.qs-refs').bottom};
+        }""")
+        report.check(boxes["row"] <= boxes["bar"] and boxes["refs"] <= boxes["bar"],
+                     f"{width}×{height}: brush and grid end above the prompt ({boxes})")
+        report.check(not errors, "no page errors" + (f": {errors[:2]}" if errors else ""))
+        page.close()
+
+
 def scenario_quality(browser, url, report: Report, samples: Path) -> None:
     """«Качество и скорость» на генерации и правке: столбцом и словами, значение — имя пресета."""
     from fooocus_qwen.ui import quality
@@ -1452,6 +1481,13 @@ def main() -> int:
     config.SETTINGS_FILE = work / "settings.json"
     config.INT8_DIR = work / "int8"
     config.TURBO_DIR = work / "turbo"
+    # Лора расширения кадра — заглушка: подделке генератора веса не нужны,
+    # а качать 159 МБ ради проверки интерфейса незачем.
+    config.OUTPAINT_DIR = work / "outpaint"
+    config.OUTPAINT_DIR.mkdir()
+    from fooocus_qwen.engine import fetch as fetch_module
+
+    (config.OUTPAINT_DIR / fetch_module.OUTPAINT_FILE).write_bytes(b"stub")
     # Свои позы живут в каталоге генераций (config.user_pose_dir) и уезжают во
     # временный вместе с ним. Каталог поз и веса DWPose — настоящие, для чтения.
     config.ensure_directories()
@@ -1482,6 +1518,7 @@ def main() -> int:
         "sketch": lambda b, r: scenario_sketch_colour(b, url, r, fake, samples),
         "poses": lambda b, r: scenario_pose_edit(b, url, r, fake, samples),
         "quality": lambda b, r: scenario_quality(b, url, r, samples),
+        "tall": lambda b, r: scenario_tall(b, url, r, samples),
         "loras": lambda b, r: scenario_loras(b, url, r, fake, samples),
         "performance": lambda b, r: scenario_performance(b, url, r, fake, samples),
         "secret": lambda b, r: scenario_secret(b, url, r),

@@ -35,32 +35,6 @@ def test_no_sides_means_no_change():
     assert result.paste_box == (0, 0, 256, 256)
 
 
-def test_expand_places_the_original_and_masks_only_new_area():
-    image = Image.new("RGBA", (64, 64), (200, 30, 30, 255))
-    result = outpaint.plan((64, 64), ["right"], 0.5)
-    canvas, mask = outpaint.expand(image, result)
-
-    assert canvas.size == result.canvas_size
-    assert mask.size == result.canvas_size
-
-    canvas_array = np.asarray(canvas)
-    mask_array = np.asarray(mask)
-    assert tuple(canvas_array[32, 10]) == (200, 30, 30, 255)
-    assert mask_array[32, 10] == 0            # исходная область не правится
-    assert mask_array[32, result.canvas_size[0] - 4] == 255  # новая область правится
-
-
-def test_new_area_is_filled_by_edge_replication():
-    # Пустой холст сбивает модель: край изображения должен продолжаться,
-    # а не обрываться в чёрное.
-    image = Image.new("RGBA", (64, 64), (0, 0, 0, 255))
-    image.paste((0, 200, 0, 255), (60, 0, 64, 64))
-    canvas, _ = outpaint.expand(image, outpaint.plan((64, 64), ["right"], 0.5))
-
-    array = np.asarray(canvas)
-    assert tuple(array[32, 70]) == (0, 200, 0, 255)
-
-
 def test_unknown_side_is_rejected():
     with pytest.raises(ValueError):
         outpaint.plan((64, 64), ["diagonal"], 0.5)
@@ -78,9 +52,8 @@ def test_plan_does_not_shrink_the_source_when_only_top_grows():
     assert left >= 0 and top >= 0
     assert canvas_width - right >= 0 and canvas_height - bottom >= 0
 
-    canvas, mask = outpaint.expand(image, result)  # не должно бросать исключение
-    assert canvas.size == result.canvas_size
-    assert mask.size == result.canvas_size
+    job = outpaint.prepare(image, result)  # не должно бросать исключение
+    assert job.plan == result
 
 
 def test_plan_does_not_shrink_the_source_when_only_left_grows():
@@ -93,6 +66,70 @@ def test_plan_does_not_shrink_the_source_when_only_left_grows():
     assert left >= 0 and top >= 0
     assert canvas_width - right >= 0 and canvas_height - bottom >= 0
 
-    canvas, mask = outpaint.expand(image, result)  # не должно бросать исключение
-    assert canvas.size == result.canvas_size
-    assert mask.size == result.canvas_size
+    job = outpaint.prepare(image, result)  # не должно бросать исключение
+    assert job.plan == result
+
+
+def test_a_ratio_grows_only_the_short_axis_and_centres_the_picture():
+    result = outpaint.plan_for_ratio((1200, 900), "16:9")
+    assert result.canvas_size == (1600, 900) and result.paste_box == (200, 0, 1400, 900)
+    tall = outpaint.plan_for_ratio((1200, 900), "9:16")
+    assert tall.canvas_size[0] == 1200 and tall.paste_box[1] > 0
+    assert outpaint.plan_for_ratio((1600, 900), "16:9").canvas_size == (1600, 900), "уже нужное — без изменений"
+    with pytest.raises(ValueError):
+        outpaint.plan_for_ratio((10, 10), "5:7")
+
+
+@pytest.mark.parametrize("size", [(400, 300), (1600, 1200), (3000, 1000)])
+def test_the_gray_canvas_is_the_generation_size_and_the_pipeline_keeps_it(size):
+    """Пайплайн приводит исходник к площади ``resolution²`` с округлением до 32 —
+    это обязано дать ровно размер холста, иначе вклейка разойдётся с кадром."""
+    import math
+
+    image = Image.new("RGB", size, (200, 30, 30))
+    job = outpaint.prepare(image, outpaint.plan(size, ["left", "right"], 0.3), outpaint.generation_area(1536))
+    width, height = job.size
+    assert width % 32 == 0 and height % 32 == 0
+    assert 1024 * 1024 * 0.85 < width * height <= 2 * 1024 * 1024 * 1.1
+    side = math.sqrt(job.resolution ** 2 * width / height)
+    assert (round(side / 32) * 32, round(side / (width / height) / 32) * 32) == (width, height)
+    array = np.asarray(job.canvas)
+    assert tuple(array[height // 2, 2]) == outpaint.FILL, "новая площадь — ровный серый"
+    assert tuple(array[height // 2, width // 2]) == (200, 30, 30), "оригинал — на своём месте"
+
+
+def test_generation_area_stays_within_what_the_lora_saw():
+    assert outpaint.generation_area(768) == outpaint.MIN_AREA, "черновик всё равно считается на 1 Мп"
+    assert outpaint.generation_area(2048) == outpaint.MAX_AREA
+
+
+def test_stitch_returns_the_source_scale_and_keeps_the_original_exactly():
+    rng = np.random.default_rng(0)
+    original = Image.fromarray(rng.integers(0, 255, (300, 400, 3), dtype=np.uint8))
+    plan = outpaint.plan(original.size, ["left", "right"], 0.5)
+    job = outpaint.prepare(original, plan)
+    drawn = job.canvas.copy()
+    drawn.paste((90, 90, 90), (0, 0, 20, drawn.height))  # модель «нарисовала» что-то на новом месте
+    result = outpaint.stitch(original, drawn, job)
+    assert result.size == plan.canvas_size
+    left, top, right, bottom = plan.paste_box
+    inner = np.asarray(result)[top:bottom, left + outpaint.FEATHER:right - outpaint.FEATHER]
+    truth = np.asarray(original)[:, outpaint.FEATHER:-outpaint.FEATHER]
+    assert np.array_equal(inner, truth), "вне полосы растушёвки — пиксели оригинала бит в бит"
+
+
+def test_stitch_evens_out_a_tone_shift():
+    original = Image.new("RGB", (200, 200), (120, 120, 120))
+    plan = outpaint.plan(original.size, ["right"], 0.5)
+    job = outpaint.prepare(original, plan)
+    drawn = Image.new("RGB", job.size, (140, 140, 140))  # модель сдвинула тон на +20
+    result = np.asarray(outpaint.stitch(original, drawn, job), dtype=np.int16)
+    assert abs(int(result[100, plan.canvas_size[0] - 5, 0]) - 120) <= 2, "новая площадь — в тон оригиналу"
+
+
+def test_the_prompt_starts_with_the_lora_trigger():
+    assert outpaint.prompt() == outpaint.INSTRUCTION
+    text = outpaint.prompt("Photograph of a mug on a table", "a teapot on the right")
+    assert text.startswith(outpaint.INSTRUCTION + " Scene: Photograph of a mug")
+    assert text.endswith("Also include in the prompt: a teapot on the right")
+

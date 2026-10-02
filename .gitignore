@@ -6,6 +6,7 @@
 /Qwen-Image-2.1-turbo/
 /Qwen-Image-2.1-GGUF/
 /Qwen-Image-2.1-TE-INT8/
+/Qwen-Image-2.1-outpaint/
 # Распознавание позы (DWPose, качается установкой — шаг --fetch-model)
 /DWPose/
 # Пользовательские LoRA — файлы человека, не проекта

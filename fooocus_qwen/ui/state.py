@@ -202,6 +202,21 @@ class Studio:
             return say("turbo_download_failed", lang, error=_quote(error))
         return None
 
+    def outpaint_lora(self, lang: str, progress: Any = None):
+        """Лора outpaint, скачанная при первом расширении: ``(ResolvedLora, None)`` или ``(None, сообщение)``."""
+        from ..engine import fetch, lora
+
+        path = config.OUTPAINT_DIR / fetch.OUTPAINT_FILE
+        if not path.is_file():
+            if progress is not None:
+                progress(0, desc=say("outpaint_downloading", lang))
+            try:
+                fetch.ensure_outpaint(config.OUTPAINT_DIR)
+            except Exception as error:  # noqa: BLE001 — сеть, диск, Hugging Face: строка состояния
+                LOGGER.exception("Outpaint LoRA download failed")
+                return None, say("outpaint_download_failed", lang, error=_quote(error))
+        return lora.ResolvedLora(path.stem, 1.0, path, lora.short_hash(path)), None
+
     def weights_plan(self, **changes):
         """Следствия выбора из настроек (``engine/plan.py``); ``changes`` — поправки к нему."""
         from ..engine import plan
@@ -431,6 +446,25 @@ class Studio:
             self._text_only_models.add(key)
             return result.prompt, result.wh_ratio, say("boost_done_text_only", lang)
         return result.prompt, result.wh_ratio, say("boost_done", lang)
+
+    def describe_for_outpaint(self, canvas: Image.Image, lang: str) -> tuple[str, str]:
+        """Сцена для расширения кадра словами, как подписи, на которых учили лору outpaint.
+
+        Языковая модель видит серый холст и описывает сцену так, будто она
+        занимает весь кадр (``outpaint.DESCRIBE_INSTRUCTION``). Нет модели или
+        она не ответила — пустое описание и сообщение: расширение работает и
+        без него.
+        """
+        from ..imaging import outpaint
+
+        try:
+            text = self.llm_client().complete(
+                outpaint.DESCRIBE_INSTRUCTION, "Describe this image.", images=[canvas]
+            ).strip()
+        except (LlmError, FileNotFoundError, ValueError, OSError) as error:
+            LOGGER.warning("Outpaint description failed: %s", error)
+            return "", say("outpaint_describe_failed", lang, error=error)
+        return text, say("outpaint_described", lang)
 
     def describe_image(self, image: Image.Image, lang: str) -> tuple[str, str]:
         try:

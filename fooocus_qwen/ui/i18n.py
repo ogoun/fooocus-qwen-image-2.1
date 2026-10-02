@@ -157,9 +157,20 @@ T: dict[str, tuple[str, str]] = {
         "Склеивает результат с оригиналом: вне маски пиксели остаются исходными.",
         "Blends the result with the original so pixels outside the mask stay untouched.",
     ),
-    "outpaint": ("Расширить холст", "Outpaint"),
+    "outpaint": ("Расширить кадр", "Outpaint"),
+    "outpaint_run": ("Расширить", "Extend"),
+    "outpaint_ratio": ("До соотношения сторон", "To an aspect ratio"),
+    "outpaint_ratio_none": ("— по сторонам ниже", "— by the sides below"),
     "outpaint_sides": ("Стороны", "Sides"),
-    "outpaint_amount": ("Насколько расширить", "How far to expand"),
+    "outpaint_amount": ("Насколько, доля стороны кадра", "How far, as a share of the picture side"),
+    "outpaint_hint": (
+        "Кнопка сразу рисует расширенный кадр. Промт — что должно появиться на новом месте, "
+        "необязательно; с «AI бустом» сцену опишет языковая модель. За раз — не больше "
+        "размера кадра на сторону; дальше — «Отправить в редактор» и расширить ещё раз.",
+        "The button draws the extended picture right away. The prompt says what should appear "
+        "in the new area and can stay empty; with “AI boost” a language model describes the scene. "
+        "At most the picture's own size per side at once; for more, “Send to editor” and extend again.",
+    ),
     "apply_edit": ("Применить правку", "Apply edit"),
     "send_to_edit": ("Отправить в редактор", "Send to editor"),
     "send_to_references": ("Отправить в референсы", "Send to references"),
@@ -349,21 +360,38 @@ MESSAGES: dict[str, tuple[str, str]] = {
     ),
     "edit_needs_prompt": (
         "Опишите правку в поле «Промт»: модель правит изображение по инструкции, "
-        "без неё ей нечего делать. После расширения холста опишите всю картину "
-        "целиком — с пустым промтом новая площадь выходит прозрачной.",
+        "без неё ей нечего делать. Чтобы расширить кадр, промт не нужен — "
+        "кнопка «Расширить» в блоке «Расширить кадр».",
         "Describe the edit in the “Prompt” field: the model edits by instruction "
-        "and has nothing to do without one. After expanding the canvas, describe "
-        "the whole picture — with an empty prompt the new area comes out "
-        "transparent.",
+        "and has nothing to do without one. To extend the picture no prompt is "
+        "needed — use “Extend” under “Outpaint”.",
     ),
-    "canvas_expanded": (
-        "Холст расширен до {width}×{height}. В промте опишите всю желаемую картину "
-        "целиком, а не действие: «продолжи сцену» даст прозрачную заливку. "
-        "Кнопка «Описать изображение» составит описание за вас.",
-        "Canvas expanded to {width}×{height}. In the prompt, describe the whole "
-        "picture you want, not the action: “continue the scene” yields a "
-        "transparent fill. The “Describe image” button will write the "
-        "description for you.",
+    "outpaint_done": (
+        "Кадр расширен до {width}×{height}. {seeds}. {memory}",
+        "Picture extended to {width}×{height}. {seeds}. {memory}",
+    ),
+    "outpaint_same": (
+        "Кадр уже такого соотношения сторон — расширять нечего",
+        "The picture already has this aspect ratio — nothing to extend",
+    ),
+    "outpaint_too_far": (
+        "Кадр растёт больше чем на свой размер в сторону — может выйти вторая сцена; "
+        "чище — в два шага",
+        "The picture grows by more than its own size on a side — a second scene may appear; "
+        "two steps give a cleaner result",
+    ),
+    "outpaint_downloading": (
+        "Скачиваю лору расширения кадра (159 МБ) — один раз…",
+        "Downloading the outpaint LoRA (159 MB) — once…",
+    ),
+    "outpaint_download_failed": (
+        "Лора расширения кадра не скачалась: {error}. Проверьте сеть и повторите.",
+        "The outpaint LoRA did not download: {error}. Check the network and try again.",
+    ),
+    "outpaint_described": ("Сцену описала языковая модель", "The language model described the scene"),
+    "outpaint_describe_failed": (
+        "Сцену описать не удалось ({error}) — расширяю без описания",
+        "Could not describe the scene ({error}) — extending without a description",
     ),
     "edit_interrupted": ("Правка прервана", "Edit interrupted"),
     "pose_default_title": ("Моя поза {number}", "My pose {number}"),

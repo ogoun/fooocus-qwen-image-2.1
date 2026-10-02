@@ -213,7 +213,7 @@ def _event(demo, name):
     raise AssertionError(f"обработчик {name} не найден")
 
 
-@pytest.mark.parametrize("name", ["run", "describe", "expand_canvas"])
+@pytest.mark.parametrize("name", ["run", "describe", "extend"])
 def test_every_event_that_needs_the_mask_takes_it_fresh_and_first(name):
     """Кисть синхронизирует значение с задержкой; кнопка обязана забрать свежее.
 

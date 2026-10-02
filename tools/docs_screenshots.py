@@ -165,6 +165,39 @@ def language_model_reachable() -> bool:
     return True
 
 
+OUTPAINT_SOURCE = "showcase-fox.png"
+OUTPAINT_RATIO = "16:9"
+
+
+def shoot_outpaint(browser, url, outputs, wait_for_output, shot) -> None:
+    """Расширение кадра: квадратная акварель до 16:9 одной кнопкой «Extend»."""
+    import ui_check as u
+
+    print("outpaint:")
+    # Выше обычного: в кадр должны войти и кисть, и результат, и блок расширения.
+    page, _ = u.fresh_page(browser, url, 1920, 1500)
+    u.open_tab(page, 1)
+    source = WORK / OUTPAINT_SOURCE
+    u.load_into_painter(page, source)
+    for item in page.get_by_label(LOW, exact=True).all():
+        if item.is_visible():
+            item.check()
+            break
+    page.get_by_text("Outpaint", exact=True).first.click()
+    page.wait_for_timeout(500)
+    page.locator("input[aria-label='To an aspect ratio']:visible").first.click()
+    page.get_by_role("option", name=OUTPAINT_RATIO, exact=True).first.click()
+    page.wait_for_timeout(300)
+    before = outputs()
+    u.click_text(page, "Extend")
+    widened = wait_for_output(before, page, timeout=1200)
+    assert Image.open(widened).width / Image.open(widened).height > 1.7, "the picture did not widen"
+    page.evaluate("() => window.scrollTo(0, 0)")
+    shot(page, "outpaint")
+    save_doc_image(side_by_side([Image.open(source), Image.open(widened)], height=520), "outpaint-result")
+    page.close()
+
+
 def phase_ui(mask_box: tuple[float, float, float, float]) -> None:
     import ui_check as u
     from playwright.sync_api import sync_playwright
@@ -323,32 +356,8 @@ def phase_ui(mask_box: tuple[float, float, float, float]) -> None:
         save_doc_image(side_by_side([Image.open(source), Image.open(annotated)]), "edit-annotation-result")
         page.close()
 
-        # Расширение холста: исходник и результат.
-        print("outpaint:")
-        page, _ = u.fresh_page(browser, url, 1920, 1080)
-        u.open_tab(page, 1)
-        source = WORK / "showcase-storefront.png"
-        width = u.load_into_painter(page, source)["width"]
-        visible(page.get_by_label(LOW, exact=True)).check()
-        page.get_by_text("Outpaint", exact=True).first.click()
-        page.wait_for_timeout(500)
-        page.get_by_label("←", exact=True).check()
-        page.get_by_label("→", exact=True).check()
-        page.get_by_role("button", name="Outpaint", exact=True).last.click()
-        page.wait_for_function(f"() => {u.API}.state().width > {width}", timeout=30000)
-        page.wait_for_timeout(1000)
-        # Описание всей сцены, а не операции: так и советует строка состояния.
-        visible(page.locator("textarea")).fill(
-            'a quiet city street corner at dusk in the rain, a small coffee shop with a glowing neon '
-            'sign that reads "QWEN CAFE", old brick buildings and bare trees along the wet street, '
-            "warm window light reflected on the pavement, photorealistic"
-        )
-        before = outputs()
-        u.click_text(page, "Apply edit")
-        widened = wait_for_output(before, page)
-        assert Image.open(widened).width / Image.open(widened).height > 1.6, "the canvas did not widen"
-        save_doc_image(side_by_side([Image.open(source), Image.open(widened)], height=520), "outpaint-result")
-        page.close()
+        # Расширение кадра одной кнопкой: интерфейс и «до | после».
+        shoot_outpaint(browser, url, outputs, wait_for_output, shot)
 
         # Галерея с карточкой параметров.
         print("gallery:")
@@ -372,6 +381,42 @@ def phase_ui(mask_box: tuple[float, float, float, float]) -> None:
         shot(page, "settings")
         page.close()
 
+        browser.close()
+    print(f"done; working files: {WORK.relative_to(ROOT)}")
+
+
+def phase_outpaint() -> None:
+    """Только расширение кадра — без остальных снимков (их фаза ``ui``)."""
+    import ui_check as u  # noqa: F401 — тот же набор помощников, что у фазы ui
+    from playwright.sync_api import sync_playwright
+
+    from fooocus_qwen.ui import app
+
+    demo, studio = app.start(config.AppConfig(host="127.0.0.1", port=PORT, lang="en", preload=False))
+    studio.generator  # noqa: B018 — модель грузится до первого снимка
+    url = f"http://127.0.0.1:{PORT}/"
+
+    def outputs() -> int:
+        return len(list(config.OUTPUT_DIR.rglob("*.png")))
+
+    def wait_for_output(before: int, page, timeout: float = 900) -> Path:
+        deadline = time.time() + timeout
+        while time.time() < deadline and outputs() <= before:
+            page.wait_for_timeout(1000)
+        if outputs() <= before:
+            raise TimeoutError("no result appeared")
+        page.wait_for_timeout(2500)
+        return max(config.OUTPUT_DIR.rglob("*.png"), key=lambda p: p.stat().st_mtime)
+
+    def shot(page, name: str) -> None:
+        page.wait_for_timeout(800)
+        path = WORK / f"{name}.raw.png"
+        page.screenshot(path=str(path))
+        save_doc_image(Image.open(path), name)
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=True)
+        shoot_outpaint(browser, url, outputs, wait_for_output, shot)
         browser.close()
     print(f"done; working files: {WORK.relative_to(ROOT)}")
 
@@ -452,7 +497,7 @@ def phase_loras() -> None:
 def main() -> int:
     use_utf8_console()
     parser = argparse.ArgumentParser(description="Screenshots and examples for the README")
-    parser.add_argument("--phase", choices=["showcase", "ui", "loras"], required=True)
+    parser.add_argument("--phase", choices=["showcase", "ui", "loras", "outpaint"], required=True)
     parser.add_argument("--mask", type=float, nargs=4, default=(0.68, 0.64, 0.92, 0.86),
                         metavar=("X0", "Y0", "X1", "Y1"), help="mask area on the mug frame, as fractions")
     args = parser.parse_args()
@@ -462,6 +507,8 @@ def main() -> int:
         phase_showcase()
     elif args.phase == "loras":
         phase_loras()
+    elif args.phase == "outpaint":
+        phase_outpaint()
     else:
         phase_ui(tuple(args.mask))
     return 0

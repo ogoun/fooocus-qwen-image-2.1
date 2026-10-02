@@ -27,6 +27,8 @@ TE_INT8_DIR = PROJECT_ROOT / "Qwen-Image-2.1-TE-INT8"
 # Распознавание позы на фотографии (DWPose, ONNX, 350 МБ) — для плитки
 # «Добавить позу»; качает установка (--fetch-model).
 DWPOSE_DIR = PROJECT_ROOT / "DWPose"
+# Лора расширения кадра (outpaint) — качается при первом расширении.
+OUTPAINT_DIR = PROJECT_ROOT / "Qwen-Image-2.1-outpaint"
 # Пользовательские LoRA (``*.safetensors``) — как ``models/loras`` у Fooocus.
 # Ключ ``--lora-dir`` указывает другой каталог, например каталог ComfyUI.
 LORA_DIR = PROJECT_ROOT / "loras"

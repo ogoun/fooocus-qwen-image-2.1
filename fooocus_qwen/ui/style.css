@@ -501,6 +501,22 @@ footer { display: none !important; }
        порядок. Без этого на FHD «Применить правку» уезжала за нижний край:
        под кистью стоял результат, а промт — ещё ниже. */
     .qs-boards { display: contents !important; }
+    /* В столбце высота строки «сетка + кисть» задаётся явно. Иначе она
+       выводилась по кругу — высота кисти из её ширины (пропорция), ширина
+       из колонки, высота колонки из кисти, — и браузер разрывал круг
+       заниженным значением: на окне 1920×1500 колонка выходила 800 px при
+       кисти в 1100, и кисть с сеткой уезжали под строку промта (снимок для
+       README). Высота — та же пропорция 5:6 от ширины, оставшейся кисти
+       (окно минус панель, отступы и сетка), в пределах потолка по окну. */
+    .qs-slot-editor, .qs-slot-result { flex: 0 0 auto !important; }
+    .qs-slot-editor > .qs-resultrow {
+        flex: 0 0 auto !important;
+        height: clamp(
+            var(--qs-board-min),
+            calc((100vw - var(--qs-side-width) - 160px - var(--qs-refs-width)) * 6 / 5),
+            var(--qs-board-max)
+        ) !important;
+    }
     .qs-slot-editor { order: 1 !important; }
     .qs-slot-prompt { order: 2 !important; }
     .qs-slot-actions { order: 3 !important; }
