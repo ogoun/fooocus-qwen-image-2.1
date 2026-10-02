@@ -243,7 +243,11 @@ The installer:
    `Qwen-Image-2.1-GGUF/`. On cards under 20 GB the INT8 copy of the text
    encoder is built here once (`Qwen-Image-2.1-TE-INT8/`, 8.4 GiB, about
    20 s). The pose recognition weights (DWPose, 350 MB) go to `DWPose/` in the
-   same step;
+   same step. Extras download on first use instead, with a progress line: the
+   Turbo adapter, the Turbo4 transformer and the outpaint LoRA (159 MB,
+   `Qwen-Image-2.1-outpaint/`). If a chosen precision needs a package the
+   environment lacks (GGUF needs `gguf`), it is installed from
+   `requirements.txt` before the weights;
 6. **asks for the language model address and token** for AI boost and tests
    the connection. Press Enter to skip: everything except AI boost and
    *Describe image* works without it;
