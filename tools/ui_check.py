@@ -401,6 +401,56 @@ def scenario_outpaint(browser, url, report: Report, fake: FakeGenerator, samples
     page.close()
 
 
+def scenario_crop(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
+    """Кадрирование в кисти правки: рамка мышью, обрезка, новый исходник, Ctrl+Z."""
+    print("crop in the editor:")
+    page, errors = fresh_page(browser, url)
+    open_tab(page, 1)
+    load_into_painter(page, sample_image(samples, 1200, 800))
+    stroke(page, [(0.3, 0.3), (0.4, 0.4)])  # разметка обязана пережить обрезку
+    page.locator(f"#{PAINTER} [data-act='crop']").first.click()
+    page.wait_for_timeout(300)
+    state = painter_state(page)
+    report.check(state["crop"] == {"x": 0, "y": 0, "w": 1200, "h": 800}, f"the frame starts as the whole picture: {state['crop']}")
+
+    # Правый нижний угол — к середине: рамка 600×400 от левого верхнего.
+    handle = page.locator(f"#{PAINTER} .qp-crop-handle[data-h='se']").first.bounding_box()
+    rect = image_rect(page)
+    page.mouse.move(handle["x"] + handle["width"] / 2, handle["y"] + handle["height"] / 2)
+    page.mouse.down()
+    page.mouse.move(rect["x"] + rect["width"] * 0.5, rect["y"] + rect["height"] * 0.5, steps=15)
+    page.mouse.up()
+    crop = painter_state(page)["crop"]
+    report.check(abs(crop["w"] - 600) <= 4 and abs(crop["h"] - 400) <= 4, f"dragging the corner resizes the frame: {crop}")
+    shot = samples.parent / "crop.png"
+    page.screenshot(path=str(shot))
+    print(f"  screenshot: {shot}")
+
+    page.locator(f"#{PAINTER} [data-act='cropApply']").first.click()
+    page.wait_for_function(f"() => {API}.state().width < 1200 && !{API}.state().uploading && {API}.state().source", timeout=20000)
+    state = painter_state(page)
+    report.check(abs(state["width"] - 600) <= 4 and abs(state["height"] - 400) <= 4 and state["crop"] is None,
+                 f"the picture is cropped: {state['width']}×{state['height']}")
+
+    before = len(fake.requests)
+    apply_edit(page)
+    request = fake.wait(before + 1)
+    report.check(request.source.size == (state["width"], state["height"]) and request.mask is not None,
+                 f"the cropped picture is what the model gets, marks kept: {request.source.size}")
+
+    page.locator(f"#{PAINTER} .qp-stage").first.hover()
+    page.keyboard.press("Control+z")
+    page.wait_for_function(f"() => {API}.state().width === 1200", timeout=10000)
+    report.check(True, "Ctrl+Z brings the original back")
+
+    # Пропорция: 16:9 из кадра 3:2 — наибольшая рамка по центру.
+    page.evaluate(f"() => {API}.crop(null, '16:9')")
+    page.wait_for_function(f"() => {API}.state().height === 675 && !{API}.state().uploading", timeout=20000)
+    report.check(painter_state(page)["width"] == 1200, "a 16:9 frame takes the largest centred area")
+    report.check(not errors, "no page errors" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
 def scenario_latency(browser, url, report: Report, samples: Path) -> None:
     """Длинный мазок на кадре 4K при плотности экрана 2x: стоимость движения не растёт.
 
@@ -1508,6 +1558,7 @@ def main() -> int:
         "painter": lambda b, r: scenario_painter(b, url, r, fake, samples),
         "annotation": lambda b, r: scenario_annotation(b, url, r, fake, samples),
         "outpaint": lambda b, r: scenario_outpaint(b, url, r, fake, samples),
+        "crop": lambda b, r: scenario_crop(b, url, r, fake, samples),
         "latency": lambda b, r: scenario_latency(b, url, r, samples),
         "paste": lambda b, r: scenario_paste(b, url, r),
         "gallery": lambda b, r: scenario_gallery(b, url, r, fake, samples),

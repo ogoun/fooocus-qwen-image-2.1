@@ -60,7 +60,7 @@ down to an 8 GB laptop.
   **Extend** — the picture grows with a seamless continuation, the original
   pixels pasted back untouched. An outpaint LoRA keeps the picture in place;
   no mask, no second step, the prompt is optional.
-- **A responsive mask brush** with size, eraser, undo/redo, zoom, pan,
+- **A responsive mask brush** with size, eraser, undo/redo, zoom, pan, lossless crop,
   clipboard paste and touch support. Stroke cost stays constant — no lag on
   4K images (the stock Gradio editor's strokes slowed from 16.7 to 44 ms per
   move on a long stroke).
@@ -463,6 +463,7 @@ reads a grey edge as “make this transparent”.
 | fit to view | toolbar | F or 0 |
 | show / hide marks | eye button | H |
 | invert / clear marks | toolbar | — |
+| crop the picture | crop button: drag the frame, its corners or edges, pick proportions, ✓ or double-click | C, Enter, Esc; Ctrl+Z restores the original |
 
 Load an image by dropping it on the brush, with the **+** button, with
 **Ctrl+V** while the pointer is over the canvas, or with **Open in editor** in

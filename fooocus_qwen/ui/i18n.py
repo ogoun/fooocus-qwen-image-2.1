@@ -236,6 +236,17 @@ PAINTER: dict[str, tuple[str, str]] = {
     "painter_load_failed": ("Не удалось открыть изображение", "Could not open the image"),
     "painter_region_none": ("В режиме «Без области» правится весь кадр — разметка не используется",
                             "In “No region” mode the whole frame is edited — the marks are not used"),
+    "painter_crop": ("Кадрировать (C)", "Crop (C)"),
+    "painter_crop_apply": ("Применить кадр (Enter)", "Apply the crop (Enter)"),
+    "painter_crop_cancel": ("Отменить кадрирование (Esc)", "Cancel cropping (Esc)"),
+    "painter_crop_ratio": ("Пропорции рамки", "Frame proportions"),
+    "painter_crop_free": ("Свободно", "Free"),
+    "painter_crop_original": ("Как у исходника", "Original"),
+    "painter_crop_hint": ("Тяните рамку или её углы · двойной щелчок или Enter — обрезать · "
+                          "Esc — отмена · Ctrl+Z после обрезки вернёт исходник",
+                          "Drag the frame or its corners · double-click or Enter — crop · "
+                          "Esc — cancel · Ctrl+Z after cropping brings the original back"),
+    "painter_cropped": ("Кадр обрезан до {w}×{h}", "Cropped to {w}×{h}"),
 }
 
 

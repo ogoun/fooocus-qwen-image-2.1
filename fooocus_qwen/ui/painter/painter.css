@@ -260,3 +260,80 @@
 @media (prefers-reduced-motion: reduce) {
     .qp-layer { transition: none; }
 }
+
+/* --- кадрирование ---------------------------------------------------------- */
+
+/* Рамка — поверх холста в экранных координатах: вне её кадр затемнён, внутри
+   — сетка третей, по краям — ручки. Сам слой событий не ловит: их ловит
+   сцена, а ручки — свои, чтобы знать, за какую тянут. */
+.qp-stage[data-cropping="true"] { cursor: crosshair; }
+.qp-crop {
+    position: absolute;
+    inset: 0;
+    overflow: hidden;
+    pointer-events: none;
+}
+.qp-crop-box {
+    position: absolute;
+    /* Тень, а не четыре полосы: затемняет всё вне рамки одним свойством. Не
+       больше нескольких тысяч пикселей — слишком широкую браузер не рисует. */
+    box-shadow: 0 0 0 6000px rgba(0, 0, 0, 0.55);
+    outline: 1px solid #ffffff;
+    background-image:
+        linear-gradient(to right, transparent calc(33.33% - 0.5px), rgba(255, 255, 255, 0.45) calc(33.33% - 0.5px),
+                        rgba(255, 255, 255, 0.45) calc(33.33% + 0.5px), transparent calc(33.33% + 0.5px),
+                        transparent calc(66.66% - 0.5px), rgba(255, 255, 255, 0.45) calc(66.66% - 0.5px),
+                        rgba(255, 255, 255, 0.45) calc(66.66% + 0.5px), transparent calc(66.66% + 0.5px)),
+        linear-gradient(to bottom, transparent calc(33.33% - 0.5px), rgba(255, 255, 255, 0.45) calc(33.33% - 0.5px),
+                        rgba(255, 255, 255, 0.45) calc(33.33% + 0.5px), transparent calc(33.33% + 0.5px),
+                        transparent calc(66.66% - 0.5px), rgba(255, 255, 255, 0.45) calc(66.66% - 0.5px),
+                        rgba(255, 255, 255, 0.45) calc(66.66% + 0.5px), transparent calc(66.66% + 0.5px));
+    cursor: move;
+    /* Ловит события сам — ради курсора «двигать» и двойного щелчка; нажатие
+       всплывает к сцене, и та решает, что делать. */
+    pointer-events: auto;
+}
+.qp-crop-box::after {
+    content: attr(data-size);
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    padding: 2px 6px;
+    border-radius: 4px;
+    background: rgba(0, 0, 0, 0.6);
+    color: #ffffff;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+.qp-crop-handle {
+    position: absolute;
+    width: 14px;
+    height: 14px;
+    transform: translate(-50%, -50%);
+    border: 1px solid #333333;
+    border-radius: 3px;
+    background: #ffffff;
+    pointer-events: auto;
+}
+.qp-crop-handle[data-h="nw"] { left: 0; top: 0; cursor: nwse-resize; }
+.qp-crop-handle[data-h="n"] { left: 50%; top: 0; cursor: ns-resize; }
+.qp-crop-handle[data-h="ne"] { left: 100%; top: 0; cursor: nesw-resize; }
+.qp-crop-handle[data-h="e"] { left: 100%; top: 50%; cursor: ew-resize; }
+.qp-crop-handle[data-h="se"] { left: 100%; top: 100%; cursor: nwse-resize; }
+.qp-crop-handle[data-h="s"] { left: 50%; top: 100%; cursor: ns-resize; }
+.qp-crop-handle[data-h="sw"] { left: 0; top: 100%; cursor: nesw-resize; }
+.qp-crop-handle[data-h="w"] { left: 0; top: 50%; cursor: ew-resize; }
+/* С заданной пропорцией тянут только за углы: край её бы ломал. */
+.qp-crop[data-locked="true"] .qp-crop-handle:is([data-h="n"], [data-h="e"], [data-h="s"], [data-h="w"]) { display: none; }
+
+.qp-crop-ratio {
+    height: 32px;
+    padding: 0 6px;
+    border: 1px solid var(--qp-border);
+    border-radius: var(--qp-radius);
+    background: var(--qp-panel);
+    color: var(--qp-text);
+    font: inherit;
+}
+
