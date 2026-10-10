@@ -204,8 +204,8 @@ Settings tab.
 | Video memory | Precision (installer default) | Memory profile (*Auto*) | Start with |
 |---|---|---|---|
 | 20 GB and more | bf16 (INT8 frees 6.5 GiB for references) | high | Qwen Turbo HD, Medium |
-| 12–20 GB | INT8 | low | Low, Turbo |
-| 10–12 GB | GGUF Q8_0 | low | Low, Turbo |
+| 12–20 GB | INT8 | low | Qwen Turbo, Low, Turbo |
+| 10–12 GB | GGUF Q8_0 | low | Qwen Turbo, Low, Turbo |
 | 8 GB | GGUF Q4_K_M | low | Qwen Turbo, Turbo4, Low |
 | 6 GB (not tested) | GGUF Q4_K_S or Q3_K_M | low | Draft, Turbo |
 
@@ -330,15 +330,19 @@ are what `--preset`, saved prompts and the PNG parameters use.
 | Medium (MiddleQuality) | 1536 px | 28 | ~93 s | 215.4 s |
 | Maximum, 2K (MaxQuality) | 2048 px | 40 | ~283 s | |
 
-<sub>* Turbo4 against Turbo on the same laptop: 19.3 s and 28.7 s for a cached prompt.</sub>
+<sub>RTX 3090 column: bf16 with standard attention; Draft — INT8 with
+SageAttention; the Qwen Turbo rows — bf16 with SageAttention (Medium with
+SageAttention: ~77 s). * Turbo4 against Turbo on the same laptop: 19.3 s and
+28.7 s for a cached prompt.</sub>
 
 **Qwen Turbo, Qwen Turbo HD, Qwen Turbo 2K** run
 [Qwen-Image-2.1-Turbo](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo), the
 official fast checkpoint from Qwen: 8 steps, no CFG, its own schedule. Unlike
 the Viggle LoRA it stays clean at any size — the 8-pixel grid at 1536 and
 2048 px is at the level of the full model — so it is the fast way to a large
-picture: HD is three times faster than Medium, 2K six times faster than
-Maximum. Only its transformer differs from the main model (the text encoder
+picture: HD is three times faster than Medium (25 s against 77 s, both with
+SageAttention), 2K takes under a minute against ~4.7 minutes for Maximum.
+Only its transformer differs from the main model (the text encoder
 and VAE were checked tensor by tensor), so only the transformer is
 downloaded on first use, matching your precision: the bf16 checkpoint
 (13.6 GB) on bf16, a GGUF of the same level
@@ -390,6 +394,22 @@ video memory and more visible quality loss):
 - **GGUF Q8_0 … Q3_K_M** — [Unsloth's GGUF weights](https://huggingface.co/unsloth/Qwen-Image-2.1-GGUF),
   6.6 down to 2.7 GiB; Q4_K_M (3.9 GiB) is the choice for 6–8 GB cards,
   Q4_K_S a fallback if memory runs out, Q3_K_M a last resort with visible loss.
+
+**Precision applies to every preset**, not to one model: the preset picks
+which transformer runs and how many steps, the precision picks the form
+its weights take.
+
+| Precision | Low / Medium / Maximum, Turbo, Draft | Qwen Turbo, HD, 2K | Turbo4 |
+|---|---|---|---|
+| bf16 | main model, bf16 | Qwen's bf16 checkpoint | always GGUF Q4_K_M |
+| INT8 | main model, INT8 | GGUF Q8_0 (no official INT8; Q8_0 is as large and nearly lossless) | always GGUF Q4_K_M |
+| GGUF Qx | main model, same variant | same variant | always GGUF Q4_K_M |
+
+Turbo and Draft are an adapter on top of the main model, so they follow its
+precision. The Qwen Turbo transformer has the main model's architecture, so
+the memory figures above hold for it as well; text encoder and VAE are
+shared. To compare presets fairly keep one precision: on bf16 both sides
+run on the original weights.
 
 *Apply precision* downloads the missing weights (with a progress bar) and
 reloads the model. **SageAttention** switches on the fly; the checkbox is
@@ -573,6 +593,8 @@ Measured on an RTX 3090 (24 GB); median of steady-state runs:
 | MiddleQuality + 1 reference | 123.9 s | 21.0 GiB |
 | Turbo, 1280×832 | 10.4 s | 16.8 GiB |
 | Turbo + SageAttention on INT8, 1280×832 | 10.0 s | **10.4 GiB** |
+| Qwen Turbo HD + SageAttention, 1536 px | ~25 s | |
+| Qwen Turbo 2K + SageAttention, 2048 px | ~49 s | |
 | Model load | 33.8 s | |
 
 Turbo figures are for a cached prompt; a new prompt adds ~1.5 s and a 17 GiB
