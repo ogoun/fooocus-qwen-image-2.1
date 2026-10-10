@@ -45,6 +45,8 @@ LANGUAGES = ("ru", "en")
 
 T: dict[str, tuple[str, str]] = {
     "app_title": ("Qwen-Image-2.1 — студия", "Qwen-Image-2.1 Studio"),
+    # Страница входа Gradio (``--username``/``--password``).
+    "auth_message": ("Войдите, чтобы открыть студию.", "Sign in to open the studio."),
     "tab_generate": ("Генерация", "Generate"),
     "tab_edit": ("Редактирование", "Edit"),
     "tab_gallery": ("Галерея", "Gallery"),

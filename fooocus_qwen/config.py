@@ -8,7 +8,8 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, field
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -63,6 +64,11 @@ PRESET_NAMES = (
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 7865
 
+# Секреты можно передать и окружением: аргументы командной строки видны в
+# списке процессов всем пользователям машины, переменные окружения — нет.
+ENV_PASSWORD = "FOOOCUS_QWEN_PASSWORD"
+ENV_API_TOKEN = "FOOOCUS_QWEN_API_TOKEN"
+
 
 @dataclass(frozen=True)
 class AppConfig:
@@ -78,6 +84,19 @@ class AppConfig:
     open_browser: bool = False
     model_dir: Path = MODEL_DIR
     lora_dir: Path = LORA_DIR
+    # Только API, без интерфейса (``--api``, ``fooocus_qwen/api``).
+    api: bool = False
+    # Вход в интерфейс (``--username``/``--password``) и токен API
+    # (``--api-token``); ``None`` — без защиты. Секреты не печатаются в repr:
+    # конфигурация попадает в журнал при отладке.
+    username: str | None = None
+    password: str | None = field(default=None, repr=False)
+    api_token: str | None = field(default=None, repr=False)
+
+    @property
+    def auth(self) -> tuple[str, str] | None:
+        """Пара для ``gr.Blocks.launch(auth=...)`` или ``None``."""
+        return (self.username, self.password) if self.username and self.password else None
 
 
 def user_pose_dir() -> Path:
@@ -141,6 +160,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="do not open a browser at startup",
     )
     parser.set_defaults(open_browser=False)
+    # Режим API: только HTTP API (FastAPI), без интерфейса. Одинарный дефис —
+    # тоже: так ключ записан в задании и так его наберут по памяти.
+    parser.add_argument(
+        "--api", "-api",
+        dest="api",
+        action="store_true",
+        help="run only the HTTP API, without the web UI (see docs/API.md)",
+    )
+    parser.add_argument("--username", help="login for the web UI (needs --password)")
+    parser.add_argument(
+        "--password",
+        help=f"password for the web UI; safer in the {ENV_PASSWORD} environment variable",
+    )
+    parser.add_argument(
+        "--api-token",
+        dest="api_token",
+        help=f"Bearer token required by the API; safer in the {ENV_API_TOKEN} environment variable",
+    )
     parser.add_argument("--prompt", help="generate a single image without the interface and exit")
     parser.add_argument("--out", help="where to save the --prompt result")
     parser.add_argument("--selftest", action="store_true", help="check that the environment is ready and exit")
@@ -169,8 +206,20 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _secret(given: str | None, variable: str) -> str | None:
+    """Ключ командной строки, иначе переменная окружения; пустая строка — нет секрета."""
+    value = given if given is not None else os.environ.get(variable)
+    return value or None
+
+
 def parse_args(argv: list[str] | None = None) -> AppConfig:
-    args = build_parser().parse_args(argv)
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    password = _secret(args.password, ENV_PASSWORD)
+    # Половина пары — почти наверняка ошибка: молча запустить интерфейс
+    # открытым, когда человек думал, что закрыл его, хуже отказа.
+    if bool(args.username) != bool(password):
+        parser.error(f"--username and --password (or {ENV_PASSWORD}) go together")
     return AppConfig(
         host=args.host,
         port=args.port,
@@ -181,4 +230,8 @@ def parse_args(argv: list[str] | None = None) -> AppConfig:
         verbose=args.verbose,
         open_browser=args.open_browser,
         lora_dir=args.lora_dir,
+        api=args.api,
+        username=args.username or None,
+        password=password,
+        api_token=_secret(args.api_token, ENV_API_TOKEN),
     )

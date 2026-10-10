@@ -294,12 +294,19 @@ def start(cfg: config.AppConfig, prepare=None) -> tuple[gr.Blocks, Studio]:
     # собственного сервера и диск, и GIL: на прогретом файловом кэше проверка
     # успевала, на холодном — нет, и запуск падал через раз. Лечит это не
     # таймаут, а порядок — сначала сервер отвечает на проверку, потом греем.
+    # Вход по логину и паролю (``--username``/``--password``) — штатный
+    # ``auth`` Gradio: страница входа, куки сессии; им же закрыт и
+    # собственный API Gradio (``/gradio_api``), через который ходит страница.
+    if cfg.auth:
+        LOGGER.info("UI login is required (user %s)", cfg.username)
     demo.launch(
         server_name=cfg.host,
         server_port=cfg.port,
         inbrowser=False,
         css=css,
         prevent_thread_lock=True,
+        auth=cfg.auth,
+        auth_message=pick("auth_message", cfg.lang) if cfg.auth else None,
     )
     return demo, studio
 

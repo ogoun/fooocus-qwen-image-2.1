@@ -71,6 +71,10 @@ down to an 8 GB laptop.
 - **Gallery** with each image's parameters stored inside the PNG: reuse them,
   send the image back to the editor, or restore parameters from any PNG file.
 - **Bilingual interface** (English / Russian), switchable at any time.
+- **HTTP API** (`--api`): everything the interface does — generate, edit,
+  outpaint, poses, AI boost, gallery, settings — as JSON calls with a job
+  queue and progress, protected by a Bearer token. The interface itself can
+  ask for a login and password. See [docs/API.md](docs/API.md).
 - **Careful with video memory**: on 24 GB the models take turns on the card
   whole; on 8 GB the transformer stays put while the text encoder, compressed
   to INT8, is lifted onto the card one layer at a time. Prompt embeddings are
@@ -288,7 +292,22 @@ Arguments are passed through to the application:
 | `--no-pin-memory` | don't pin the text encoder in RAM (saves 16+ GB, slower model swaps) |
 | `--verbose` | detailed log |
 | `--prompt "…" --out file.png` | one generation without the interface |
+| `--api` (or `-api`) | serve only the HTTP API, without the interface — see [docs/API.md](docs/API.md) |
+| `--api-token TOKEN` | Bearer token the API requires (or the `FOOOCUS_QWEN_API_TOKEN` environment variable) |
+| `--username NAME --password PASS` | ask for a login before the interface opens (the password can come from `FOOOCUS_QWEN_PASSWORD`) |
 | `--selftest` | check the environment and exit |
+
+### HTTP API
+
+```powershell
+.\run.ps1 --api --api-token "a-long-random-string"
+```
+
+starts only the API: `POST /api/v1/generate`, `/edit`, `/outpaint`, poses,
+AI boost, the gallery, saved prompts and settings, with interactive docs at
+`http://127.0.0.1:7865/docs`. Requests wait for the result by default; with
+`?wait=false` they return a job whose progress you can poll. The reference
+with examples is [docs/API.md](docs/API.md).
 
 ## Usage guide
 
@@ -591,6 +610,12 @@ Times include encoding a new prompt; repeating the same prompt is 2–4 s shorte
   git-ignored.
 - **Paths from the browser are not trusted**: the mask brush only accepts
   image paths inside Gradio's upload folder.
+- **Access control is opt-in.** The interface listens on your whole network
+  by default; `--username`/`--password` put a login in front of it, and the
+  API (`--api`) takes a Bearer token (`--api-token`). Both secrets can come
+  from environment variables instead of the command line, and neither is
+  written to the log. Beyond your local network, add HTTPS with a reverse
+  proxy. The API serves files only from the outputs folder.
 
 ## Project layout
 
@@ -603,6 +628,7 @@ fooocus_qwen/
   storage/     output folders by date
   poses/       OpenPose skeletons, pose recognition (DWPose), the pose library, pose tiles
   ui/          Gradio tabs, the mask brush (ui/painter/), reference tools, layout, translations
+  api/         the HTTP API (--api): FastAPI routes, job queue, Bearer token
 resources/     Fooocus styles, the Qwen system prompts, the "Add a pose" tile
 loras/         your LoRA files (git-ignored; --lora-dir points elsewhere)
 tools/         smoke test, benchmark, UI check, screenshot builder, experiments

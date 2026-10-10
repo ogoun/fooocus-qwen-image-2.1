@@ -22,6 +22,10 @@ opencv-python-headless>=4.10
 onnxruntime>=1.20
 
 gradio==6.5.1
+# Режим API (--api, fooocus_qwen/api): FastAPI и uvicorn — те же, на которых
+# стоит Gradio; названы явно, потому что API импортирует их напрямую.
+fastapi>=0.115
+uvicorn>=0.30
 
 # Пресет Turbo — адаптер LoRA к трансформеру: diffusers подключает его через peft.
 peft>=0.21

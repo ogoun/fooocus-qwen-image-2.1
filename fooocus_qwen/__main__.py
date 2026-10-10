@@ -1,7 +1,8 @@
-"""Точка входа. По умолчанию поднимает веб-интерфейс, с --selftest проверяет окружение."""
+"""Точка входа. По умолчанию поднимает веб-интерфейс, с --api — только HTTP API, с --selftest проверяет окружение."""
 
 from __future__ import annotations
 
+import logging
 import sys
 
 from . import config, logging_setup
@@ -240,11 +241,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.prompt:
         return generate_once(args)
 
-    # Модуль ui.app появляется в задаче 12; до неё запуск без --selftest и без
-    # --prompt упадёт на этом импорте, и это правильное поведение: интерфейса ещё нет.
+    cfg = config.parse_args(argv)
+    if cfg.api:
+        # Только API: интерфейс не собирается, вход в него не нужен.
+        if cfg.auth:
+            logging.getLogger(__name__).warning("--username/--password protect the web UI and are ignored with --api; "
+                                                "use --api-token")
+        from .api.server import run
+
+        run(cfg)
+        return 0
+
     from .ui.app import launch
 
-    cfg = config.parse_args(argv)
     launch(cfg)
     return 0
 

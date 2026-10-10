@@ -459,19 +459,34 @@ class Studio:
         ``boost.build_user_message``).
         """
         try:
-            client = self.llm_client()
-            key = (client.base_url, client.model)
-            result = boost.boost(
-                client, prompt, mode=mode, prompt_dir=config.SYSTEM_PROMPT_DIR,
-                references=references, send_images=key not in self._text_only_models, tags=tags,
-            )
+            result = self.boost_result(prompt, mode, references, tags)
         except (LlmError, FileNotFoundError, ValueError, OSError) as error:
             LOGGER.warning("AI boost failed: %s", error)
             return prompt, None, say("boost_failed", lang, error=error)
         if result.images_skipped:
-            self._text_only_models.add(key)
             return result.prompt, result.wh_ratio, say("boost_done_text_only", lang)
         return result.prompt, result.wh_ratio, say("boost_done", lang)
+
+    def boost_result(
+        self,
+        prompt: str,
+        mode: str,
+        references: list[Image.Image] | None = None,
+        tags: list[str] | None = None,
+    ) -> boost.BoostResult:
+        """Буст без строки состояния: ошибку языковой модели получает вызывающий (API отвечает 502).
+
+        Модель, не принявшая изображения, запоминается здесь — для обеих дорог.
+        """
+        client = self.llm_client()
+        key = (client.base_url, client.model)
+        result = boost.boost(
+            client, prompt, mode=mode, prompt_dir=config.SYSTEM_PROMPT_DIR,
+            references=references, send_images=key not in self._text_only_models, tags=tags,
+        )
+        if result.images_skipped:
+            self._text_only_models.add(key)
+        return result
 
     def describe_for_outpaint(self, canvas: Image.Image, lang: str) -> tuple[str, str]:
         """Сцена для расширения кадра словами, как подписи, на которых учили лору outpaint.
