@@ -135,9 +135,9 @@ class Studio:
         if self._generator is None:
             with self._lock:
                 if self._generator is None:
-                    from ..engine import fetch, loader
+                    from ..engine import fetch, loader, presets
                     from ..engine.generator import Generator
-                    from ..engine.turbo import Turbo4Transformer, TurboAdapter
+                    from ..engine.turbo import OfficialTurboTransformer, Turbo4Transformer, TurboAdapter
 
                     chosen = settings_module.load()
                     plan = self.weights_plan()
@@ -151,25 +151,33 @@ class Studio:
                         **plan.loader_arguments(),
                     )
                     turbo = TurboAdapter(pipe, residency, config.TURBO_DIR, light=plan.low)
-                    turbo4 = Turbo4Transformer(
-                        pipe, residency, config.GGUF_DIR / fetch.TURBO4_FILE, config.TURBO_DIR,
-                        self.config.model_dir,
-                        base_loader=loader.base_transformer_loader(
-                            self.config.model_dir, int8_file=plan.int8_file, gguf_file=plan.gguf_file
-                        ),
-                        # Механизм внимания — по настройке на момент подмены:
-                        # его меняют на лету, и подменённый должен следовать.
-                        prepare=lambda module: loader.prepare_transformer(
-                            module, settings_module.load().sage_attention, plan.policy, residency.device
-                        ),
-                        turbo=turbo,
+                    base_loader = loader.base_transformer_loader(
+                        self.config.model_dir, int8_file=plan.int8_file, gguf_file=plan.gguf_file
                     )
+
+                    # Механизм внимания — по настройке на момент подмены: его
+                    # меняют на лету, и подменённый трансформер должен следовать.
+                    def prepare(module):
+                        loader.prepare_transformer(
+                            module, settings_module.load().sage_attention, plan.policy, residency.device
+                        )
+
+                    swaps = {
+                        presets.TURBO4: Turbo4Transformer(
+                            pipe, residency, config.GGUF_DIR / fetch.TURBO4_FILE, config.TURBO_DIR,
+                            self.config.model_dir, base_loader, prepare, turbo=turbo,
+                        ),
+                        presets.TURBO_OFFICIAL: OfficialTurboTransformer(
+                            pipe, residency, plan.official_turbo_weights, config.TURBO_OFFICIAL_DIR,
+                            self.config.model_dir, base_loader, prepare, turbo=turbo,
+                        ),
+                    }
                     # Полосы шагов diffusers в интерфейсе не нужны: ход
                     # генерации рисует свой обратный вызов, а
                     # ``gr.Progress(track_tqdm=True)`` (ради полосы скачивания
                     # весов) подхватил бы и их, перебивая подпись.
                     pipe.set_progress_bar_config(disable=True)
-                    self._generator = Generator(pipe, residency, cache, self.catalogue, turbo=turbo, turbo4=turbo4)
+                    self._generator = Generator(pipe, residency, cache, self.catalogue, turbo=turbo, swaps=swaps)
                     self._residency = residency
                     self._cache = cache
         return self._generator
@@ -189,6 +197,12 @@ class Studio:
             if self.turbo4_weights_present():
                 return None
             message, fetch_weights = "turbo4_downloading", self.ensure_turbo4_weights
+        elif getattr(preset, "transformer", "") == presets.TURBO_OFFICIAL:
+            if self.official_turbo_weights_present():
+                return None
+            bf16 = self.weights_plan().official_turbo_variant is None
+            message = "official_turbo_downloading" if bf16 else "official_turbo_gguf_downloading"
+            fetch_weights = self.ensure_official_turbo_weights
         elif getattr(preset, "turbo", False) and not self.turbo_weights_present():
             message, fetch_weights = "turbo_downloading", self.ensure_turbo_weights
         else:
@@ -247,6 +261,18 @@ class Studio:
         from ..engine import fetch
 
         return fetch.ensure_turbo4(config.GGUF_DIR, config.TURBO_DIR)
+
+    def official_turbo_weights_present(self) -> bool:
+        from ..engine import fetch
+
+        plan = self.weights_plan()
+        return not fetch.official_turbo_missing(plan.official_turbo_weights, config.TURBO_OFFICIAL_DIR)
+
+    def ensure_official_turbo_weights(self) -> bool:
+        """Докачивает трансформер официального Turbo под выбранную точность. ``True`` — качалось."""
+        from ..engine import fetch
+
+        return fetch.ensure_official_turbo(config.TURBO_OFFICIAL_DIR, self.weights_plan().official_turbo_variant)
 
     def pose_detector(self):
         """Распознавание позы на фото — одно на процесс: сессии ONNX дороги в создании."""

@@ -6,7 +6,10 @@ from fooocus_qwen.engine import presets
 
 
 def test_quality_presets_ascend_and_turbo_comes_last():
-    assert presets.NAMES == ("LowQuality", "MiddleQuality", "MaxQuality", "Turbo", "TurboDraft", "Turbo4")
+    assert presets.NAMES == (
+        "LowQuality", "MiddleQuality", "MaxQuality", "Turbo", "TurboDraft", "Turbo4",
+        "QwenTurbo", "QwenTurboHD", "QwenTurbo2K",
+    )
     full = [name for name in presets.NAMES if not presets.get(name).turbo and not presets.get(name).transformer]
     resolutions = [presets.get(name).output_resolution for name in full]
     steps = [presets.get(name).num_inference_steps for name in full]
@@ -69,3 +72,11 @@ def test_turbo4_is_four_uniform_steps_on_its_own_transformer():
     arguments = turbo.call_arguments({"num_inference_steps": 16, "true_cfg_scale": 4.0, "negative_prompt": "x"}, turbo.SIGMAS4)
     assert arguments["sigmas"] == [1.0, 0.75, 0.5, 0.25]
     assert arguments["true_cfg_scale"] == 1.0 and arguments["negative_prompt"] is None
+
+
+def test_qwen_turbo_presets_are_the_official_checkpoint_at_three_sizes():
+    official = [presets.get(name) for name in ("QwenTurbo", "QwenTurboHD", "QwenTurbo2K")]
+    assert [preset.output_resolution for preset in official] == [1024, 1536, 2048]
+    assert all(preset.transformer == presets.TURBO_OFFICIAL and preset.num_inference_steps == 8
+               and preset.sigmas == presets.SIGMAS_OFFICIAL and not preset.turbo for preset in official)
+

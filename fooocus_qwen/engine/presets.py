@@ -23,12 +23,21 @@ class QualityPreset:
     # же шесть шагов, для прогресса и метаданных.
     turbo: bool = False
     # Отдельный трансформер вместо основного (``TURBO4`` — 4-шаговый
-    # дистиллят, влитый в веса, ``engine/turbo.py::Turbo4Transformer``).
-    # Пустая строка — основной.
+    # дистиллят Viggle, ``TURBO_OFFICIAL`` — Qwen-Image-2.1-Turbo;
+    # ``engine/turbo.py::SwapTransformer``). Пустая строка — основной.
     transformer: str = ""
+    # Свои узлы расписания — без CFG и негатива (``turbo.call_arguments``);
+    # пустой кортеж — штатное расписание полной модели.
+    sigmas: tuple[float, ...] = ()
 
 
 TURBO4 = "turbo4"
+TURBO_OFFICIAL = "turbo_official"
+# Узлы — здесь, а не в engine/turbo.py: пресеты читает интерфейс, и тянуть
+# ради кортежа модуль движка незачем.
+SIGMAS4: tuple[float, ...] = (1.0, 0.75, 0.5, 0.25)
+# Официальный Turbo: узлы из его ``model_index.json`` (``sample_sigmas``).
+SIGMAS_OFFICIAL: tuple[float, ...] = (1.0, 0.978453, 0.95418, 0.926626, 0.89508, 0.845148, 0.704534, 0.414568)
 
 
 PRESETS: dict[str, QualityPreset] = {
@@ -55,10 +64,26 @@ PRESETS: dict[str, QualityPreset] = {
     # Turbo. Надписи держит, правку — хуже Turbo: кадр уходит от исходника
     # (tools/experiments/lowvram_turbo4.py). Первый выбор и возврат с него —
     # подмена трансформера, на 8 ГБ — несколько секунд чтения с диска.
-    "Turbo4": QualityPreset("Turbo4", output_resolution=1024, num_inference_steps=4, transformer=TURBO4),
+    "Turbo4": QualityPreset("Turbo4", output_resolution=1024, num_inference_steps=4, transformer=TURBO4,
+                            sigmas=SIGMAS4),
+    # Официальный Qwen-Image-2.1-Turbo (Qwen, 2026-10-09): 8 шагов, CFG 1,
+    # свой трансформер, энкодер и VAE — основной модели. В отличие от лоры
+    # Viggle чист на любом размере: сетка 8 px на 1536 и 2048 на уровне
+    # полной модели. RTX 3090, bf16 + SageAttention: 1024 — 10–13 с, 1536 —
+    # ~25 с (Medium — 77), 2048 — ~49 с (Max — ~283)
+    # (tools/experiments/turbo_official.py, docs/research/2026-10-10-qwen-turbo.md).
+    "QwenTurbo": QualityPreset("QwenTurbo", output_resolution=1024, num_inference_steps=8,
+                               transformer=TURBO_OFFICIAL, sigmas=SIGMAS_OFFICIAL),
+    "QwenTurboHD": QualityPreset("QwenTurboHD", output_resolution=1536, num_inference_steps=8,
+                                 transformer=TURBO_OFFICIAL, sigmas=SIGMAS_OFFICIAL),
+    "QwenTurbo2K": QualityPreset("QwenTurbo2K", output_resolution=2048, num_inference_steps=8,
+                                 transformer=TURBO_OFFICIAL, sigmas=SIGMAS_OFFICIAL),
 }
 
-NAMES: tuple[str, ...] = ("LowQuality", "MiddleQuality", "MaxQuality", "Turbo", "TurboDraft", "Turbo4")
+NAMES: tuple[str, ...] = (
+    "LowQuality", "MiddleQuality", "MaxQuality", "Turbo", "TurboDraft", "Turbo4",
+    "QwenTurbo", "QwenTurboHD", "QwenTurbo2K",
+)
 DEFAULT = "MiddleQuality"
 
 

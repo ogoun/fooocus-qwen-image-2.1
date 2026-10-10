@@ -27,6 +27,12 @@ TE_INT8_DIR = PROJECT_ROOT / "Qwen-Image-2.1-TE-INT8"
 # Распознавание позы на фотографии (DWPose, ONNX, 350 МБ) — для плитки
 # «Добавить позу»; качает установка (--fetch-model).
 DWPOSE_DIR = PROJECT_ROOT / "DWPose"
+# Официальный Qwen-Image-2.1-Turbo: только трансформер (bf16 или GGUF в
+# подкаталоге ``gguf``), планировщик и узлы расписания — энкодер и VAE
+# берутся у основной модели. Качается при первом выборе пресета.
+# Имя — не «…-Turbo»: Windows не различает регистр, и это был бы каталог
+# адаптера Viggle «…-turbo» (так и случилось при первой загрузке).
+TURBO_OFFICIAL_DIR = PROJECT_ROOT / "Qwen-Image-2.1-TurboOfficial"
 # Лора расширения кадра (outpaint) — качается при первом расширении.
 OUTPAINT_DIR = PROJECT_ROOT / "Qwen-Image-2.1-outpaint"
 # Пользовательские LoRA (``*.safetensors``) — как ``models/loras`` у Fooocus.
@@ -49,7 +55,10 @@ LOG_DIR = PROJECT_ROOT / "logs"
 ENDPOINT_FILE = PROJECT_ROOT / "llm_endpoint.txt"
 SETTINGS_FILE = USER_DIR / "settings.json"
 
-PRESET_NAMES = ("LowQuality", "MiddleQuality", "MaxQuality", "Turbo", "TurboDraft", "Turbo4")
+PRESET_NAMES = (
+    "LowQuality", "MiddleQuality", "MaxQuality", "Turbo", "TurboDraft", "Turbo4",
+    "QwenTurbo", "QwenTurboHD", "QwenTurbo2K",
+)
 
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 7865

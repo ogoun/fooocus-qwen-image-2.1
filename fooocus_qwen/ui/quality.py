@@ -15,21 +15,30 @@ from __future__ import annotations
 
 from ..engine import presets
 
-ORDER: tuple[str, ...] = ("TurboDraft", "Turbo", "Turbo4", "LowQuality", "MiddleQuality", "MaxQuality")
+ORDER: tuple[str, ...] = (
+    "TurboDraft", "Turbo", "QwenTurbo", "Turbo4", "QwenTurboHD", "QwenTurbo2K",
+    "LowQuality", "MiddleQuality", "MaxQuality",
+)
 
 # (ru, en): как назвать и, если нужно, зачем выбирать.
 _TITLES: dict[str, tuple[str, str]] = {
     "TurboDraft": ("Черновик", "Draft"),
     "Turbo": ("Turbo", "Turbo"),
     "Turbo4": ("Turbo4", "Turbo4"),
+    "QwenTurbo": ("Qwen Turbo", "Qwen Turbo"),
+    "QwenTurboHD": ("Qwen Turbo HD", "Qwen Turbo HD"),
+    "QwenTurbo2K": ("Qwen Turbo 2K", "Qwen Turbo 2K"),
     "LowQuality": ("Низкое", "Low"),
     "MiddleQuality": ("Среднее", "Medium"),
     "MaxQuality": ("Максимальное, 2K", "Maximum, 2K"),
 }
 _NOTES: dict[str, tuple[str, str]] = {
     "TurboDraft": ("для перебора промтов и сидов", "for trying prompts and seeds"),
-    "Turbo": ("быстрый дистиллят", "fast distilled model"),
+    "Turbo": ("лора Viggle", "Viggle LoRA"),
     "Turbo4": ("быстрее всего на 8 ГБ, правка слабее", "fastest on 8 GB, weaker at editing"),
+    "QwenTurbo": ("официальная быстрая модель Qwen", "the official fast Qwen model"),
+    "QwenTurboHD": ("втрое быстрее «Среднего»", "three times faster than Medium"),
+    "QwenTurbo2K": ("2K в шесть раз быстрее «Максимального»", "2K six times faster than Maximum"),
 }
 
 

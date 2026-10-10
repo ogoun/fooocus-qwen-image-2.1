@@ -70,6 +70,22 @@ GGUF_REPO = "unsloth/Qwen-Image-2.1-GGUF"
 # (``imaging/outpaint.py``). Лицензия — та же, что у модели.
 OUTPAINT_REPO = "ausboss/Qwen-Image-2.1-Outpaint-LoRA"
 OUTPAINT_FILE = "qwen-image-2.1-outpaint-v2.safetensors"
+# Официальный Qwen-Image-2.1-Turbo (Qwen, 2026-10-09): 8 шагов, CFG 1, до
+# 2K. Энкодер и VAE у него те же, что у основной модели (сверено), поэтому
+# качается только трансформер: bf16 из репозитория Qwen (13.6 ГБ) или GGUF
+# того же уровня, что основная модель (Abiray, 3–7 ГБ). Планировщик и
+# ``model_index.json`` (узлы расписания) — маленькие, берутся всегда.
+OFFICIAL_TURBO_REPO = "Qwen/Qwen-Image-2.1-Turbo"
+OFFICIAL_TURBO_GGUF_REPO = "Abiray/Qwen-Image-2.1-Turbo-GGUF"
+OFFICIAL_TURBO_CONFIG = ("model_index.json", "scheduler/scheduler_config.json", "transformer/config.json")
+OFFICIAL_TURBO_SHARDS = (
+    "transformer/diffusion_pytorch_model.safetensors.index.json",
+    "transformer/diffusion_pytorch_model-00001-of-00002.safetensors",
+    "transformer/diffusion_pytorch_model-00002-of-00002.safetensors",
+)
+# GGUF лежат в своём подкаталоге: у Abiray файл Q4_K_M официального Turbo
+# называется так же, как файл Turbo4 из другого его репозитория.
+OFFICIAL_TURBO_GGUF_SUBDIR = "gguf"
 TURBO4_REPO = "Abiray/Qwen-Image-2.1-viggle-4-steps-turbo-GGUF"
 TURBO4_FILE = "qwen_image_2.1_turbo_Q4_K_M.gguf"
 # Шарды bf16-энкодера: без них модель работает на собранном INT8-энкодере.
@@ -258,6 +274,34 @@ def turbo4_missing(gguf_dir: Path, turbo_dir: Path) -> list[str]:
 def ensure_outpaint(directory: Path, downloader: Callable[..., object] | None = None) -> bool:
     """Лора outpaint. ``True`` — качалась."""
     return ensure_files(directory, OUTPAINT_REPO, (OUTPAINT_FILE,), downloader)
+
+
+def official_turbo_gguf(variant: str) -> str:
+    """Имя файла варианта у Abiray: ``Q4_K_M`` → ``qwen_image_2.1_turbo_Q4_K_M.gguf``."""
+    return f"qwen_image_2.1_turbo_{variant}.gguf"
+
+
+def official_turbo_missing(weights: Path, official_dir: Path) -> list[str]:
+    """Недостающие файлы официального Turbo: конфигурация и трансформер (``weights``)."""
+    official_dir, weights = Path(official_dir), Path(weights)
+    missing = missing_extra(official_dir, OFFICIAL_TURBO_CONFIG)
+    if weights.suffix == ".gguf":
+        return missing + missing_extra(weights.parent, (weights.name,))
+    return missing + missing_extra(official_dir, OFFICIAL_TURBO_SHARDS)
+
+
+def ensure_official_turbo(
+    official_dir: Path, gguf_variant: str | None = None, downloader: Callable[..., object] | None = None,
+) -> bool:
+    """Конфигурация официального Turbo и трансформер: bf16 (``gguf_variant=None``) или GGUF."""
+    official_dir = Path(official_dir)
+    fetched = ensure_files(official_dir, OFFICIAL_TURBO_REPO, OFFICIAL_TURBO_CONFIG, downloader)
+    if gguf_variant is None:
+        return ensure_files(official_dir, OFFICIAL_TURBO_REPO, OFFICIAL_TURBO_SHARDS, downloader) or fetched
+    return ensure_files(
+        official_dir / OFFICIAL_TURBO_GGUF_SUBDIR, OFFICIAL_TURBO_GGUF_REPO,
+        (official_turbo_gguf(gguf_variant),), downloader,
+    ) or fetched
 
 
 def ensure_turbo4(gguf_dir: Path, turbo_dir: Path, downloader: Callable[..., object] | None = None) -> bool:

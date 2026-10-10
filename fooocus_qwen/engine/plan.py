@@ -103,6 +103,27 @@ class WeightsPlan:
         return config.TE_INT8_DIR if self.low else None
 
     @property
+    def official_turbo_variant(self) -> str | None:
+        """Вариант GGUF официального Turbo под эту точность; ``None`` — bf16 из чекпоинта Qwen.
+
+        INT8 берёт Q8_0: свой INT8 у официального Turbo не выпущен, а Q8_0
+        почти без потерь и занимает столько же (7 ГБ).
+        """
+        if self.precision == settings_module.PRECISION_BF16:
+            return None
+        if self.precision == settings_module.PRECISION_INT8:
+            return "Q8_0"
+        return self.precision
+
+    @property
+    def official_turbo_weights(self) -> Path:
+        """Файл (GGUF) или каталог (bf16) трансформера официального Turbo."""
+        variant = self.official_turbo_variant
+        if variant is None:
+            return config.TURBO_OFFICIAL_DIR
+        return config.TURBO_OFFICIAL_DIR / fetch.OFFICIAL_TURBO_GGUF_SUBDIR / fetch.official_turbo_gguf(variant)
+
+    @property
     def turbo_files(self) -> tuple[str, ...]:
         """Файлы адаптера Turbo: в «low» — облегчённый, ранга 128."""
         return fetch.turbo_files(self.low)

@@ -95,6 +95,9 @@ def selftest() -> int:
         print("[ok ] pose detection: DWPose weights found")
     turbo_ready = not fetch.missing_extra(config.TURBO_DIR, plan.turbo_files)
     print("[ok ] Turbo: weights found" if turbo_ready else "[--] Turbo: weights will be downloaded when the preset is first selected")
+    official_ready = not fetch.official_turbo_missing(plan.official_turbo_weights, config.TURBO_OFFICIAL_DIR)
+    print("[ok ] Qwen-Image-2.1-Turbo: weights found" if official_ready
+          else "[--] Qwen-Image-2.1-Turbo: weights will be downloaded when the preset is first selected")
     turbo4_ready = not fetch.turbo4_missing(config.GGUF_DIR, config.TURBO_DIR)
     print("[ok ] Turbo4: weights found" if turbo4_ready else "[--] Turbo4: weights will be downloaded when the preset is first selected")
 

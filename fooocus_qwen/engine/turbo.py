@@ -33,7 +33,7 @@ import logging
 import warnings
 from pathlib import Path
 
-from . import fetch
+from . import fetch, presets
 
 LOGGER = logging.getLogger(__name__)
 
@@ -133,37 +133,38 @@ def call_arguments(arguments: dict, sigmas: tuple[float, ...] = SIGMAS) -> dict:
     return changed
 
 
-# --- Turbo4: 4-шаговый дистиллят на отдельном трансформере ---------------------------
+# --- пресеты на отдельном трансформере: Turbo4 и официальный Turbo -----------------
 
-# Равномерные узлы — расписание «simple» из карточки Abiray; сдвиг по
-# разрешению пайплайн применяет к ним сам, как и к узлам Turbo.
-SIGMAS4: tuple[float, ...] = (1.0, 0.75, 0.5, 0.25)
+# Узлы Turbo4 (равномерные, «simple» из карточки Abiray) и официального
+# Turbo (``sample_sigmas`` его ``model_index.json``: наш diffusers их оттуда
+# не читает — это PR #14950 — и они передаются явно) живут в пресетах.
+SIGMAS4 = presets.SIGMAS4
+SIGMAS_OFFICIAL = presets.SIGMAS_OFFICIAL
 
 
-class Turbo4Transformer:
-    """Пресет Turbo4: подменяет трансформер на 4-шаговый дистиллят и возвращает обратно.
+class SwapTransformer:
+    """Пресет на отдельном трансформере: подменяет основной и возвращает обратно.
 
-    Дистиллят влит в веса (``fetch.TURBO4_FILE``), поэтому это не адаптер, а
-    другой трансформер. Подмена — ``ResidencyManager.replace_transformer``:
-    на 24 ГБ основной откладывается на хост и возвращается без диска, на 8 ГБ
-    отпускается и читается заново (``base_loader``, несколько секунд).
-    ``prepare`` вешает на поставленный трансформер механизм внимания и
-    KV-кэш в ОЗУ — то же, что получил основной при загрузке; ``turbo`` —
-    адаптер Turbo, который надо забыть, если основной прочитан заново.
-
-    Замер на RTX 4060 Laptop 8 ГБ (``tools/experiments/lowvram_turbo4.py``):
-    19.3 с на кадр 1024² против 28.7 у Turbo и 62 у LowQuality; пик 5.7 ГиБ.
-    Надписи держит не хуже Turbo, правку — заметно хуже: кадр уходит от
-    исходника (``docs/research/2026-10-02-8-gb.md``).
+    Дистиллят, влитый в веса, — это не адаптер, а другой трансформер.
+    Подмена — ``ResidencyManager.replace_transformer``: на 24 ГБ основной
+    откладывается на хост и возвращается без диска, на 8 ГБ отпускается и
+    читается заново (``base_loader``, несколько секунд). ``prepare`` вешает
+    на поставленный трансформер механизм внимания и KV-кэш в ОЗУ — то же, что
+    получил основной при загрузке; ``turbo`` — адаптер Turbo, который надо
+    забыть, если основной прочитан заново. ``load(device)`` строит
+    трансформер пресета, ``scheduler()`` — его планировщик, ``missing()`` —
+    недостающие файлы.
     """
 
-    def __init__(self, pipe, residency, gguf_file: Path, turbo_dir: Path, model_dir: Path,
-                 base_loader, prepare, turbo: TurboAdapter | None = None) -> None:
+    name = "swap"
+
+    def __init__(self, pipe, residency, load, scheduler, missing, base_loader, prepare,
+                 turbo: TurboAdapter | None = None) -> None:
         self._pipe = pipe
         self._residency = residency
-        self._file = Path(gguf_file)
-        self._turbo_dir = Path(turbo_dir)
-        self._model_dir = Path(model_dir)
+        self._load = load
+        self._scheduler = scheduler
+        self._missing = missing
         self._base_loader = base_loader
         self._prepare = prepare
         self._turbo = turbo
@@ -176,26 +177,20 @@ class Turbo4Transformer:
         return self._active
 
     def weights_present(self) -> bool:
-        return not fetch.turbo4_missing(self._file.parent, self._turbo_dir)
+        return not self._missing()
 
     def activate(self, enabled: bool) -> None:
         if enabled == self._active:
             return
         if enabled:
-            from diffusers import FlowMatchEulerDiscreteScheduler
-
-            from . import gguf
-
-            missing = fetch.turbo4_missing(self._file.parent, self._turbo_dir)
+            missing = self._missing()
             if missing:
-                raise FileNotFoundError(f"Turbo4 weights missing: {', '.join(missing)}")
+                raise FileNotFoundError(f"{self.name} weights missing: {', '.join(missing)}")
             if self._turbo is not None:
                 self._turbo.activate(False)
-            LOGGER.info("Switching to the Turbo4 transformer %s", self._file.name)
-            scheduler = FlowMatchEulerDiscreteScheduler.from_pretrained(str(self._turbo_dir), subfolder="scheduler")
-            self._parked = self._residency.replace_transformer(
-                lambda device: gguf.load_transformer(self._model_dir, self._file, device=device)
-            )
+            LOGGER.info("Switching to the %s transformer", self.name)
+            scheduler = self._scheduler()
+            self._parked = self._residency.replace_transformer(self._load)
             self._prepare(self._pipe.transformer)
             self._base_scheduler = self._pipe.scheduler
             self._pipe.scheduler = scheduler
@@ -206,7 +201,7 @@ class Turbo4Transformer:
         parked, self._parked = self._parked, None
         self._residency.replace_transformer(self._base_loader, parked=parked)
         # И отложенный готовится заново: SageAttention могли переключить, пока
-        # работал Turbo4. KV-хук при этом не двоится — отложенный бывает
+        # работал подменный. KV-хук при этом не двоится — отложенный бывает
         # только при SWAP, где хука нет.
         self._prepare(self._pipe.transformer)
         if parked is None and self._turbo is not None:
@@ -215,3 +210,72 @@ class Turbo4Transformer:
         self._pipe.scheduler = self._base_scheduler
         self._active = False
 
+
+def _scheduler_from(directory: Path):
+    def build():
+        from diffusers import FlowMatchEulerDiscreteScheduler
+
+        return FlowMatchEulerDiscreteScheduler.from_pretrained(str(directory), subfolder="scheduler")
+    return build
+
+
+class Turbo4Transformer(SwapTransformer):
+    """Пресет Turbo4: 4-шаговый дистиллят Viggle, GGUF Q4_K_M от Abiray.
+
+    Замер на RTX 4060 Laptop 8 ГБ (``tools/experiments/lowvram_turbo4.py``):
+    19.3 с на кадр 1024² против 28.7 у Turbo и 62 у LowQuality; пик 5.7 ГиБ.
+    Надписи держит не хуже Turbo, правку — заметно хуже: кадр уходит от
+    исходника (``docs/research/2026-10-02-8-gb.md``).
+    """
+
+    name = "Turbo4"
+
+    def __init__(self, pipe, residency, gguf_file: Path, turbo_dir: Path, model_dir: Path,
+                 base_loader, prepare, turbo: TurboAdapter | None = None) -> None:
+        gguf_file, turbo_dir, model_dir = Path(gguf_file), Path(turbo_dir), Path(model_dir)
+
+        def load(device):
+            from . import gguf
+
+            return gguf.load_transformer(model_dir, gguf_file, device=device)
+
+        super().__init__(
+            pipe, residency, load, _scheduler_from(turbo_dir),
+            lambda: fetch.turbo4_missing(gguf_file.parent, turbo_dir), base_loader, prepare, turbo,
+        )
+
+
+class OfficialTurboTransformer(SwapTransformer):
+    """Пресеты официального Qwen-Image-2.1-Turbo: 8 шагов, CFG 1, до 2K.
+
+    Трансформер — по выбранной точности основной модели: bf16 — из
+    чекпоинта Qwen (``Qwen-Image-2.1-Turbo/transformer``), иначе — GGUF того
+    же уровня (``Abiray/Qwen-Image-2.1-Turbo-GGUF``; для INT8 — Q8_0, почти
+    без потерь, 7 ГБ). Энкодер и VAE у чекпоинта те же, что у основной
+    модели (сверено потензорно), поэтому подменяется только трансформер.
+    Планировщик — из чекпоинта (``shift 1``, без динамического сдвига).
+    """
+
+    name = "Turbo 2.1"
+
+    def __init__(self, pipe, residency, weights: Path, official_dir: Path, model_dir: Path,
+                 base_loader, prepare, turbo: TurboAdapter | None = None) -> None:
+        weights, official_dir, model_dir = Path(weights), Path(official_dir), Path(model_dir)
+
+        def load(device):
+            if weights.suffix == ".gguf":
+                from . import gguf
+
+                return gguf.load_transformer(model_dir, weights, device=device)
+            import torch
+            from diffusers import QwenImage21Transformer2DModel
+
+            module = QwenImage21Transformer2DModel.from_pretrained(
+                str(weights), subfolder="transformer", torch_dtype=torch.bfloat16
+            ).eval()
+            return module.to(device) if device is not None else module
+
+        super().__init__(
+            pipe, residency, load, _scheduler_from(official_dir),
+            lambda: fetch.official_turbo_missing(weights, official_dir), base_loader, prepare, turbo,
+        )

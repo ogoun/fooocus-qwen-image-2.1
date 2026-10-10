@@ -275,6 +275,7 @@ class Generator:
         turbo=None,
         turbo4=None,
         adapters: LoraAdapters | None = None,
+        swaps: dict | None = None,
     ) -> None:
         self._pipe = pipe
         self._residency = residency
@@ -283,9 +284,12 @@ class Generator:
         # Адаптер turbo (``engine/turbo.py``) или None: без него пресет Turbo
         # недоступен, остальные работают как всегда.
         self._turbo = turbo
-        # Подмена трансформера на 4-шаговый дистиллят (``Turbo4Transformer``)
-        # или None: без неё пресет Turbo4 недоступен.
-        self._turbo4 = turbo4
+        # Подменные трансформеры пресетов (``turbo.SwapTransformer``) по
+        # имени из ``QualityPreset.transformer``: Turbo4, официальный Turbo.
+        # Нет нужного — пресет недоступен. ``turbo4`` — прежний вход для него.
+        self._swaps = dict(swaps or {})
+        if turbo4 is not None:
+            self._swaps.setdefault(presets_module.TURBO4, turbo4)
         # Адаптеры peft на трансформере (``engine/lora.py``): пользовательские
         # LoRA и включение Turbo — одним списком. Подставляется тестами.
         self._adapters = adapters if adapters is not None else LoraAdapters(pipe, residency)
@@ -367,24 +371,28 @@ class Generator:
 
         prepared, region_box = self._prepare(request)
         use_turbo = prepared.preset.turbo
-        use_turbo4 = prepared.preset.transformer == presets_module.TURBO4
+        swap_name = prepared.preset.transformer
         if use_turbo and self._turbo is None:
             raise RuntimeError("Turbo preset is unavailable: the turbo adapter is not attached")
-        if use_turbo4 and self._turbo4 is None:
-            raise RuntimeError("Turbo4 preset is unavailable: the Turbo4 transformer is not configured")
-        if self._turbo4 is not None:
-            # Сначала трансформер: адаптер Turbo живёт на основном, и
-            # включать его можно только когда основной на месте.
-            self._turbo4.activate(use_turbo4)
+        if swap_name and swap_name not in self._swaps:
+            raise RuntimeError(f"{prepared.preset.name} preset is unavailable: its transformer is not configured")
+        # Сначала трансформер: прежний подменный возвращает основной, затем
+        # ставится нужный. Адаптер Turbo живёт на основном, и включать его
+        # можно только когда основной на месте.
+        for name, swap in self._swaps.items():
+            if name != swap_name:
+                swap.activate(False)
+        if swap_name:
+            self._swaps[swap_name].activate(True)
         # Пользовательские LoRA — на том трансформере, что сейчас стоит (после
-        # подмены Turbo4 — на нём): подключить недостающие, выгрузить неотмеченные.
+        # подмены — на нём): подключить недостающие, выгрузить неотмеченные.
         self._adapters.sync(prepared.loras)
-        if self._turbo is not None and not use_turbo4:
+        if self._turbo is not None and not swap_name:
             # Внутри замка генерации: адаптер и планировщик — общее состояние
             # пайплайна, и переключать их посреди чужого цикла нельзя.
             self._turbo.activate(use_turbo)
         # Один список активных адаптеров на всех: Turbo и пользовательские.
-        active = self._turbo.adapter_weights() if self._turbo is not None and not use_turbo4 else []
+        active = self._turbo.adapter_weights() if self._turbo is not None and not swap_name else []
         self._adapters.activate(active + [(item.adapter, item.weight) for item in prepared.loras])
         positive, negative = apply_styles(
             prepared.prompt, prepared.negative_prompt, prepared.styles, self._catalogue
@@ -424,8 +432,8 @@ class Generator:
             )
             if use_turbo:
                 arguments = turbo_module.call_arguments(arguments)
-            elif use_turbo4:
-                arguments = turbo_module.call_arguments(arguments, turbo_module.SIGMAS4)
+            elif prepared.preset.sigmas:
+                arguments = turbo_module.call_arguments(arguments, prepared.preset.sigmas)
             output = self._pipe(**arguments)
 
             if self._interrupted:

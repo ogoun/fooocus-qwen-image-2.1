@@ -32,10 +32,11 @@ down to an 8 GB laptop.
 
 ## Features
 
-- **Text to image** with six quality choices, from a 5-second draft to 2K:
-  the full model at 16, 28 or 40 steps, and the distilled **Turbo** (6 steps
-  at 1 MP), **Draft** (the same at 768 px) and **Turbo4** (4 steps, the
-  fastest on 8 GB cards). Seven aspect ratios, 277 Fooocus styles, up to eight
+- **Text to image** with nine quality choices, from a 5-second draft to 2K:
+  the full model at 16, 28 or 40 steps; the official **Qwen Turbo**
+  checkpoint at 8 steps for 1024, 1536 and 2048 px (2K in under a minute on
+  an RTX 3090); and the distilled **Turbo** (6 steps at 1 MP), **Draft** (the
+  same at 768 px) and **Turbo4** (4 steps, the fastest on 8 GB cards). Seven aspect ratios, 277 Fooocus styles, up to eight
   images per run.
 - **Runs on 8 to 24 GB cards**: the transformer in bf16, INT8 or GGUF (13.3
   down to 2.7 GiB of VRAM), a memory profile picked by the card, and optional
@@ -198,10 +199,10 @@ Settings tab.
 
 | Video memory | Precision (installer default) | Memory profile (*Auto*) | Start with |
 |---|---|---|---|
-| 20 GB and more | bf16 (INT8 frees 6.5 GiB for references) | high | Medium, Turbo |
+| 20 GB and more | bf16 (INT8 frees 6.5 GiB for references) | high | Qwen Turbo HD, Medium |
 | 12–20 GB | INT8 | low | Low, Turbo |
 | 10–12 GB | GGUF Q8_0 | low | Low, Turbo |
-| 8 GB | GGUF Q4_K_M | low | Turbo4, Turbo, Low |
+| 8 GB | GGUF Q4_K_M | low | Qwen Turbo, Turbo4, Low |
 | 6 GB (not tested) | GGUF Q4_K_S or Q3_K_M | low | Draft, Turbo |
 
 Tested on an RTX 3090 (24 GB) and an RTX 4060 Laptop (8 GB); the rows in
@@ -244,7 +245,7 @@ The installer:
    encoder is built here once (`Qwen-Image-2.1-TE-INT8/`, 8.4 GiB, about
    20 s). The pose recognition weights (DWPose, 350 MB) go to `DWPose/` in the
    same step. Extras download on first use instead, with a progress line: the
-   Turbo adapter, the Turbo4 transformer and the outpaint LoRA (159 MB,
+   Turbo adapter, the Qwen Turbo and Turbo4 transformers and the outpaint LoRA (159 MB,
    `Qwen-Image-2.1-outpaint/`). If a chosen precision needs a package the
    environment lacks (GGUF needs `gguf`), it is installed from
    `requirements.txt` before the weights;
@@ -280,7 +281,7 @@ Arguments are passed through to the application:
 |---|---|
 | `--host`, `--port` | listen address (default `0.0.0.0:7865`) |
 | `--lang en\|ru` | interface language at start (default `en`; switch any time with the EN/RU button) |
-| `--preset LowQuality\|MiddleQuality\|MaxQuality\|Turbo\|TurboDraft\|Turbo4` | default quality preset |
+| `--preset LowQuality\|MiddleQuality\|MaxQuality\|Turbo\|TurboDraft\|Turbo4\|QwenTurbo\|QwenTurboHD\|QwenTurbo2K` | default quality preset |
 | `--lora-dir PATH` | folder with LoRA files (default `loras/`; point it at your ComfyUI loras folder) |
 | `--no-open-browser` | don't open the browser |
 | `--no-preload` | load the model on first use instead of at start |
@@ -302,12 +303,32 @@ are what `--preset`, saved prompts and the PNG parameters use.
 |---|---|---|---|---|
 | **Draft** (TurboDraft) | 768 px | 6 | ~5 s | 18.8 s |
 | **Turbo** | 1024 px | 6 | ~11 s | 31.9 s |
+| **Qwen Turbo** (QwenTurbo) | 1024 px | 8 | 10–13 s | |
 | **Turbo4** | 1024 px | 4 | | 19.3 s* |
+| **Qwen Turbo HD** (QwenTurboHD) | 1536 px | 8 | ~25 s | |
+| **Qwen Turbo 2K** (QwenTurbo2K) | 2048 px | 8 | ~49 s | |
 | Low (LowQuality) | 1024 px | 16 | ~21 s | 66.5 s |
 | Medium (MiddleQuality) | 1536 px | 28 | ~93 s | 215.4 s |
 | Maximum, 2K (MaxQuality) | 2048 px | 40 | ~283 s | |
 
 <sub>* Turbo4 against Turbo on the same laptop: 19.3 s and 28.7 s for a cached prompt.</sub>
+
+**Qwen Turbo, Qwen Turbo HD, Qwen Turbo 2K** run
+[Qwen-Image-2.1-Turbo](https://huggingface.co/Qwen/Qwen-Image-2.1-Turbo), the
+official fast checkpoint from Qwen: 8 steps, no CFG, its own schedule. Unlike
+the Viggle LoRA it stays clean at any size — the 8-pixel grid at 1536 and
+2048 px is at the level of the full model — so it is the fast way to a large
+picture: HD is three times faster than Medium, 2K six times faster than
+Maximum. Only its transformer differs from the main model (the text encoder
+and VAE were checked tensor by tensor), so only the transformer is
+downloaded on first use, matching your precision: the bf16 checkpoint
+(13.6 GB) on bf16, a GGUF of the same level
+([Abiray](https://huggingface.co/Abiray/Qwen-Image-2.1-Turbo-GGUF), 3–7 GB)
+on GGUF, Q8_0 on INT8 — so it runs on 8 GB cards too. Switching to it and
+back swaps the transformer (on 24 GB the main one waits in RAM). It edits,
+outpaints and takes your LoRA; prompt following in edits is weaker than the
+full model's. Negative prompt and guidance are ignored, as in every turbo
+preset. Details: [docs/research/2026-10-10-qwen-turbo.md](docs/research/2026-10-10-qwen-turbo.md) (in Russian).
 
 **Turbo** uses [Qwen-Image-2.1-viggle-turbo](https://huggingface.co/Viggle/Qwen-Image-2.1-viggle-turbo),
 a distilled LoRA for this model: 6 steps without CFG instead of 16–40, for

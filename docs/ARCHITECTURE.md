@@ -1124,9 +1124,21 @@ SwiGLU — один тензор `img_mlp.gate_up`. Строки квантов�
 вместо 1.3). Адаптер подключается прямо на карте: `restage_transformer` при
 `STREAM` не снимает копию на хост — её нет.
 
-**Turbo4 — отдельный трансформер.** 4-шаговый дистиллят Abiray влит в
-веса, поэтому это не адаптер, а другой трансформер
-(`turbo.Turbo4Transformer`, пресет с полем `transformer = "turbo4"`).
+**Пресеты на отдельном трансформере — `turbo.SwapTransformer`.** Turbo4
+(4-шаговый дистиллят Viggle, GGUF Abiray) и официальный Qwen-Image-2.1-Turbo
+(«Qwen Turbo», «HD», «2K»; `OfficialTurboTransformer`, разбор —
+`docs/research/2026-10-10-qwen-turbo.md`) влиты в веса, поэтому это не
+адаптеры, а другие трансформеры. Генератор держит их набором по имени из
+`QualityPreset.transformer` (`TURBO4`, `TURBO_OFFICIAL`): перед кадром
+прежний подменный возвращает основной, затем ставится нужный; свои узлы
+пресета — `QualityPreset.sigmas` (у официального — `sample_sigmas` его
+`model_index.json`, наш diffusers их сам не читает). У официального Turbo
+отличается от основной модели только трансформер — энкодер и VAE сверены
+потензорно, — и он берётся по точности основной (`WeightsPlan.official_turbo_*`):
+bf16 из чекпоинта Qwen, INT8 — GGUF Q8_0, GGUF — тот же вариант Abiray (в
+своём подкаталоге: имя Q4_K_M совпадает с файлом Turbo4). Каталог —
+`Qwen-Image-2.1-TurboOfficial`: «…-Turbo» на Windows совпал бы с каталогом
+адаптера Viggle «…-turbo» (так и случилось, тест теперь сторожит).
 Подмена — `ResidencyManager.replace_transformer(load, parked)`: прежний
 сначала освобождает карту, потом грузится новый (два по 4 ГБ на 8 ГБ не
 помещаются). При `SWAP` прежний откладывается на хост — копия там уже есть —

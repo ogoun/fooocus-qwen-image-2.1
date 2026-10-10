@@ -543,6 +543,14 @@ MESSAGES: dict[str, tuple[str, str]] = {
         "Скачиваю трансформер Turbo4 (4.2 ГБ) — один раз…",
         "Downloading the Turbo4 transformer (4.2 GB) — once…",
     ),
+    "official_turbo_downloading": (
+        "Скачиваю трансформер Qwen-Image-2.1-Turbo (13.6 ГБ) — один раз…",
+        "Downloading the Qwen-Image-2.1-Turbo transformer (13.6 GB) — once…",
+    ),
+    "official_turbo_gguf_downloading": (
+        "Скачиваю трансформер Qwen-Image-2.1-Turbo в GGUF (3–7 ГБ) — один раз…",
+        "Downloading the Qwen-Image-2.1-Turbo transformer in GGUF (3–7 GB) — once…",
+    ),
     "turbo_download_failed": (
         "Веса Turbo не скачались: {error}. Проверьте сеть и повторите — докачается только недостающее.",
         "The Turbo weights did not download: {error}. Check the network and retry — only what is missing is fetched.",
