@@ -52,6 +52,9 @@ down to an 8 GB laptop.
 - **Reference images**: up to ten, each addressed in the prompt as
   `<image1>`…`<image10>`. Any cell can take a **pose** — from a pose library
   or recognised from your own photo — or a hand-drawn **sketch**.
+- **Any image format in**: HEIC from phones, camera RAW (DNG, CR2/CR3, NEF,
+  ARW, RAF, ORF…), TIFF 16-bit, PSD, JPEG XL, AVIF, EXR, SVG and more — dropped
+  as is, converted to sRGB PNG on the way in. See [Image formats](#image-formats).
 - **Instruction-based editing** in four region modes:
   - **Mask** — paint the area to change; every pixel outside it stays byte-for-byte intact.
   - **Annotation** — circle several areas in different colours and describe each change by its colour in one prompt.
@@ -415,6 +418,29 @@ run on the original weights.
 reloads the model. **SageAttention** switches on the fly; the checkbox is
 active only when the package is installed (choose it in `install.ps1`). On an
 RTX 3090 it makes a step 15–25% faster at 1536 px and above.
+
+### Image formats
+
+Any cell, the edit brush and the pose photo take more than PNG and JPEG — drop
+or pick the file as is:
+
+| Kind | Formats |
+|---|---|
+| Phone photos | **HEIC / HEIF** (iPhone, Android), AVIF |
+| Camera RAW | DNG, CR2, CR3, CRW, NEF, NRW, ARW, SRF, SR2, RAF, ORF, RW2, PEF, SRW, X3F, 3FR, IIQ and other LibRaw formats |
+| Editors and print | TIFF (8/16 bit, CMYK), PSD (flattened image), TGA, JPEG 2000, JPEG XL |
+| Rendering | EXR, Radiance HDR, PFM — linear light shown as at exposure 0 |
+| Web and icons | PNG, JPEG, WebP, GIF (first frame), BMP, ICO (largest size), ICNS, SVG |
+| Other | QOI, DDS, PCX, PNM, SGI, Sun Raster, XBM/XPM |
+
+Formats the browser cannot show are converted to PNG on the server (SVG is
+rasterized in the browser at 2048 px on the long side) before the field ever
+sees them, a status line says so meanwhile. EXIF orientation is applied,
+colour profiles (Display P3 of iPhone photos, CMYK) are converted to sRGB,
+16-bit and float images become 8-bit, transparency is kept. A file that is
+not an image gets a message, not silence. The same formats are accepted by
+the API as base64. Decoders: Pillow, `pillow-heif`, `pillow-jxl-plugin`,
+`rawpy` (LibRaw), `OpenEXR`, OpenCV — all from `requirements.txt`.
 
 ### Reference images
 

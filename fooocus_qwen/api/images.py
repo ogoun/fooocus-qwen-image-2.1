@@ -10,14 +10,13 @@ from __future__ import annotations
 
 import base64
 import binascii
-import io
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, ImageOps, UnidentifiedImageError
+from PIL import Image
 
 from .. import config
-from ..imaging import masking
+from ..imaging import formats, masking
 from ..poses import library
 from .schemas import ImageInput, ImageRef
 
@@ -38,20 +37,28 @@ class ImageError(ValueError):
 
 
 def decode_base64(text: str) -> Image.Image:
-    """PNG/JPEG/WebP из base64 или data URL; поворот по EXIF применяется."""
+    """Картинка любого поддержанного формата из base64 или data URL.
+
+    PNG, JPEG, WebP, а также HEIC, AVIF, JPEG XL, TIFF, PSD, RAW камер, EXR и
+    др. (``imaging.formats``): поворот по EXIF, профиль ICC → sRGB, 8 бит.
+    Формат узнаётся по содержимому; RAW — тоже (LibRaw пробуется, если
+    Pillow файл не узнал).
+    """
     if len(text) > MAX_BASE64_CHARS:
         raise ImageError("the image is too large")
     if text.startswith("data:"):
         _, _, text = text.partition(",")
     try:
         raw = base64.b64decode(text, validate=False)
-        image = Image.open(io.BytesIO(raw))
-        image.load()
-    except (binascii.Error, ValueError, UnidentifiedImageError, OSError) as error:
+    except (binascii.Error, ValueError) as error:
+        raise ImageError(f"not a readable image: {error}") from error
+    try:
+        image = formats.decode(raw)
+    except formats.FormatError as error:
         raise ImageError(f"not a readable image: {error}") from error
     if max(image.size) > MAX_SIDE:
         raise ImageError(f"the image is larger than {MAX_SIDE} px on a side")
-    return ImageOps.exif_transpose(image)
+    return image
 
 
 def output_path(relative: str) -> Path:

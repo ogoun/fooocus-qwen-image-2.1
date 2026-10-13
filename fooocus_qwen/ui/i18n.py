@@ -131,6 +131,9 @@ T: dict[str, tuple[str, str]] = {
         "клик — 100 % или вписать · перетаскивание — сдвиг · ← → — другие · Esc — закрыть",
         "click: 100% or fit · drag: pan · ← →: others · Esc: close",
     ),
+    # Перевод HEIC, RAW, TIFF и др. перед загрузкой (ui/image_import.py).
+    "import_converting": ("Перевожу {name} в PNG…", "Converting {name} to PNG…"),
+    "import_failed": ("Не удалось открыть {name}: {error}", "Could not open {name}: {error}"),
     "reference_clear": ("Очистить референсы", "Clear references"),
     "boost": ("AI буст", "AI boost"),
     "boost_info": (

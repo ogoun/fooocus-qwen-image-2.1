@@ -668,6 +668,14 @@ async function upload(file) {
 }
 
 async function loadFile(file) {
+    // HEIC, RAW, TIFF… — сначала в PNG (ui/image_import.js): браузер их не
+    // покажет. Перетаскивание сюда уже переведено перехватчиком страницы, а
+    // выбор файла и вставка — нет: они в теневом DOM.
+    const importer = win.__fqImport;
+    if (file && importer && importer.needs(file)) {
+        file = (await importer.normalize([file]))[0];
+        if (!file) return;
+    }
     if (!file || !/^image\//.test(file.type)) { flash(say('painter_not_image'), true); return; }
     setBusy(true);
     try {
@@ -1020,7 +1028,10 @@ const actions = {
     clear: () => { if (!hasMarks()) return; const command = { kind: 'clear' }; run(command); commit(command); },
     toggle: toggleVisible,
     fit,
-    open: () => ui.file.click(),
+    open: () => {
+        if (win.__fqImport) ui.file.accept = win.__fqImport.accept;
+        ui.file.click();
+    },
     remove: removeImage,
 };
 shadow.querySelectorAll('[data-act]').forEach(node => {

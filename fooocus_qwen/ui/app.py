@@ -9,7 +9,18 @@ from pathlib import Path
 import gradio as gr
 
 from .. import config
-from . import gradio_fixes, layout, reference_tools, tab_edit, tab_gallery, tab_generate, tab_settings, viewer
+from ..imaging import formats
+from . import (
+    gradio_fixes,
+    image_import,
+    layout,
+    reference_tools,
+    tab_edit,
+    tab_gallery,
+    tab_generate,
+    tab_settings,
+    viewer,
+)
 from .i18n import LANGUAGES, Localizer, pick
 from .state import Studio
 
@@ -48,6 +59,9 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
     # Поправки к Gradio (ui/gradio_fixes.py): повторная загрузка того же файла
     # роняла событие под Windows, очистка временных файлов не работала.
     gradio_fixes.install()
+    # HEIC и JPEG XL — в Pillow: их откроет и Gradio, если файл дошёл до него
+    # мимо перевода на странице (Safari шлёт HEIC как image/heic).
+    formats.register()
     studio = Studio(cfg)
     localizer = Localizer(cfg.lang)
 
@@ -210,6 +224,8 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
         demo.load(None, None, None, js=viewer.script())
         # Карандаш на плитках поз: правка имени и обложки.
         demo.load(None, None, None, js=reference_tools.POSE_EDIT_JS)
+        # HEIC, RAW, TIFF, PSD, JPEG XL, EXR, SVG… — в PNG до полей (ui/image_import.py).
+        demo.load(None, None, None, js=image_import.script())
 
         # Регистрация именно здесь, после сборки вкладок: до неё
         # ``localizer.components`` ещё пуст, и клик обновлял бы одну кнопку.
@@ -308,6 +324,12 @@ def start(cfg: config.AppConfig, prepare=None) -> tuple[gr.Blocks, Studio]:
         auth=cfg.auth,
         auth_message=pick("auth_message", cfg.lang) if cfg.auth else None,
     )
+    # Маршрут перевода форматов — в то же приложение, что и страница:
+    # приложение Gradio создаётся в ``launch``, раньше добавлять некуда.
+    # ``getattr`` — для заглушек в тестах запуска: у настоящего Blocks после
+    # ``launch`` приложение есть всегда.
+    if getattr(demo, "app", None) is not None:
+        image_import.install(demo.app)
     return demo, studio
 
 

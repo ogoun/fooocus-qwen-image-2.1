@@ -1504,11 +1504,142 @@ def scenario_secret(browser, url, report: Report) -> None:
 
 # --- запуск --------------------------------------------------------------------
 
+# --- форматы на входе: HEIC, TIFF, SVG ------------------------------------------
+
+# Chrome под Windows отдаёт .heic с пустым типом — так и кладётся файл в
+# сценарии: Playwright по расширению подставил бы image/heic, и опыт проверял
+# бы не тот случай, на котором всё сломалось.
+DROP_JS = """async ([selector, index, name, base64, type]) => {
+    const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
+    const target = [...document.querySelectorAll(selector)].filter(e => e.getBoundingClientRect().width > 0)[index];
+    const box = target.getBoundingClientRect();
+    const x = box.left + box.width / 2, y = box.top + box.height / 2;
+    // Цель — то, что под курсором, как при настоящем перетаскивании.
+    let hit = document.elementFromPoint(x, y);
+    while (hit && hit.shadowRoot && hit.shadowRoot.elementFromPoint(x, y) && hit.shadowRoot.elementFromPoint(x, y) !== hit) {
+        hit = hit.shadowRoot.elementFromPoint(x, y);
+    }
+    const data = new DataTransfer();
+    data.items.add(new File([bytes], name, { type }));
+    for (const kind of ['dragenter', 'dragover', 'drop']) {
+        hit.dispatchEvent(new DragEvent(kind, { bubbles: true, cancelable: true, composed: true, clientX: x, clientY: y, dataTransfer: data }));
+    }
+}"""
+
+# Контроль: страница без перехватчика — его capture-обработчики на window не
+# регистрируются. Так видно, что без перевода HEIC действительно терялся, и
+# зелёный результат — заслуга перевода, а не опыта, который ничего не ловит.
+NO_IMPORT_JS = """(() => {
+    const original = window.addEventListener;
+    window.addEventListener = function (type, listener, options) {
+        if (this === window && (type === 'drop' || type === 'change') && options === true) return;
+        return original.call(this, type, listener, options);
+    };
+})()"""
+
+
+def heic_sample(samples: Path, width: int = 300, height: int = 200) -> Path:
+    from fooocus_qwen.imaging import formats
+
+    formats.register()
+    path = samples / f"IMG_{width}x{height}.HEIC"
+    Image.open(sample_image(samples, width, height)).save(path, format="HEIF", quality=90)
+    return path
+
+
+def drop_file(page, selector: str, index: int, path: Path, mime: str = "") -> None:
+    import base64
+
+    page.evaluate(DROP_JS, [selector, index, path.name, base64.b64encode(path.read_bytes()).decode(), mime])
+
+
+def toast(page) -> dict:
+    return page.evaluate("""() => {
+        const t = document.querySelector('.fq-import-toast');
+        return t ? { text: t.textContent, visible: t.dataset.visible === 'true', error: t.dataset.error === 'true' } : {};
+    }""")
+
+
+def scenario_formats(browser, url, report: Report, samples: Path) -> None:
+    """HEIC, TIFF и SVG доходят до ячейки референса, кисти правки и окна поз.
+
+    Дорога та же, что у человека: перетаскивание (файл без MIME-типа, как
+    его отдаёт Chrome под Windows) и выбор в диалоге. Проверяется, что
+    браузер картинку получил и разобрал, а не что тег на месте.
+    """
+    print("input formats:")
+    heic = heic_sample(samples)
+    tiff = samples / "scan16.tiff"
+    sixteen = (np.tile(np.linspace(0, 65535, 240, dtype=np.uint16), (160, 1)))
+    Image.fromarray(sixteen).save(tiff)
+    svg = samples / "logo.svg"
+    svg.write_text('<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100">'
+                   '<rect width="200" height="100" fill="#3a7"/></svg>', encoding="utf-8")
+    broken = samples / "broken.heic"
+    broken.write_bytes(b"not a picture" * 50)
+
+    # Контроль: без перехватчика перетащенный HEIC ячейка молча теряет.
+    page = browser.new_page(viewport={"width": 1920, "height": 1080})
+    page.add_init_script(NO_IMPORT_JS)
+    page.goto(url)
+    page.wait_for_selector('button[role="tab"]', timeout=60000)
+    page.wait_for_timeout(2500)
+    drop_file(page, ".qs-refslot", 0, heic)
+    page.wait_for_timeout(3000)
+    report.check(not reference_slots(page)[0]["loaded"],
+                 "control: without the importer a dropped HEIC is lost (the original bug)")
+    page.close()
+
+    page, errors = fresh_page(browser, url)
+    report.check(page.evaluate("() => Boolean(window.__fqImport)"), "importer is installed on the page")
+    accept = page.evaluate("() => document.querySelector('.qs-refslot input[type=file]').accept")
+    report.check(".heic" in accept and ".cr3" in accept, f"file dialog lists HEIC and RAW: {accept[:40]}…")
+
+    drop_file(page, ".qs-refslot", 0, heic)
+    wait_loaded(page, [0])
+    report.check(True, "dropped HEIC (no MIME type) shows in reference cell 1")
+    page.locator(".qs-refslot").nth(1).locator('input[type="file"]').set_input_files(
+        {"name": heic.name, "mimeType": "", "buffer": heic.read_bytes()}
+    )
+    wait_loaded(page, [0, 1])
+    report.check(True, "HEIC picked in the file dialog shows in reference cell 2")
+    drop_file(page, ".qs-refslot", 2, svg, "image/svg+xml")
+    wait_loaded(page, [0, 1, 2])
+    report.check(True, "dropped SVG is rasterized into reference cell 3")
+    natural = page.evaluate("""() => [...document.querySelectorAll('.qs-refslot img')]
+        .filter(i => i.getBoundingClientRect().width > 0).map(i => [i.naturalWidth, i.naturalHeight])""")
+    report.check(natural[0] == [300, 200] and natural[2][0] == 2048,
+                 f"sizes kept: HEIC {natural[0]}, SVG raster {natural[2]}")
+
+    drop_file(page, ".qs-refslot", 3, broken)
+    page.wait_for_function("() => document.querySelector('.fq-import-toast')?.dataset.error === 'true'", timeout=20000)
+    message = toast(page)
+    report.check("broken.heic" in message["text"] and "cannot read" in message["text"],
+                 f"broken file: a clear message, not silence: '{message['text'][:70]}'")
+    report.check(not reference_slots(page)[3]["loaded"], "broken file: the cell stays empty")
+
+    # Кисть правки: перетаскивание в теневой DOM и выбор файла там же.
+    open_tab(page, 1)
+    drop_file(page, f"#{PAINTER}", 0, heic)
+    page.wait_for_function(f"() => {API}.state().width === 300 && !{API}.state().uploading", timeout=30000)
+    state = painter_state(page)
+    report.check(state["height"] == 200 and str(state["source"]).endswith(".png"),
+                 f"dropped HEIC opens in the edit brush and uploads as PNG: {state['width']}x{state['height']}")
+    page.locator(f"#{PAINTER} input.qp-file").set_input_files(
+        {"name": tiff.name, "mimeType": "image/tiff", "buffer": tiff.read_bytes()}
+    )
+    page.wait_for_function(f"() => {API}.state().width === 240 && !{API}.state().uploading", timeout=30000)
+    report.check(painter_state(page)["height"] == 160, "16-bit TIFF picked in the edit brush opens")
+
+    report.check(not errors, "no page errors" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Browser check of the interface")
     parser.add_argument("--port", type=int, default=7899)
     parser.add_argument("--only", nargs="*", default=None,
-                        help="layout language painter annotation outpaint latency paste gallery send references tools viewer sketch poses performance secret")
+                        help="layout language painter annotation outpaint latency paste gallery send references tools viewer sketch poses performance secret formats")
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
@@ -1573,6 +1704,7 @@ def main() -> int:
         "loras": lambda b, r: scenario_loras(b, url, r, fake, samples),
         "performance": lambda b, r: scenario_performance(b, url, r, fake, samples),
         "secret": lambda b, r: scenario_secret(b, url, r),
+        "formats": lambda b, r: scenario_formats(b, url, r, samples),
     }
     chosen = args.only or list(scenarios)
     report = Report()

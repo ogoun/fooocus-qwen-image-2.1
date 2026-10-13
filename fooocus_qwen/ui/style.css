@@ -593,3 +593,33 @@ footer { display: none !important; }
     height: clamp(12rem, calc(100vh - 32rem), 70rem) !important;
     max-height: none !important;
 }
+
+/* Перевод HEIC, RAW и др. в PNG (ui/image_import.js): строка внизу экрана,
+   пока сервер переводит файл, и сообщение, если не смог. */
+.fq-import-toast {
+    position: fixed;
+    left: 50%;
+    bottom: 1.5rem;
+    transform: translateX(-50%);
+    z-index: 10000;
+    max-width: min(40rem, calc(100vw - 2rem));
+    padding: 0.6rem 1rem;
+    border-radius: var(--radius-lg);
+    background: var(--background-fill-primary);
+    color: var(--body-text-color);
+    border: 1px solid var(--border-color-primary);
+    box-shadow: var(--shadow-drop-lg);
+    font-size: var(--text-md);
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.15s;
+}
+
+.fq-import-toast[data-visible="true"] {
+    opacity: 1;
+}
+
+.fq-import-toast[data-error="true"] {
+    border-color: var(--error-border-color, #ef4444);
+    color: var(--error-text-color, #ef4444);
+}

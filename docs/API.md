@@ -82,8 +82,12 @@ with `--api`, and the log says so.
 - **JSON in, JSON out.** Unknown fields are rejected with `422`, so a typo in
   a field name fails instead of silently becoming the default.
 - **Images in** can take three forms:
-  - a base64 string, PNG/JPEG/WebP, with or without a `data:image/…;base64,`
-    prefix;
+  - a base64 string with or without a `data:image/…;base64,` prefix, in any
+    format the UI takes: PNG, JPEG, WebP, HEIC/HEIF, AVIF, JPEG XL, TIFF
+    (16-bit, CMYK), PSD, camera RAW (DNG, CR2/CR3, NEF, ARW, RAF, ORF…), EXR,
+    HDR and more — recognised by content; EXIF orientation is applied and
+    colour profiles are converted to sRGB (SVG is not accepted here: the UI
+    rasterizes it in the browser);
   - `{"pose": "standing_05"}`, a pose skeleton from `GET /poses`;
   - `{"gallery": "2026-10-10/17-31-28.png"}`, an earlier result from
     `GET /gallery` or from a previous response's `path`.

@@ -18,6 +18,7 @@ import pytest
 from PIL import Image
 
 pytest.importorskip("fastapi")
+from fastapi import FastAPI  # noqa: E402
 from fastapi.testclient import TestClient  # noqa: E402
 
 from fooocus_qwen import config  # noqa: E402
@@ -364,9 +365,13 @@ def test_the_ui_launch_passes_the_login(monkeypatch):
 
         def launch(self, **kwargs):
             seen.update(kwargs)
+            # Приложение Gradio появляется в launch — в него встаёт маршрут перевода форматов.
+            self.app = FastAPI()
 
-    monkeypatch.setattr(app, "build", lambda cfg, return_studio=False: (Demo(), None))
+    demo = Demo()
+    monkeypatch.setattr(app, "build", lambda cfg, return_studio=False: (demo, None))
     app.start(config.AppConfig(username="anna", password="pw"))
     assert seen["auth"] == ("anna", "pw") and seen["auth_message"]
+    assert any(getattr(route, "path", "") == "/fooocus/convert-image" for route in demo.app.router.routes)
     app.start(config.AppConfig())
     assert seen["auth"] is None

@@ -16,6 +16,13 @@ sentencepiece>=0.2
 Pillow>=10.3
 numpy>=1.26,<3
 opencv-python-headless>=4.10
+# Картинки на входе любого формата (imaging/formats.py): HEIC/HEIF, JPEG XL,
+# RAW камер (LibRaw), EXR (у колеса OpenCV кодек EXR не собран). Остальное —
+# TIFF, PSD, AVIF, JPEG 2000 и др. — читает сам Pillow.
+pillow-heif>=1.1
+pillow-jxl-plugin>=1.3
+rawpy>=0.24
+OpenEXR>=3.3
 # Распознавание позы на фото (DWPose, «Добавить позу»): модели в ONNX, на
 # процессоре. rtmlib не берём: он тянет opencv-python и opencv-contrib-python,
 # которые перезаписывают opencv-python-headless (см. fooocus_qwen/poses/detect.py).
