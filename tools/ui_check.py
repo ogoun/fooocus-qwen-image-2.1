@@ -1635,9 +1635,14 @@ def scenario_formats(browser, url, report: Report, samples: Path) -> None:
     page.close()
 
 
+def saved_field(page):
+    """Поле сохранённых промтов на видимой вкладке."""
+    return page.locator(".qs-libraryfield input:visible").first
+
+
 def pick_saved_prompt(page, name: str) -> None:
-    """Выбор в «Saved prompts» видимой вкладки; щелчок по полю освежает список."""
-    visible_input(page, "Saved prompts").click()
+    """Выбор в поле сохранённых промтов; щелчок по полю освежает список."""
+    saved_field(page).click()
     page.wait_for_timeout(500)
     page.get_by_role("option", name=name, exact=True).first.click()
     page.wait_for_timeout(800)
@@ -1647,7 +1652,7 @@ def rows_follow(page) -> dict:
     """Где строка промтов относительно поля промта и строки действий (видимая вкладка)."""
     return page.evaluate("""() => {
         const vis = s => [...document.querySelectorAll(s)].find(e => e.offsetParent);
-        const lib = vis('input[aria-label="Saved prompts"]').closest('.row');
+        const lib = vis('.qs-library');
         const bar = vis('.qs-bar').getBoundingClientRect();
         const row = lib.getBoundingClientRect();
         const actions = vis('.qs-slot-actions');
@@ -1681,10 +1686,17 @@ def scenario_prompts(browser, url, report: Report, samples: Path) -> None:
     pick_saved_prompt(page, "Upscale")
     prompt = visible_input(page, "Prompt").input_value()
     report.check(prompt.startswith("LOW-LEVEL PHOTOGRAPHIC RESTORATION ONLY."), "Generate: Upscale is there by default and loads")
-    report.check(visible_input(page, "Name to save as").input_value() == "Upscale", "the loaded name fills the name field")
+    report.check(saved_field(page).input_value() == "Upscale", "the loaded name stays in the field")
+    height = rows_follow(page)["lib_bottom"] - rows_follow(page)["lib_top"]
+    report.check(height <= 48, f"the row is one line high: {height:.0f} px")
 
     visible_input(page, "Prompt").fill("a red fox")
-    visible_input(page, "Name to save as").fill("Fox")
+    # Посимвольно, как человек: fill() подставляет значение мимо обработчиков
+    # ввода Gradio, и вписанное имя до сервера не доходит.
+    box = saved_field(page)
+    box.click()
+    box.fill("")
+    box.type("Fox", delay=30)
     click_text(page, "Save prompt")
     page.wait_for_function("() => document.body.innerText.includes('Prompt “Fox” saved') || "
                            "[...document.querySelectorAll('textarea')].some(t => t.value.includes('Prompt “Fox” saved'))",
@@ -1705,7 +1717,7 @@ def scenario_prompts(browser, url, report: Report, samples: Path) -> None:
     click_text(page, "Delete prompt")
     page.wait_for_timeout(1000)
     report.check("Fox" not in library.list_prompts(config.PROMPT_DIR), "Edit: delete removes the prompt")
-    visible_input(page, "Saved prompts").click()
+    saved_field(page).click()
     page.wait_for_timeout(500)
     options = [item.inner_text() for item in page.get_by_role("option").all() if item.is_visible()]
     page.keyboard.press("Escape")
@@ -1714,11 +1726,89 @@ def scenario_prompts(browser, url, report: Report, samples: Path) -> None:
     page.close()
 
 
+NO_OVERFLOW_JS = """() => {
+    const width = document.documentElement.clientWidth;
+    return [...document.querySelectorAll('*')]
+        .filter(e => e.offsetParent !== null && e.getBoundingClientRect().right > width + 1)
+        .slice(0, 3).map(e => e.tagName + '.' + String(e.className).slice(0, 40));
+}"""
+
+
+def in_view(page, selector: str) -> bool:
+    """Поле на виду: верх выше нижнего края окна больше чем на 120 px."""
+    return page.evaluate(f"""() => {{
+        const n = [...document.querySelectorAll('{selector}')].find(e => e.offsetParent);
+        if (!n) return false;
+        const r = n.getBoundingClientRect();
+        return r.top < window.innerHeight - 120 && r.bottom > 0;
+    }}""")
+
+
+def scenario_compact(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
+    """Пересмотр интерфейса: лишнего не видно, телефон без вылезания, результат правки на виду."""
+    print("compact interface:")
+    page, errors = fresh_page(browser, url)
+    rewritten = page.get_by_label("Rewritten prompt", exact=True)
+    report.check(not any(item.is_visible() for item in rewritten.all()),
+                 "Generate: the empty rewritten-prompt field is hidden while AI boost is off")
+    visible_input(page, "AI boost").check()
+    page.wait_for_timeout(600)
+    report.check(any(item.is_visible() for item in rewritten.all()), "turning AI boost on shows it")
+    visible_input(page, "AI boost").uncheck()
+    page.wait_for_timeout(600)
+    report.check(not any(item.is_visible() for item in rewritten.all()), "and turning it off hides it again")
+    heights = page.evaluate("""() => [...document.querySelectorAll('button')]
+        .filter(b => b.offsetParent && /Send to (editor|references)/.test(b.innerText))
+        .map(b => Math.round(b.getBoundingClientRect().height))""")
+    report.check(heights and max(heights) <= 36, f"“Send to …” buttons are small: {heights}")
+
+    # Правка на FHD: результат под кистью, после правки страница докручивает до него.
+    open_tab(page, 1)
+    load_into_painter(page, sample_image(samples, 1200, 800))
+    page.evaluate("() => window.scrollTo(0, 0)")
+    report.check(not in_view(page, ".qs-preview"), "Edit at 1920×1080: the result starts below the fold")
+    before = len(fake.requests)
+    apply_edit(page)
+    fake.wait(before + 1)
+    page.wait_for_function("""() => [...document.querySelectorAll('.qs-preview')].some(e => e.offsetParent && e.querySelector('img'))""",
+                           timeout=20000)
+    page.wait_for_timeout(1500)
+    report.check(in_view(page, ".qs-preview"), "after the edit the page scrolls to the result")
+
+    # Сценарий секрета сохраняет поддельный токен: сверка — с тем, что лежит в файле.
+    from fooocus_qwen.ui import tab_settings
+
+    open_tab(page, 3)
+    shown = page.get_by_role("button", name="Remove the token", exact=True).first.is_visible()
+    report.check(shown == tab_settings.has_token(),
+                 f"Settings: “Remove the token” is shown only with a saved token (shown {shown})")
+    report.check(not errors, "no page errors" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+    page, errors = fresh_page(browser, url, 430, 900)
+    for tab, name in enumerate(("Generate", "Edit", "Gallery", "Settings")):
+        open_tab(page, tab)
+        if name == "Edit":
+            load_into_painter(page, sample_image(samples, 1200, 800))
+        overflow = page.evaluate(NO_OVERFLOW_JS)
+        report.check(not overflow, f"430 px {name}: nothing sticks out past the screen edge {overflow}")
+    open_tab(page, 1)
+    zoom = painter_state(page).get("zoom") or 0
+    box = page.evaluate("""() => { const n = [...document.querySelectorAll('.qs-refs')].find(e => e.offsetParent);
+        const b = [...document.querySelectorAll('.qs-painter')].find(e => e.offsetParent);
+        return {refs: n.getBoundingClientRect().bottom, brush: b.getBoundingClientRect().top,
+                width: b.getBoundingClientRect().width}; }""")
+    report.check(box["refs"] <= box["brush"] + 1 and box["width"] > 300,
+                 f"430 px Edit: references above the brush, the brush full width ({box}, zoom {zoom})")
+    report.check(not errors, "no page errors" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Browser check of the interface")
     parser.add_argument("--port", type=int, default=7899)
     parser.add_argument("--only", nargs="*", default=None,
-                        help="layout language painter annotation outpaint latency paste gallery send references tools viewer sketch poses performance secret formats prompts")
+                        help="layout language painter annotation outpaint latency paste gallery send references tools viewer sketch poses performance secret formats prompts compact")
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
@@ -1789,6 +1879,7 @@ def main() -> int:
         "secret": lambda b, r: scenario_secret(b, url, r),
         "formats": lambda b, r: scenario_formats(b, url, r, samples),
         "prompts": lambda b, r: scenario_prompts(b, url, r, samples),
+        "compact": lambda b, r: scenario_compact(b, url, r, fake, samples),
     }
     chosen = args.only or list(scenarios)
     report = Report()

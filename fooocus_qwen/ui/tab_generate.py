@@ -158,14 +158,16 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     label=("Результат", "Result"),
                 )
             # Результат — в кисть правки, с переходом на её вкладку. Связывается
-            # в app.py: вкладка правки собирается после этой.
+            # в app.py: вкладка правки собирается после этой. Кнопки малые:
+            # это действия над готовым кадром, а не главное действие вкладки,
+            # и строка в рост обычной кнопки отодвигала промт вниз.
             with gr.Row():
                 send_to_edit = localizer.bind(
-                    gr.Button(pick("send_to_edit", lang)),
+                    gr.Button(pick("send_to_edit", lang), size="sm"),
                     value=("Отправить в редактор", "Send to editor"),
                 )
                 send_to_refs = localizer.bind(
-                    gr.Button(pick("send_to_references", lang)),
+                    gr.Button(pick("send_to_references", lang), size="sm"),
                     value=("Отправить в референсы", "Send to references"),
                 )
             selected = gr.State(None)
@@ -206,8 +208,11 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     gr.Button(pick("boost_now", lang)), value=("Переписать сейчас", "Rewrite now")
                 )
 
+            # Поле переписанного промта видно, только пока буст включён или
+            # в поле есть текст: пустое, оно стояло под промтом всегда и
+            # отнимало сотню пикселей у тех, кто бустом не пользуется.
             boosted = localizer.bind(
-                gr.Textbox(label=pick("boost_result", lang), lines=3, interactive=True),
+                gr.Textbox(label=pick("boost_result", lang), lines=3, interactive=True, visible=False),
                 label=("Переписанный промт", "Rewritten prompt"),
             )
 
@@ -482,14 +487,14 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         keep = gr.update()
         payload, message = prompt_library.load(name, lang)
         if payload is None:
-            return (keep,) * (8 + 3 * lora.SLOTS) + (message,)
+            return (keep,) * (7 + 3 * lora.SLOTS) + (message,)
         fields = ("prompt", "negative_prompt", "styles", "preset", "aspect", "seed", "true_cfg_scale")
         values = [payload[key] if key in payload else keep for key in fields]
         if "loras" in payload:
             slots = list(lora_slots.values_for(studio.config.lora_dir, payload["loras"]))
         else:
             slots = [keep] * (3 * lora.SLOTS)
-        return (*values, *slots, name, message)
+        return (*values, *slots, message)
 
     delete = prompt_library.delete
 
@@ -504,6 +509,12 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         [prompt, references, ratio, language],
         [boosted, ratio, boost_enabled, boost_source, status],
     )
+
+    def show_rewritten(enabled, text):
+        return gr.update(visible=bool(enabled) or bool((text or "").strip()))
+
+    for trigger in (boost_enabled.change, boosted.change):
+        trigger(show_rewritten, [boost_enabled, boosted], boosted, queue=False, show_progress="hidden")
 
     run_button.click(
         run,
@@ -520,15 +531,15 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     prompts.save.click(
         save,
-        [prompts.name, prompt, negative, styles, quality, ratio, seed, cfg, language, loras.state],
+        [prompts.saved, prompt, negative, styles, quality, ratio, seed, cfg, language, loras.state],
         [prompts.saved, status],
     )
-    prompts.saved.input(
+    prompts.saved.select(
         load, [prompts.saved, language],
-        [prompt, negative, styles, quality, ratio, seed, cfg, *loras.components, prompts.name, status],
+        [prompt, negative, styles, quality, ratio, seed, cfg, *loras.components, status],
     )
     prompts.saved.focus(prompt_library.refresh, None, prompts.saved, queue=False)
-    prompts.delete.click(delete, [prompts.saved, language], [prompts.saved, prompts.name, status])
+    prompts.delete.click(delete, [prompts.saved, language], [prompts.saved, status])
 
     result.select(remember_selection, result, selected, queue=False)
     send_to_refs.click(

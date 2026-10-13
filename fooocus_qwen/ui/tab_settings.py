@@ -95,6 +95,12 @@ def _current_endpoint():
         return None
 
 
+def has_token() -> bool:
+    """Сохранён ли токен: от этого зависит, показывать ли «Убрать токен»."""
+    endpoint = _current_endpoint()
+    return bool(endpoint and endpoint.token)
+
+
 def describe_endpoint(lang: str) -> str:
     """Что настроено сейчас — без токена: о нём говорится только, есть ли он."""
     endpoint = _current_endpoint()
@@ -169,8 +175,10 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     gr.Button(pick("llm_check", lang), variant="primary"),
                     value=("Проверить связь", "Check connection"),
                 )
+            # Только когда токен есть: без него кнопке нечего убирать, а
+            # нажатие лишь повторяло строку «токен не задан».
             forget = localizer.bind(
-                gr.Button(pick("llm_forget_token", lang), size="sm"),
+                gr.Button(pick("llm_forget_token", lang), size="sm", visible=has_token()),
                 value=("Убрать токен", "Remove the token"),
             )
             endpoint_status = localizer.bind(
@@ -291,7 +299,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     def store_endpoint(address_text, token_text, lang):
         address_text = (address_text or "").strip()
         if not address_text:
-            return "", say("endpoint_need_address", lang)
+            return "", say("endpoint_need_address", lang), gr.update()
         current = _current_endpoint()
         # Пустое поле токена — «оставить прежний»: сервер токен не показывает,
         # и заставлять вводить его заново при каждой правке адреса нельзя.
@@ -300,18 +308,18 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         try:
             parse_endpoint_file(text)
         except ValueError as error:
-            return "", say("endpoint_bad_address", lang, error=error)
+            return "", say("endpoint_bad_address", lang, error=error), gr.update()
         config.ENDPOINT_FILE.write_text(text, encoding="utf-8")
-        return "", sentences(say("endpoint_saved", lang), describe_endpoint(lang))
+        return "", sentences(say("endpoint_saved", lang), describe_endpoint(lang)), gr.update(visible=has_token())
 
     def forget_token(lang):
         current = _current_endpoint()
         if current is None or not current.token:
-            return describe_endpoint(lang)
+            return describe_endpoint(lang), gr.update(visible=False)
         config.ENDPOINT_FILE.write_text(
             llm_setup.render(current.base_url, None, current.backend), encoding="utf-8"
         )
-        return sentences(say("token_forgotten", lang), describe_endpoint(lang))
+        return sentences(say("token_forgotten", lang), describe_endpoint(lang)), gr.update(visible=False)
 
     def check_connection(lang):
         # load_endpoint бросает FileNotFoundError (файла нет — обычное дело
@@ -384,8 +392,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     # input, а не change: change срабатывает и от программного обновления при
     # открытии вкладки, и каждое открытие «переключало» бы внимание.
     sage.input(toggle_sage, [sage, language], performance_status, concurrency_id=GPU_CONCURRENCY_ID)
-    save_endpoint.click(store_endpoint, [address, token, language], [token, endpoint_status])
-    forget.click(forget_token, language, endpoint_status)
+    save_endpoint.click(store_endpoint, [address, token, language], [token, endpoint_status, forget])
+    forget.click(forget_token, language, [endpoint_status, forget])
     check.click(check_connection, language, endpoint_status)
     chosen_file.change(load_prompt_file, [chosen_file, language], prompt_text)
     save_prompt_button.click(
@@ -407,6 +415,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             gr.update(value=chosen.sage_attention, interactive=attention.sage_available()),
             describe_performance(studio, lang),
             chosen.memory_profile,
+            gr.update(visible=bool(current and current.token)),
         )
 
     return {
@@ -418,5 +427,6 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         "sage": sage,
         "performance_status": performance_status,
         "memory_profile": memory_profile,
+        "forget": forget,
         "refresh": refresh,
     }

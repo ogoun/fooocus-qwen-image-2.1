@@ -79,8 +79,8 @@ def test_edit_tab_saves_loads_and_deletes_prompt_text(monkeypatch, tmp_path):
     assert "сохранён" in message
     assert library.load_prompt("улучшить", tmp_path) == {"prompt": "make it sharper"}
 
-    text, name, message = handlers["load_prompt_text"]("улучшить", "ru")
-    assert (text, name) == ("make it sharper", "улучшить")
+    text, message = handlers["load_prompt_text"]("улучшить", "ru")
+    assert text == "make it sharper"
     assert "загружен" in message
 
     *_, message = handlers["delete"]("улучшить", "ru")
@@ -108,4 +108,5 @@ def test_both_tabs_put_the_library_under_the_prompt(monkeypatch, tmp_path):
     for module in (tab_generate, tab_edit):
         components, _handlers_ = _handlers(monkeypatch, tmp_path, module)
         prompts = components["prompts"]
-        assert prompts.saved.label == "Saved prompts"  # язык запуска — английский
+        assert prompts.saved.label.startswith("Saved prompt —")
+        assert prompts.saved.allow_custom_value, "в то же поле вписывают новое имя"  # язык запуска — английский

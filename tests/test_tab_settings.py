@@ -93,7 +93,8 @@ def test_saving_with_an_empty_token_keeps_the_current_one(monkeypatch, tmp_path)
     _configure(tmp_path, "llama.cpp\n192.0.2.10:8000\ntoken=" + SECRET + "\n")
     handlers, _studio = _build_handlers(monkeypatch, tmp_path)
 
-    cleared, message = handlers["store_endpoint"]("192.0.2.20:9000", "", "ru")
+    cleared, message, forget = handlers["store_endpoint"]("192.0.2.20:9000", "", "ru")
+    assert forget["visible"] is True, "токен остался — кнопка «Убрать токен» видна"
 
     saved = load_endpoint(tmp_path / "llm_endpoint.txt")
     assert saved.base_url == "http://192.0.2.20:9000"
@@ -112,7 +113,8 @@ def test_a_new_token_replaces_the_old_one(monkeypatch, tmp_path):
 def test_the_token_can_be_removed(monkeypatch, tmp_path):
     _configure(tmp_path, "192.0.2.10:8000\ntoken=" + SECRET + "\n")
     handlers, _studio = _build_handlers(monkeypatch, tmp_path)
-    message = handlers["forget_token"]("ru")
+    message, forget = handlers["forget_token"]("ru")
+    assert forget["visible"] is False, "убирать больше нечего"
     assert load_endpoint(tmp_path / "llm_endpoint.txt").token is None
     assert "без токена" in message
 
@@ -120,7 +122,7 @@ def test_the_token_can_be_removed(monkeypatch, tmp_path):
 def test_saving_without_an_address_changes_nothing(monkeypatch, tmp_path):
     _configure(tmp_path, "192.0.2.10:8000\n")
     handlers, _studio = _build_handlers(monkeypatch, tmp_path)
-    _cleared, message = handlers["store_endpoint"]("   ", "x", "ru")
+    _cleared, message, _forget = handlers["store_endpoint"]("   ", "x", "ru")
     assert "адрес" in message.lower()
     assert load_endpoint(tmp_path / "llm_endpoint.txt").base_url == "http://192.0.2.10:8000"
 
@@ -177,7 +179,7 @@ def test_opening_the_tab_rereads_the_address(monkeypatch, tmp_path):
     assert components["address"].value == ""
 
     _configure(tmp_path, "192.0.2.10:8000\ntoken=" + SECRET + "\n")
-    address, status, _memory, _precision, _sage, _performance, _profile = components["refresh"]("ru")
+    address, status, _memory, _precision, _sage, _performance, _profile, _forget = components["refresh"]("ru")
     assert "192.0.2.10:8000" in address
     assert "192.0.2.10:8000" in status and SECRET not in status and SECRET not in address
 

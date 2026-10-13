@@ -1,14 +1,22 @@
 """Сохранённые промты — строка под полем промта на вкладках генерации и правки.
 
-Список, имя, «Сохранить», «Удалить». Хранилище одно на обе вкладки и на API:
-``user/prompts/*.json`` (``prompting.library``). Что сохраняет и что
-загружает вкладка — решает она сама: генерация — всю настройку (промт,
-негатив, стили, качество, пропорции, сид, cfg, LoRA), правка — только текст,
-не стирая остального под тем же именем (``library.update_prompt_text``).
+Подпись, одно поле и две кнопки — в одну строку высотой с кнопку. В поле
+выбирают сохранённый промт или вписывают новое имя, «Сохранить» пишет под
+тем, что в поле, «Удалить» удаляет выбранный. Прежде имя вводилось в
+отдельном поле рядом со списком, а подписи стояли над полями: строка
+занимала под промтом девяносто пикселей. Выбор и имя — одно и то же
+значение, и поле для них одно; подпись — слева, а не над ним.
 
-Загрузка — по ``input``, а не ``change``: после «Сохранить» список получает
-новое значение программно, и ``change`` тут же «загрузил» бы только что
-сохранённое, заменив в строке состояния «сохранён» на «загружен».
+Хранилище одно на обе вкладки и на API: ``user/prompts/*.json``
+(``prompting.library``). Что сохраняет и что загружает вкладка — решает она
+сама: генерация — всю настройку (промт, негатив, стили, качество, пропорции,
+сид, cfg, LoRA), правка — только текст, не стирая остального под тем же
+именем (``library.update_prompt_text``).
+
+Загрузка — по ``select`` (выбор строки списка), а не ``change``: ``change``
+срабатывал бы и на вписываемое имя, и на значение, которое список получает
+программно после «Сохранить», — то есть «загружал» бы только что
+сохранённое или несуществующее.
 """
 
 from __future__ import annotations
@@ -20,6 +28,7 @@ import gradio as gr
 
 from .. import config
 from ..prompting import library
+from . import layout
 from .i18n import Localizer, T, pick, say
 
 LOGGER = logging.getLogger(__name__)
@@ -30,7 +39,6 @@ class PromptLibrary:
     """Компоненты строки сохранённых промтов."""
 
     saved: object
-    name: object
     save: object
     delete: object
 
@@ -40,22 +48,29 @@ def names() -> list[str]:
 
 
 def build(localizer: Localizer, lang: str, elem_classes: list[str] | None = None) -> PromptLibrary:
-    with gr.Row(equal_height=True, elem_classes=elem_classes or []):
-        saved = localizer.bind(
-            gr.Dropdown(choices=names(), value=None, label=pick("load_prompt", lang), scale=3),
-            label=T["load_prompt"],
+    with gr.Row(elem_classes=[layout.PROMPT_LIBRARY, *(elem_classes or [])]):
+        localizer.bind(
+            gr.Markdown(pick("load_prompt", lang), elem_classes=[layout.PROMPT_LIBRARY_LABEL]),
+            value=T["load_prompt"],
         )
-        name = localizer.bind(
-            gr.Textbox(label=pick("preset_name", lang), max_lines=1, scale=3),
-            label=T["preset_name"],
+        # Подпись видна слева (Markdown выше), а label остаётся для экранных
+        # чтецов и подсказки: поле без рамки блока — высотой с кнопку.
+        saved = localizer.bind(
+            gr.Dropdown(
+                choices=names(), value=None, label=pick("load_prompt_hint", lang),
+                show_label=False, container=False,
+                allow_custom_value=True, filterable=True, scale=4,
+                elem_classes=[layout.PROMPT_LIBRARY_FIELD],
+            ),
+            label=T["load_prompt_hint"],
         )
         save = localizer.bind(
-            gr.Button(pick("save_prompt", lang), scale=1, min_width=120), value=T["save_prompt"],
+            gr.Button(pick("save_prompt", lang), size="sm", scale=0, min_width=130), value=T["save_prompt"],
         )
         delete = localizer.bind(
-            gr.Button(pick("delete_prompt", lang), scale=1, min_width=120), value=T["delete_prompt"],
+            gr.Button(pick("delete_prompt", lang), size="sm", scale=0, min_width=130), value=T["delete_prompt"],
         )
-    return PromptLibrary(saved=saved, name=name, save=save, delete=delete)
+    return PromptLibrary(saved=saved, save=save, delete=delete)
 
 
 def refresh():
@@ -85,15 +100,15 @@ def load(name: str | None, lang: str) -> tuple[dict | None, str]:
 
 
 def delete(name: str | None, lang: str):
-    """Ответ «Удалить»: (список, имя, строка состояния)."""
+    """Ответ «Удалить»: (список, строка состояния)."""
     if not name:
-        return gr.update(), gr.update(), say("preset_not_selected", lang)
+        return gr.update(), say("preset_not_selected", lang)
     try:
         removed = library.delete_prompt(name, config.PROMPT_DIR)
     except OSError as error:
         # Файл может быть открыт другой программой или лежать на томе,
         # доступном только на чтение: сказать об этом строкой состояния.
         LOGGER.warning("Preset '%s' not deleted: %s", name, error)
-        return gr.update(), gr.update(), say("preset_delete_failed", lang, name=name, error=error)
+        return gr.update(), say("preset_delete_failed", lang, name=name, error=error)
     message = say("preset_deleted", lang, name=name) if removed else say("preset_missing", lang)
-    return gr.update(choices=names(), value=None), "", message
+    return gr.update(choices=names(), value=None), message

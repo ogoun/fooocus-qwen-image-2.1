@@ -558,11 +558,97 @@ footer { display: none !important; }
     flex: 1 1 100% !important;
 }
 
+/* Варианты в столбик — плотнее штатного: девять пресетов качества с
+   отступами Gradio занимали около пятисот пикселей, и на окне 1366×768
+   строка состояния под ними уходила за нижний край. */
+.qs-choices label {
+    padding-top: 5px !important;
+    padding-bottom: 5px !important;
+}
+
 /* Строка промта с кнопками: на узком окне кнопки уезжают под поле ввода,
    вместо того чтобы отгрызать у него ширину. */
 @media (max-width: 720px) {
     .qs-bar { flex-direction: column !important; }
     .qs-bar > * { width: 100% !important; min-width: 0 !important; }
+}
+
+/* Сохранённые промты: поле и малые кнопки по его нижнему краю, а не в рост
+   блока — строка под промтом не должна быть выше самого промта. */
+.qs-library {
+    align-items: center !important;
+    flex-wrap: nowrap !important;
+}
+
+/* Подпись — по содержимому, в одну строку и без отступов абзаца. */
+.qs-librarylabel {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    white-space: nowrap !important;
+}
+
+.qs-librarylabel * {
+    margin: 0 !important;
+}
+
+.qs-libraryfield {
+    flex: 1 1 0 !important;
+    min-width: 0 !important;
+}
+
+/* На телефоне подпись и поле — в первую строку, кнопки — поровну во вторую. */
+@media (max-width: 720px) {
+    .qs-library { flex-wrap: wrap !important; }
+    .qs-libraryfield { flex: 1 1 60% !important; }
+    .qs-library > button { flex: 1 1 40% !important; min-width: 0 !important; }
+}
+
+/* Телефон: сетка референсов — над холстом, а не рядом. Рядом при ширине
+   430 px оставалось по сотне пикселей и сетке, и холсту: ячейки сжимались
+   в полоски, где значок загрузки налезал на кнопки позы и эскиза, а кисть
+   правки показывала кадр в масштабе 2 % и вылезала за край колонки.
+   Пары ячеек встают по две в строку (ячейка около девяноста пикселей),
+   заголовок и кнопка — каждый на свою строку. */
+@media (max-width: 720px) {
+    .qs-resultrow {
+        flex-direction: column !important;
+    }
+    .qs-slot-editor > .qs-resultrow {
+        height: auto !important;
+    }
+    .qs-refs {
+        flex: 0 0 auto !important;
+        width: 100% !important;
+        contain: none !important;
+        flex-direction: row !important;
+        flex-wrap: wrap !important;
+    }
+    .qs-refs > :not(.qs-refrow) {
+        flex: 1 1 100% !important;
+    }
+    .qs-refrow {
+        flex: 0 0 calc(50% - 3px) !important;
+        aspect-ratio: 2 / 1.25 !important;
+    }
+    .qs-resultrow > .qs-board {
+        flex: 0 0 auto !important;
+        width: 100% !important;
+    }
+}
+
+/* Галерея на узком окне. Gradio строит её сетку из колонок не уже 100 px
+   (`minmax(100px, 1fr)`) в числе, которое выбирает сам, и на телефоне
+   четыре колонки не влезали в 315 px — последняя обрезалась краем.
+   Число колонок — переменная, которую Gradio ставит в атрибут style сетки;
+   правило с `!important` его перекрывает. Селектор по атрибуту, а не по
+   классу Gradio: имена классов меняются от версии к версии. */
+@media (max-width: 560px) {
+    .qs-browse [style*="--grid-cols"] { --grid-cols: 2 !important; }
+}
+
+@media (min-width: 561px) and (max-width: 800px) {
+    .qs-browse [style*="--grid-cols"] { --grid-cols: 3 !important; }
 }
 
 /* Полоса состояния не должна разрастаться от длинного сообщения: тексты про

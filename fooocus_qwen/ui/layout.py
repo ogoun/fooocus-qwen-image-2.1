@@ -100,6 +100,11 @@ SLOT_RESULT = "qs-slot-result"
 # некуда отправлять, и нажатие кончалось ошибкой.
 GALLERY_BUTTONS: list[str] = ["download", "fullscreen"]
 PROMPT_BAR = "qs-bar"
+# Строка сохранённых промтов под полем промта: поле и две малые кнопки по
+# его нижнему краю (ui/prompt_library.py).
+PROMPT_LIBRARY = "qs-library"
+PROMPT_LIBRARY_LABEL = "qs-librarylabel"
+PROMPT_LIBRARY_FIELD = "qs-libraryfield"
 STATUS = "qs-status"
 # Переключатель языка висит в правом верхнем углу поверх полосы вкладок.
 LANG = "qs-lang"

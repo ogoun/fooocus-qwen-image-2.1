@@ -146,9 +146,14 @@ T: dict[str, tuple[str, str]] = {
     "result": ("Результат", "Result"),
     "save": ("Сохранить", "Save"),
     "save_prompt": ("Сохранить промт", "Save prompt"),
+    # Строка сохранённых промтов (ui/prompt_library.py): подпись слева и
+    # название поля, где выбирают промт или вписывают новое имя.
     "load_prompt": ("Сохранённые промты", "Saved prompts"),
+    "load_prompt_hint": (
+        "Сохранённый промт — выбрать или вписать новое имя",
+        "Saved prompt — pick one or type a new name",
+    ),
     "delete_prompt": ("Удалить промт", "Delete prompt"),
-    "preset_name": ("Имя для сохранения", "Name to save as"),
     "status": ("Состояние", "Status"),
     "mask_mode": ("Режим области", "Region mode"),
     "mask_mode_none": ("Без области — править весь кадр", "No region — edit the whole frame"),

@@ -40,6 +40,20 @@ from .state import GPU_CONCURRENCY_ID, describe_failure, seeds_phrase
 
 LOGGER = logging.getLogger(__name__)
 
+# После правки — к результату, если он за нижним краем окна. Ниже 2000 px
+# результат стоит под кистью и промтом (style.css, порог замерен), и на FHD
+# готовый кадр оказывался за краем экрана: человек жал «Применить правку» и
+# не видел, что что-то произошло. Прокрутка — только когда в поле есть
+# картинка (сбой оставляет его пустым, причина — в строке состояния справа)
+# и только когда поле не видно: на широком окне оно рядом с кистью.
+SCROLL_TO_RESULT_JS = f"""() => {{
+    const board = [...document.querySelectorAll('.{layout.PREVIEW}')].find(e => e.offsetParent);
+    if (!board || !board.querySelector('img')) return;
+    const r = board.getBoundingClientRect();
+    if (r.top > window.innerHeight - 120 || r.bottom < 0)
+        board.scrollIntoView({{behavior: 'smooth', block: 'center'}});
+}}"""
+
 # Цвета из примера в блоге: три области, три инструкции в одном промте.
 ANNOTATION_COLOURS: tuple[str, ...] = ("#ff0000", "#0000ff", "#00ff00", "#ffff00", "#ffffff")
 
@@ -249,13 +263,13 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     )
                     with gr.Row():
                         send_back = localizer.bind(
-                            gr.Button(pick("send_to_edit", lang)),
+                            gr.Button(pick("send_to_edit", lang), size="sm"),
                             value=("Отправить в редактор", "Send to editor"),
                         )
                         # Связывается в app.py: кладёт результат в референсы
                         # вкладки генерации — продолжить работу с ним там.
                         send_to_refs = localizer.bind(
-                            gr.Button(pick("send_to_references", lang)),
+                            gr.Button(pick("send_to_references", lang), size="sm"),
                             value=("Отправить в референсы", "Send to references"),
                         )
 
@@ -652,6 +666,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     # значение: синхронизация со страницы отложенная, и без этого последний
     # мазок перед нажатием мог не успеть. Кисть — первый вход у всех трёх.
     flush = painter.flush_js(PAINTER_ID)
+
+    def reveal_result():
+        """Прокрутку к результату делает SCROLL_TO_RESULT_JS в браузере; серверу делать нечего."""
     # Соотношение задаёт холст само: стороны и доля тогда не действуют —
     # и не показываются, чтобы не обещать того, чего не будет.
     outpaint_ratio.change(
@@ -664,7 +681,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         [result, status],
         concurrency_id=GPU_CONCURRENCY_ID,
         js=flush,
-    )
+    ).success(reveal_result, None, None, js=SCROLL_TO_RESULT_JS, queue=False, show_progress="hidden")
     describe_button.click(describe, [editor, language], [prompt, status], js=flush)
     run_button.click(
         run,
@@ -674,7 +691,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         # Та же группа очереди, что и у «Сгенерировать»: видеокарта одна.
         concurrency_id=GPU_CONCURRENCY_ID,
         js=flush,
-    )
+    ).success(reveal_result, None, None, js=SCROLL_TO_RESULT_JS, queue=False, show_progress="hidden")
     stop_button.click(stop, language, status, queue=False)
 
     def save_prompt_text(name, text, lang):
@@ -688,13 +705,13 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     def load_prompt_text(name, lang):
         payload, message = prompt_library.load(name, lang)
         if payload is None:
-            return gr.update(), gr.update(), message
-        return payload.get("prompt", ""), name, message
+            return gr.update(), message
+        return payload.get("prompt", ""), message
 
-    prompts.save.click(save_prompt_text, [prompts.name, prompt, language], [prompts.saved, status])
-    prompts.saved.input(load_prompt_text, [prompts.saved, language], [prompt, prompts.name, status])
+    prompts.save.click(save_prompt_text, [prompts.saved, prompt, language], [prompts.saved, status])
+    prompts.saved.select(load_prompt_text, [prompts.saved, language], [prompt, status])
     prompts.saved.focus(prompt_library.refresh, None, prompts.saved, queue=False)
-    prompts.delete.click(prompt_library.delete, [prompts.saved, language], [prompts.saved, prompts.name, status])
+    prompts.delete.click(prompt_library.delete, [prompts.saved, language], [prompts.saved, status])
     result.select(remember_selection, result, selected, queue=False)
     send_back.click(take_back, [result, selected, language], [editor, status])
     mode.change(show_region, mode, editor, queue=False)
