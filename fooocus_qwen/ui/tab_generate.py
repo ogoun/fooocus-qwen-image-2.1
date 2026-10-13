@@ -23,7 +23,7 @@ from ..imaging import aspect, metadata
 from ..prompting import boost as boost_module
 from ..prompting import library
 from ..storage import gallery
-from . import layout, lora_slots, reference_tools
+from . import layout, lora_slots, prompt_library, reference_tools
 from . import quality as quality_choices
 from . import references as references_module
 from .i18n import Localizer, T, pick, say, sentences
@@ -189,6 +189,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     stop_button = localizer.bind(
                         gr.Button(pick("stop", lang), variant="stop"), value=("Прервать", "Stop")
                     )
+            # Сохранённые промты — у поля промта, а не в «Продвинутом»: там
+            # их не находили (ui/prompt_library.py).
+            prompts = prompt_library.build(localizer, lang)
 
             with gr.Row():
                 boost_enabled = localizer.bind(
@@ -317,25 +320,6 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         "Speeds generation up. Toggling it changes the result for the same seed.",
                     ),
                 )
-
-                preset_name = localizer.bind(
-                    gr.Textbox(label=pick("preset_name", lang)),
-                    label=("Имя для сохранения", "Name to save as"),
-                )
-                saved = localizer.bind(
-                    gr.Dropdown(
-                        choices=library.list_prompts(config.PROMPT_DIR),
-                        label=pick("load_prompt", lang),
-                    ),
-                    label=("Сохранённые промты", "Saved prompts"),
-                )
-                with gr.Row():
-                    save_button = localizer.bind(
-                        gr.Button(pick("save_prompt", lang)), value=("Сохранить промт", "Save prompt")
-                    )
-                    delete_button = localizer.bind(
-                        gr.Button(pick("delete_prompt", lang)), value=("Удалить промт", "Delete prompt")
-                    )
 
             # LoRA — аккордеоном под «Продвинутым», как вкладка Models у Fooocus.
             loras = lora_slots.build(localizer, lang, language, studio.config.lora_dir)
@@ -469,6 +453,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         name, prompt_text, negative_text, style_names, quality_name, ratio_value,
         seed_value, cfg_value, lang, lora_state=None,
     ):
+        # Генерация сохраняет всю настройку: загрузка вернёт её разом.
         if not (name or "").strip():
             return gr.update(), say("preset_name_required", lang)
         library.save_prompt(
@@ -485,49 +470,28 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             },
             config.PROMPT_DIR,
         )
-        return (
-            gr.update(choices=library.list_prompts(config.PROMPT_DIR), value=name),
-            say("preset_saved", lang, name=name),
-        )
+        return prompt_library.after_save(name, lang)
 
     def load(name, lang):
-        keep = (gr.update(),) * (7 + 3 * lora.SLOTS)
-        if not name:
-            return keep + (say("preset_not_selected", lang),)
-        # Пресет мог быть удалён или испорчен мимо приложения: файлы лежат в
-        # user/prompts/ и правятся чем угодно. load_prompt() сообщает об этом
-        # исключением (FileNotFoundError либо ValueError), и выбор строки в
-        # выпадающем списке не должен превращаться в тост с трейсбеком. То же
-        # снисхождение, что и у tab_gallery.restore_fields к чужому PNG.
-        try:
-            payload = library.load_prompt(name, config.PROMPT_DIR)
-        except (FileNotFoundError, ValueError, OSError) as error:
-            LOGGER.warning("Preset '%s' not loaded: %s", name, error)
-            return keep + (say("preset_load_failed", lang, name=name, error=error),)
-        return (
-            payload.get("prompt", ""),
-            payload.get("negative_prompt", ""),
-            payload.get("styles", []),
-            payload.get("preset", presets.DEFAULT),
-            payload.get("aspect", "1:1"),
-            payload.get("seed", -1),
-            payload.get("true_cfg_scale", 1.0),
-            *lora_slots.values_for(studio.config.lora_dir, payload.get("loras")),
-            say("preset_loaded", lang, name=name),
-        )
+        """Поля из сохранённого промта; чего в нём нет, остаётся как было.
 
-    def delete(name, lang):
-        try:
-            removed = library.delete_prompt(name, config.PROMPT_DIR)
-        except OSError as error:
-            # Файл может быть открыт другой программой или лежать на томе,
-            # доступном только на чтение: сказать об этом строкой состояния.
-            LOGGER.warning("Preset '%s' not deleted: %s", name, error)
-            return gr.update(), say("preset_delete_failed", lang, name=name, error=error)
-        message = (
-            say("preset_deleted", lang, name=name) if removed else say("preset_missing", lang)
-        )
-        return gr.update(choices=library.list_prompts(config.PROMPT_DIR), value=None), message
+        Промт, сохранённый на вкладке правки или поставленный по умолчанию
+        (Upscale), — только текст: он не должен сбрасывать качество, стили
+        и LoRA к значениям по умолчанию.
+        """
+        keep = gr.update()
+        payload, message = prompt_library.load(name, lang)
+        if payload is None:
+            return (keep,) * (8 + 3 * lora.SLOTS) + (message,)
+        fields = ("prompt", "negative_prompt", "styles", "preset", "aspect", "seed", "true_cfg_scale")
+        values = [payload[key] if key in payload else keep for key in fields]
+        if "loras" in payload:
+            slots = list(lora_slots.values_for(studio.config.lora_dir, payload["loras"]))
+        else:
+            slots = [keep] * (3 * lora.SLOTS)
+        return (*values, *slots, name, message)
+
+    delete = prompt_library.delete
 
     # Референсы — по позициям ячеек, с дырами: картинка или None на каждую
     # из десяти. В модель уходят только заполненные (``filled``).
@@ -554,15 +518,17 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     # Кнопка остановки должна срабатывать, пока генерация занимает очередь.
     stop_button.click(stop, language, status, queue=False)
 
-    save_button.click(
+    prompts.save.click(
         save,
-        [preset_name, prompt, negative, styles, quality, ratio, seed, cfg, language, loras.state],
-        [saved, status],
+        [prompts.name, prompt, negative, styles, quality, ratio, seed, cfg, language, loras.state],
+        [prompts.saved, status],
     )
-    saved.change(
-        load, [saved, language], [prompt, negative, styles, quality, ratio, seed, cfg, *loras.components, status],
+    prompts.saved.input(
+        load, [prompts.saved, language],
+        [prompt, negative, styles, quality, ratio, seed, cfg, *loras.components, prompts.name, status],
     )
-    delete_button.click(delete, [saved, language], [saved, status])
+    prompts.saved.focus(prompt_library.refresh, None, prompts.saved, queue=False)
+    prompts.delete.click(delete, [prompts.saved, language], [prompts.saved, prompts.name, status])
 
     result.select(remember_selection, result, selected, queue=False)
     send_to_refs.click(
@@ -594,4 +560,5 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         "references": references,
         "advanced": advanced,
         "loras": loras,
+        "prompts": prompts,
     }

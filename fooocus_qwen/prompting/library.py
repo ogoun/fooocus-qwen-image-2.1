@@ -169,6 +169,57 @@ def list_prompts(directory: Path) -> list[str]:
     return sorted(names)
 
 
+def update_prompt_text(name: str, text: str, directory: Path) -> Path:
+    """Сохраняет текст промта, не трогая остальное в пресете с тем же именем.
+
+    Вкладка правки знает только текст: перезапись целиком стёрла бы
+    настройки, сохранённые под этим именем на вкладке генерации.
+    """
+    try:
+        payload = load_prompt(name, directory)
+    except (FileNotFoundError, ValueError):
+        payload = {}
+    payload["prompt"] = text
+    return save_prompt(name, payload, directory)
+
+
+# Имена промтов по умолчанию, уже предложенных пользователю. Не ``*.json``:
+# list_prompts принял бы файл за испорченный пресет.
+_DEFAULTS_MARK = ".defaults"
+
+
+def install_defaults(source: Path, directory: Path) -> list[str]:
+    """Кладёт промты по умолчанию из поставки в каталог пользователя.
+
+    Каждый — один раз: удалённый пользователем не возвращается при
+    следующем запуске, изменённый не перезаписывается. Возвращает имена
+    добавленных сейчас.
+    """
+    if not source.is_dir():
+        return []
+    mark = directory / _DEFAULTS_MARK
+    try:
+        offered = set(mark.read_text(encoding="utf-8").splitlines())
+    except OSError:
+        offered = set()
+    added: list[str] = []
+    for path in sorted(source.glob("*.json")):
+        payload, error_msg = _load_payload(path)
+        if error_msg is not None:
+            LOGGER.warning("%s; default prompt skipped", error_msg)
+            continue
+        name = str(payload.pop(_NAME_KEY, path.stem)).strip()
+        if name in offered:
+            continue
+        offered.add(name)
+        if _resolve_candidates(name, directory).match is None:
+            save_prompt(name, payload, directory)
+            added.append(name)
+    directory.mkdir(parents=True, exist_ok=True)
+    mark.write_text("".join(f"{name}\n" for name in sorted(offered)), encoding="utf-8")
+    return added
+
+
 def delete_prompt(name: str, directory: Path) -> bool:
     """Удаляет пресет, найдя его по дисплей-имени среди коллизий."""
     resolution = _resolve_candidates(name, directory)

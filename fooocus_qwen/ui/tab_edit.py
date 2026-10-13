@@ -30,8 +30,9 @@ from ..engine.generator import (
 from ..imaging import aspect as aspect_module
 from ..imaging import masking, metadata, outpaint
 from ..prompting import boost as boost_module
+from ..prompting import library
 from ..storage import gallery
-from . import layout, lora_slots, painter, reference_tools
+from . import layout, lora_slots, painter, prompt_library, reference_tools
 from . import quality as quality_choices
 from . import references as references_module
 from .i18n import Localizer, T, painter_labels, pick, say, sentences
@@ -277,6 +278,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     stop_button = localizer.bind(
                         gr.Button(pick("stop", lang), variant="stop"), value=("Прервать", "Stop")
                     )
+            # Сохранённые промты — общие с генерацией; место на узком экране —
+            # то же, что у промта (SLOT_PROMPT): строка идёт сразу под ним.
+            prompts = prompt_library.build(localizer, lang, [layout.SLOT_PROMPT])
 
             with gr.Row(elem_classes=[layout.SLOT_ACTIONS]):
                 boost_enabled = localizer.bind(
@@ -672,6 +676,25 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         js=flush,
     )
     stop_button.click(stop, language, status, queue=False)
+
+    def save_prompt_text(name, text, lang):
+        # Правка сохраняет только текст: настройки генерации под тем же
+        # именем остаются (library.update_prompt_text).
+        if not (name or "").strip():
+            return gr.update(), say("preset_name_required", lang)
+        library.update_prompt_text(name, text or "", config.PROMPT_DIR)
+        return prompt_library.after_save(name, lang)
+
+    def load_prompt_text(name, lang):
+        payload, message = prompt_library.load(name, lang)
+        if payload is None:
+            return gr.update(), gr.update(), message
+        return payload.get("prompt", ""), name, message
+
+    prompts.save.click(save_prompt_text, [prompts.name, prompt, language], [prompts.saved, status])
+    prompts.saved.input(load_prompt_text, [prompts.saved, language], [prompt, prompts.name, status])
+    prompts.saved.focus(prompt_library.refresh, None, prompts.saved, queue=False)
+    prompts.delete.click(prompt_library.delete, [prompts.saved, language], [prompts.saved, prompts.name, status])
     result.select(remember_selection, result, selected, queue=False)
     send_back.click(take_back, [result, selected, language], [editor, status])
     mode.change(show_region, mode, editor, queue=False)
@@ -699,5 +722,6 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         "selected": selected,
         "send_to_references": send_to_refs,
         "prompt": prompt,
+        "prompts": prompts,
         "status": status,
     }

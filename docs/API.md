@@ -259,7 +259,7 @@ Saved prompts are the same files as the interface's saved prompts, in
 | Endpoint | |
 |---|---|
 | `GET /api/v1/prompts` | names |
-| `GET /api/v1/prompts/{name}` | `{"prompt", "negative_prompt", "styles", "preset", "aspect", "seed", "true_cfg_scale", "loras"}` |
+| `GET /api/v1/prompts/{name}` | the fields that were saved: `{"prompt", "negative_prompt", "styles", "preset", "aspect", "seed", "true_cfg_scale", "loras"}` from the Generate tab or the API, only `{"prompt"}` from the Edit tab and for the shipped **Upscale** |
 | `PUT /api/v1/prompts/{name}` | save; returns what was stored |
 | `DELETE /api/v1/prompts/{name}` | |
 

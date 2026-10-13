@@ -93,7 +93,7 @@ def test_delete_survives_a_filesystem_refusal(monkeypatch, tmp_path):
 
     monkeypatch.setattr(library, "delete_prompt", refuse)
 
-    _update, message = handlers["delete"]("занятый", "ru")
+    *_updates, message = handlers["delete"]("занятый", "ru")
     assert "не удалён" in message
 
 

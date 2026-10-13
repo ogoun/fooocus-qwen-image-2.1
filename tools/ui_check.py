@@ -1635,11 +1635,90 @@ def scenario_formats(browser, url, report: Report, samples: Path) -> None:
     page.close()
 
 
+def pick_saved_prompt(page, name: str) -> None:
+    """Выбор в «Saved prompts» видимой вкладки; щелчок по полю освежает список."""
+    visible_input(page, "Saved prompts").click()
+    page.wait_for_timeout(500)
+    page.get_by_role("option", name=name, exact=True).first.click()
+    page.wait_for_timeout(800)
+
+
+def rows_follow(page) -> dict:
+    """Где строка промтов относительно поля промта и строки действий (видимая вкладка)."""
+    return page.evaluate("""() => {
+        const vis = s => [...document.querySelectorAll(s)].find(e => e.offsetParent);
+        const lib = vis('input[aria-label="Saved prompts"]').closest('.row');
+        const bar = vis('.qs-bar').getBoundingClientRect();
+        const row = lib.getBoundingClientRect();
+        const actions = vis('.qs-slot-actions');
+        return {bar_bottom: bar.bottom, lib_top: row.top, lib_bottom: row.bottom,
+                actions_top: actions ? actions.getBoundingClientRect().top : null,
+                width: row.width, bar_width: bar.width};
+    }""")
+
+
+def scenario_prompts(browser, url, report: Report, samples: Path) -> None:
+    """Сохранённые промты под полем промта: Upscale по умолчанию, общий список вкладок."""
+    from fooocus_qwen.prompting import library
+
+    print("saved prompts:")
+    for width, height in ((1920, 1080), (1100, 800)):
+        page, errors = fresh_page(browser, url, width, height)
+        for tab, name in ((0, "Generate"), (1, "Edit")):
+            open_tab(page, tab)
+            box = rows_follow(page)
+            below = box["lib_top"] >= box["bar_bottom"] - 1 and box["lib_top"] - box["bar_bottom"] < 40
+            if box["actions_top"] is not None:
+                below = below and box["lib_bottom"] <= box["actions_top"] + 1
+            report.check(below, f"{width}×{height} {name}: the saved-prompts row sits right under the prompt ({box})")
+        shot = samples.parent / f"prompts_{width}.png"
+        page.screenshot(path=str(shot), full_page=True)
+        print(f"  screenshot: {shot}")
+        report.check(not errors, "no page errors" + (f": {errors[:2]}" if errors else ""))
+        page.close()
+
+    page, errors = fresh_page(browser, url)
+    pick_saved_prompt(page, "Upscale")
+    prompt = visible_input(page, "Prompt").input_value()
+    report.check(prompt.startswith("LOW-LEVEL PHOTOGRAPHIC RESTORATION ONLY."), "Generate: Upscale is there by default and loads")
+    report.check(visible_input(page, "Name to save as").input_value() == "Upscale", "the loaded name fills the name field")
+
+    visible_input(page, "Prompt").fill("a red fox")
+    visible_input(page, "Name to save as").fill("Fox")
+    click_text(page, "Save prompt")
+    page.wait_for_function("() => document.body.innerText.includes('Prompt “Fox” saved') || "
+                           "[...document.querySelectorAll('textarea')].some(t => t.value.includes('Prompt “Fox” saved'))",
+                           timeout=10000)
+    saved = library.load_prompt("Fox", config.PROMPT_DIR)
+    report.check(saved.get("prompt") == "a red fox" and "seed" in saved, "Generate saves the whole setup")
+
+    open_tab(page, 1)
+    pick_saved_prompt(page, "Fox")
+    report.check(visible_input(page, "Prompt").input_value() == "a red fox",
+                 "Edit: a prompt saved on Generate shows up without reloading the page")
+    visible_input(page, "Prompt").fill("a red fox, sharper")
+    click_text(page, "Save prompt")
+    page.wait_for_timeout(1000)
+    saved = library.load_prompt("Fox", config.PROMPT_DIR)
+    report.check(saved.get("prompt") == "a red fox, sharper" and "seed" in saved,
+                 "Edit saves the text and keeps the generation setup under the same name")
+    click_text(page, "Delete prompt")
+    page.wait_for_timeout(1000)
+    report.check("Fox" not in library.list_prompts(config.PROMPT_DIR), "Edit: delete removes the prompt")
+    visible_input(page, "Saved prompts").click()
+    page.wait_for_timeout(500)
+    options = [item.inner_text() for item in page.get_by_role("option").all() if item.is_visible()]
+    page.keyboard.press("Escape")
+    report.check("Fox" not in options and "Upscale" in options, f"the list follows: {options}")
+    report.check(not errors, "no page errors" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Browser check of the interface")
     parser.add_argument("--port", type=int, default=7899)
     parser.add_argument("--only", nargs="*", default=None,
-                        help="layout language painter annotation outpaint latency paste gallery send references tools viewer sketch poses performance secret formats")
+                        help="layout language painter annotation outpaint latency paste gallery send references tools viewer sketch poses performance secret formats prompts")
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
@@ -1672,6 +1751,10 @@ def main() -> int:
     # Свои позы живут в каталоге генераций (config.user_pose_dir) и уезжают во
     # временный вместе с ним. Каталог поз и веса DWPose — настоящие, для чтения.
     config.ensure_directories()
+    # Промты по умолчанию — как при запуске (__main__): в свой каталог прогона.
+    from fooocus_qwen.prompting import library as prompt_library
+
+    prompt_library.install_defaults(config.DEFAULT_PROMPT_DIR, config.PROMPT_DIR)
 
     fake = FakeGenerator()
     # Сценарии ищут на странице подписи английского интерфейса — он по
@@ -1705,6 +1788,7 @@ def main() -> int:
         "performance": lambda b, r: scenario_performance(b, url, r, fake, samples),
         "secret": lambda b, r: scenario_secret(b, url, r),
         "formats": lambda b, r: scenario_formats(b, url, r, samples),
+        "prompts": lambda b, r: scenario_prompts(b, url, r, samples),
     }
     chosen = args.only or list(scenarios)
     report = Report()

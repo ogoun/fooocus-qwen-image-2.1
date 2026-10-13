@@ -71,6 +71,10 @@ down to an 8 GB laptop.
 - **AI boost**: an external OpenAI-compatible language model (llama.cpp, vLLM,
   LM Studio) rewrites short prompts into detailed ones, using the official
   Qwen rewriting prompts. It also works with text-only models.
+- **Saved prompts** right under the prompt field on both tabs: pick one to
+  load it, type a name and save, delete. Ships with **Upscale**, a
+  restoration prompt for the Edit tab: a higher resolution, corrected gamma
+  and white balance, faces left exactly as they are.
 - **Gallery** with each image's parameters stored inside the PNG: reuse them,
   send the image back to the editor, or restore parameters from any PNG file.
 - **Bilingual interface** (English / Russian), switchable at any time.
@@ -682,7 +686,7 @@ fooocus_qwen/
   poses/       OpenPose skeletons, pose recognition (DWPose), the pose library, pose tiles
   ui/          Gradio tabs, the mask brush (ui/painter/), reference tools, layout, translations
   api/         the HTTP API (--api): FastAPI routes, job queue, Bearer token
-resources/     Fooocus styles, the Qwen system prompts, the "Add a pose" tile
+resources/     Fooocus styles, the Qwen system prompts, default saved prompts, the "Add a pose" tile
 loras/         your LoRA files (git-ignored; --lora-dir points elsewhere)
 tools/         smoke test, benchmark, UI check, screenshot builder, experiments
 docs/          architecture, usage guide, benchmark, research notes (in Russian)

@@ -113,7 +113,8 @@ def test_load_restores_the_saved_fields(monkeypatch, tmp_path):
     loaded = handlers["load"]("пресет", "ru")
     prompt_text, negative_text, style_names, quality_name, ratio_value, seed_value, cfg_value = loaded[:7]
     message = loaded[-1]
-    assert loaded[7:-1] == (False, "", 1.0) * 5, "промт без LoRA очищает ячейки"
+    assert loaded[7:-2] == (False, "", 1.0) * 5, "промт без LoRA очищает ячейки"
+    assert loaded[-2] == "пресет", "имя выбранного — в поле имени: пересохранить одним нажатием"
 
     assert prompt_text == "промт"
     assert negative_text == "негатив"
@@ -129,12 +130,27 @@ def test_delete_removes_the_preset_and_reports_when_missing(monkeypatch, tmp_pat
     handlers = _build_handlers(monkeypatch, tmp_path)
 
     handlers["save"]("временный", "промт", "", [], "LowQuality", "1:1", -1, 1.0, "ru")
-    update, message = handlers["delete"]("временный", "ru")
+    _choices, name, message = handlers["delete"]("временный", "ru")
+    assert name == ""
     assert not list(tmp_path.glob("*.json"))
     assert "удалён" in message
 
-    _, missing_message = handlers["delete"]("временный", "ru")
+    *_, missing_message = handlers["delete"]("временный", "ru")
     assert "не найден" in missing_message
+
+
+def test_a_text_only_prompt_leaves_the_other_fields_alone(monkeypatch, tmp_path):
+    # Upscale и промты с вкладки правки — только текст: качество, стили и
+    # LoRA при их загрузке остаются как были, а не сбрасываются.
+    from fooocus_qwen.prompting import library
+
+    handlers = _build_handlers(monkeypatch, tmp_path)
+    library.save_prompt("Upscale", {"prompt": "restore"}, tmp_path)
+
+    loaded = handlers["load"]("Upscale", "ru")
+    assert loaded[0] == "restore"
+    assert all(isinstance(item, dict) and set(item) == {"__type__"} for item in loaded[1:-2])
+    assert loaded[-2] == "Upscale"
 
 
 def test_save_rejects_an_empty_name(monkeypatch, tmp_path):

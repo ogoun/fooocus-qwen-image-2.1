@@ -252,6 +252,10 @@ def main(argv: list[str] | None = None) -> int:
         return generate_once(args)
 
     cfg = config.parse_args(argv)
+    # Промты по умолчанию (Upscale) — и интерфейсу, и API: список у них общий.
+    from .prompting import library
+
+    library.install_defaults(config.DEFAULT_PROMPT_DIR, config.PROMPT_DIR)
     if cfg.api:
         # Только API: интерфейс не собирается, вход в него не нужен.
         if cfg.auth:

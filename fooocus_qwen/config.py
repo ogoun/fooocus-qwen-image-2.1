@@ -42,6 +42,9 @@ LORA_DIR = PROJECT_ROOT / "loras"
 RESOURCES_DIR = PROJECT_ROOT / "resources"
 STYLES_DIR = RESOURCES_DIR / "styles"
 SYSTEM_PROMPT_DIR = RESOURCES_DIR / "prompts"
+# Сохранённые промты по умолчанию (Upscale и др.): при запуске копируются в
+# PROMPT_DIR по одному разу (prompting.library.install_defaults).
+DEFAULT_PROMPT_DIR = RESOURCES_DIR / "default_prompts"
 
 USER_DIR = PROJECT_ROOT / "user"
 OUTPUT_DIR = USER_DIR / "outputs"
