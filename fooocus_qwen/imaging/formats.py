@@ -35,8 +35,10 @@ iPhone — в Display P3, без перевода цвета тускнеют), 
 
 from __future__ import annotations
 
+import importlib.util
 import io
 import logging
+import sys
 from pathlib import Path
 
 import numpy as np
@@ -75,6 +77,18 @@ _registered = False
 # Расширение → пакет, которого не нашлось: ошибка назовёт, что поставить.
 _missing: dict[str, str] = {}
 
+# Модуль → (пакет pip, что без него не откроется). Установка ставит их из
+# requirements.txt; окружение, обновлённое через git pull, может их не иметь.
+PACKAGES: dict[str, tuple[str, str]] = {
+    "pillow_heif": ("pillow-heif", "HEIC/HEIF"),
+    "pillow_jxl": ("pillow-jxl-plugin", "JPEG XL"),
+    "rawpy": ("rawpy", "camera RAW"),
+    "OpenEXR": ("OpenEXR", "EXR"),
+}
+INSTALL_HINT = (
+    ".venv\\Scripts\\python" if sys.platform == "win32" else ".venv/bin/python"
+) + " -m pip install -r requirements.txt"
+
 
 class FormatError(ValueError):
     """Файл не картинка или формат не поддержан; текст — для человека."""
@@ -101,12 +115,23 @@ def register() -> None:
         pillow_heif.register_heif_opener()
     except ImportError:
         _missing.update(dict.fromkeys((".heic", ".heif", ".hif"), "pillow-heif"))
-        LOGGER.warning("pillow-heif is not installed: HEIC/HEIF images cannot be opened")
     try:
         import pillow_jxl  # noqa: F401 — регистрирует открыватель при импорте
     except ImportError:
         _missing[".jxl"] = "pillow-jxl-plugin"
-        LOGGER.warning("pillow-jxl-plugin is not installed: JPEG XL images cannot be opened")
+    absent = missing_packages()
+    if absent:
+        names = ", ".join(f"{package} ({kinds})" for package, kinds in absent)
+        LOGGER.warning("Image format packages are not installed: %s. Install them: %s", names, INSTALL_HINT)
+
+
+def missing_packages() -> list[tuple[str, str]]:
+    """Пакеты форматов, которых нет в окружении: (имя для pip, форматы).
+
+    Ищет модуль, не импортируя его: проверка для --selftest не должна
+    тянуть LibRaw и OpenEXR в память.
+    """
+    return [info for module, info in PACKAGES.items() if importlib.util.find_spec(module) is None]
 
 
 def needs_conversion(name: str) -> bool:

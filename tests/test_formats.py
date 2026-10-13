@@ -167,6 +167,15 @@ def test_missing_package_is_named(monkeypatch):
         formats.decode(b"\xff\x0a garbage" * 4, "x.jxl")
 
 
+def test_missing_format_packages_are_reported(monkeypatch):
+    assert formats.missing_packages() == []  # в окружении проекта всё стоит
+    real = formats.importlib.util.find_spec
+    monkeypatch.setattr(formats.importlib.util, "find_spec",
+                        lambda name: None if name == "rawpy" else real(name))
+    assert formats.missing_packages() == [("rawpy", "camera RAW")]
+    assert "requirements.txt" in formats.INSTALL_HINT
+
+
 def test_too_many_pixels_is_refused(monkeypatch):
     monkeypatch.setattr(formats, "MAX_PIXELS", 100)
     with pytest.raises(formats.FormatError, match="too large"):

@@ -441,6 +441,11 @@ colour profiles (Display P3 of iPhone photos, CMYK) are converted to sRGB,
 not an image gets a message, not silence. The same formats are accepted by
 the API as base64. Decoders: Pillow, `pillow-heif`, `pillow-jxl-plugin`,
 `rawpy` (LibRaw), `OpenEXR`, OpenCV — all from `requirements.txt`.
+`install.ps1` / `install.sh` install them; an environment built before
+this feature and updated with `git pull` needs them once:
+`.venv\Scripts\python -m pip install -r requirements.txt` (or rerun the
+installer). Until then the startup log and `--selftest` name the missing
+packages, and only their formats are refused.
 
 ### Reference images
 

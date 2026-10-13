@@ -102,6 +102,16 @@ def selftest() -> int:
     turbo4_ready = not fetch.turbo4_missing(config.GGUF_DIR, config.TURBO_DIR)
     print("[ok ] Turbo4: weights found" if turbo4_ready else "[--] Turbo4: weights will be downloaded when the preset is first selected")
 
+    # Не провал: без пакета не откроется только свой формат, остальное работает.
+    from .imaging import formats
+
+    absent = formats.missing_packages()
+    if absent:
+        names = ", ".join(f"{package} ({kinds})" for package, kinds in absent)
+        print(f"[--] image formats: not installed {names}: {formats.INSTALL_HINT}")
+    else:
+        print("[ok ] image formats: HEIC, JPEG XL, camera RAW, EXR")
+
     if problems:
         print("\nNot ready:")
         for item in problems:
