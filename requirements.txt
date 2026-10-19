@@ -27,6 +27,11 @@ OpenEXR>=3.3
 # процессоре. rtmlib не берём: он тянет opencv-python и opencv-contrib-python,
 # которые перезаписывают opencv-python-headless (см. fooocus_qwen/poses/detect.py).
 onnxruntime>=1.20
+# Готовые ролики вкладки Video (fooocus_qwen/video/assemble.py): PyAV читает
+# кадры и длительность без ffprobe; imageio-ffmpeg везёт свой ffmpeg с
+# libx264 для склейки — на случай, если в системе ffmpeg нет.
+av>=14.0
+imageio-ffmpeg>=0.5
 
 gradio==6.5.1
 # Режим API (--api, fooocus_qwen/api): FastAPI и uvicorn — те же, на которых

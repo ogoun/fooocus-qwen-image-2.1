@@ -179,6 +179,35 @@ footer { display: none !important; }
     height: 100% !important;
 }
 
+/* --- видео ------------------------------------------------------------------ */
+
+/* Плеер ролика — как холст: пропорция кадра и потолок по окну. Пропорция
+   16:9, а не 5:6 холста: горизонталь — умолчание H3, и вертикальный ролик
+   в 16:9-поле теряет меньше места, чем горизонтальный в портретном. */
+.qs-videoboard {
+    height: auto !important;
+    aspect-ratio: 16 / 9 !important;
+    max-height: var(--qs-board-max) !important;
+    min-height: var(--qs-board-min) !important;
+}
+
+.qs-videoboard video {
+    object-fit: contain !important;
+}
+
+/* Входы ролика: кадры и референсы — узкой колонкой рядом с плеером. */
+.qs-videoinputs {
+    flex: 0 0 var(--qs-refs-width) !important;
+    min-width: 180px !important;
+    gap: 6px !important;
+}
+
+.qs-videonote {
+    font-size: 0.85em;
+    opacity: 0.8;
+    margin: 0 !important;
+}
+
 /* --- сетка референсов ----------------------------------------------------- */
 
 /* Строка «сетка и результат»: сетка держит свою ширину, поле результата

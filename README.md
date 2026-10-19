@@ -77,6 +77,14 @@ down to an 8 GB laptop.
   and white balance, faces left exactly as they are.
 - **Gallery** with each image's parameters stored inside the PNG: reuse them,
   send the image back to the editor, or restore parameters from any PNG file.
+- **Video with sound** (MiniMax H3 through the
+  [FreeVideo](https://github.com/FlashML-org/FreeVideo) engine, from 8 GB of
+  VRAM): text to video, first frame to video, first and last frame, and
+  references (up to 9 images, 3 videos, 3 audio clips for characters, style
+  and voice). Duration in seconds up to a minute; drafts that finish without
+  regenerating; "last frame → next shot"; and a **storyboard** that splits a
+  brief into shots, films them in a chain and joins them with transitions.
+  Images go to the Video tab with one button. See [Video](#video).
 - **Bilingual interface** (English / Russian), switchable at any time.
 - **HTTP API** (`--api`): everything the interface does — generate, edit,
   outpaint, poses, AI boost, gallery, settings — as JSON calls with a job
@@ -167,6 +175,19 @@ A square watercolour extended to 16:9 in one click:
 
 ![Before and after extending a square picture to 16:9](docs/images/outpaint-result.webp)
 
+### Video
+
+MiniMax H3 makes video and sound in one pass. Pick a mode, describe the scene
+(in any language — **AI boost (H3 format)** rewrites it into the structure H3
+was trained on), set the duration and press **Make video**. Below the slider
+you see what you get: `864×480 · 124 frames · 5.17 s`. A **Draft** renders the
+first pass at half size; **Finish the draft** completes the same video
+without starting over. The **Storyboard** accordion turns a brief into editable
+shots, films them so each starts from the previous shot's last frame, and
+joins them with cuts or dissolves at a level loudness, with a contact sheet
+for review. **To video** under any generated or edited image sends it to this
+tab.
+
 ### Gallery
 
 Each result is saved with its parameters inside the PNG. Select an image to
@@ -194,6 +215,7 @@ says what it becomes on your card. The access token is write-only: the page neve
 | Disk | ~35 GB for the model weights (+13 GB for "low") | |
 | OS | Windows 11; Linux via `install.sh` / `run.sh` (not tested on this build) | Windows 11 |
 | Python | 3.12 (3.13 works) | 3.12 |
+| Video (optional) | 8 GB VRAM, 16 GB RAM, NVIDIA driver 580+, ~80 GB of disk for the FreeVideo engine | RTX 3090, 24 GB |
 
 The large RAM requirement is deliberate. A pinned copy of the text encoder
 lives in RAM, so the diffusion transformer can stay resident on the GPU. The
@@ -588,6 +610,25 @@ own size per side at once — beyond that a second scene can appear; for more,
 included, and with your own LoRA. Details:
 [docs/research/2026-10-02-outpaint.md](docs/research/2026-10-02-outpaint.md) (in Russian).
 
+### Video
+
+The Video tab runs [FreeVideo](https://github.com/FlashML-org/FreeVideo)
+(Apache-2.0), an inference engine for MiniMax H3 built for small cards:
+int8 ConvRot weights, asynchronous block offload with pinned memory,
+precomputed AdaLN tables instead of 26 GB of projections, a tiled VAE and
+two-pass sampling (8 + 3 steps). It needs a Python environment of its own
+(torch 2.13), so it lives in the `FreeVideo/` folder and runs as a separate
+process; the image model is unloaded while a video renders.
+
+Install it with step 7 of the installer, with
+`python -m fooocus_qwen --setup-video`, or with the button on the Video tab.
+If you already have H3 weights (for example in ComfyUI), add
+`--video-reuse-models <folder>` and matching files are hard-linked instead of
+downloaded. The weights are covered by the MiniMax H3 Community License;
+setup accepts it on your behalf, so read it first. Details:
+[docs/USAGE.md](docs/USAGE.md), section 14, and
+[docs/research/2026-10-19-video-freevideo.md](docs/research/2026-10-19-video-freevideo.md).
+
 ### AI boost
 
 Set the address of an OpenAI-compatible server during installation or on the
@@ -683,11 +724,13 @@ fooocus_qwen/
   prompting/   AI boost, styles, saved prompts
   llm/         OpenAI-compatible client, endpoint file, installer dialogue
   storage/     output folders by date
+  video/       MiniMax H3 video: frame grid, H3 prompts, storyboard, ffmpeg joining, the FreeVideo driver
   poses/       OpenPose skeletons, pose recognition (DWPose), the pose library, pose tiles
   ui/          Gradio tabs, the mask brush (ui/painter/), reference tools, layout, translations
   api/         the HTTP API (--api): FastAPI routes, job queue, Bearer token
 resources/     Fooocus styles, the Qwen system prompts, default saved prompts, the "Add a pose" tile
-loras/         your LoRA files (git-ignored; --lora-dir points elsewhere)
+loras/         your LoRA files (git-ignored; --lora-dir points elsewhere; loras/video for H3)
+FreeVideo/     the video engine: its own clone, environment and weights (git-ignored, --setup-video)
 tools/         smoke test, benchmark, UI check, screenshot builder, experiments
 docs/          architecture, usage guide, benchmark, research notes (in Russian)
 tests/         unit tests (no GPU needed)
@@ -734,3 +777,4 @@ using the application or the images it produces.
 - [Qwen-Image](https://github.com/QwenLM/Qwen-Image) by the Qwen team — the model and the official prompt-rewriting prompts.
 - [Fooocus](https://github.com/lllyasviel/Fooocus) by lllyasviel — the interface philosophy and the style catalogue.
 - [diffusers](https://github.com/huggingface/diffusers) and [Gradio](https://github.com/gradio-app/gradio).
+- [MiniMax H3](https://huggingface.co/MiniMaxAI) by MiniMax — the video model; [OpenVDN](https://github.com/OpenVDN/vdn-minimax-h3) — its eight-step VDN-H3 distillation; [FreeVideo](https://github.com/FlashML-org/FreeVideo) by FlashML — the low-memory engine the Video tab runs.

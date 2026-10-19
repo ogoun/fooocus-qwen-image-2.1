@@ -53,7 +53,10 @@ from fooocus_qwen.engine.generator import GeneratedImage
 PAINTER = "qs-edit-painter"
 API = f"window.__qsPainters['{PAINTER}']"
 SIZES = [(3840, 2160), (2560, 1440), (1920, 1080), (1600, 900), (1366, 768), (1100, 800)]
-TABS = 4
+# Номера вкладок — по порядку в полосе (ui/app.py). Именами, а не числами:
+# вкладка «Видео» встала третьей, и числа сдвинулись бы во всех сценариях.
+TAB_GENERATE, TAB_EDIT, TAB_VIDEO, TAB_GALLERY, TAB_SETTINGS = range(5)
+TABS = 5
 
 
 # --- подставной генератор ------------------------------------------------------
@@ -102,6 +105,65 @@ class FakeGenerator:
         raise TimeoutError(f"the generator did not receive request #{count} within {timeout} s")
 
 
+class FakeVideoEngine:
+    """Видеодвижок-заглушка: события прогресса и готовый маленький MP4 вместо H3."""
+
+    def __init__(self, directory: Path) -> None:
+        self.directory = directory
+        self.jobs: list[dict] = []
+        self.busy = False
+        self.cancelled = False
+
+    def generate(self, job: dict, on_event=None) -> dict:
+        from fooocus_qwen.video import assemble
+
+        self.jobs.append(job)
+        if on_event is not None:
+            for done in range(1, 4):
+                on_event({"event": "progress", "part": 0, "parts": 1,
+                          "value": {"label": "Sampling", "timing_phase": "sampling", "done": done, "total": 3,
+                                    "overall": {"fraction": done / 4, "remaining_seconds": 3 - done}}})
+                time.sleep(0.1)
+        output = self.directory / f"fake{len(self.jobs)}.mp4"
+        output.parent.mkdir(parents=True, exist_ok=True)
+        import subprocess
+
+        color = ("red", "green", "blue")[len(self.jobs) % 3]
+        subprocess.run(
+            [assemble.ffmpeg_exe(), "-y", "-loglevel", "error", "-f", "lavfi", "-i",
+             f"color=c={color}:s={job['width'] // 4}x{job['height'] // 4}:r=24:d=1", "-f", "lavfi", "-i",
+             "sine=frequency=440:duration=1", "-shortest", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+             "-c:a", "aac", str(output)],
+            check=True, creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+        return {"event": "done", "output": str(output), "parts": [str(output)]}
+
+    def cancel(self) -> None:
+        self.cancelled = True
+
+    def release(self) -> None:
+        pass
+
+    def close(self) -> None:
+        pass
+
+
+def prepare_studio(studio, fake, video) -> None:
+    """Подмены перед подъёмом сервера: генератор картинок и видеодвижок."""
+    from fooocus_qwen.video.engine import EngineStatus
+
+    studio._generator = fake
+    studio._video = video
+    studio.video_status = lambda: EngineStatus(True, True)
+    # Перед роликом студия выгружает модель картинок — здесь это выгрузило бы
+    # подставной генератор, и следующая генерация загрузила бы настоящие
+    # 33 ГБ на видеокарту (так и случилось при первом прогоне сценария video).
+    studio.claim_gpu_for_video = lambda: None
+    # И любой другой путь выгрузки (смена точности, профиля): подставной
+    # генератор обязан пережить весь прогон.
+    studio.unload = lambda: None
+
+
 # --- учёт результатов ----------------------------------------------------------
 
 @dataclass
@@ -130,7 +192,21 @@ def sample_image(directory: Path, width: int, height: int) -> Path:
 
 
 def open_tab(page, index: int) -> None:
-    page.locator('button[role="tab"]').nth(index).click()
+    """Открывает вкладку по номеру — и тогда, когда она в меню переполнения.
+
+    На узком экране Gradio прячет вкладки, не влезшие в полосу, в меню «…»
+    (``.overflow-menu``): с пятью вкладками на телефоне туда уходят «Галерея»
+    и «Настройки». В полосе их кнопок тогда нет вовсе — они только в меню,
+    в том же порядке, следом за видимыми.
+    """
+    tabs = page.locator('button[role="tab"]')
+    shown = [tab for tab in tabs.all() if tab.is_visible()]
+    if index < len(shown):
+        shown[index].click()
+    else:
+        page.locator(".overflow-menu button").first.click()
+        page.wait_for_timeout(300)
+        page.locator(".overflow-dropdown button").nth(index - len(shown)).click()
     page.wait_for_timeout(700)
 
 
@@ -252,17 +328,18 @@ def scenario_layout(browser, url, report: Report) -> None:
 def scenario_language(browser, url, report: Report) -> None:
     print("language:")
     page, errors = fresh_page(browser, url)
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     tabs = [t.inner_text() for t in page.locator('button[role="tab"]').all()]
-    report.check(tabs == ["Generate", "Edit", "Gallery", "Settings"], f"English by default: {tabs}")
+    report.check(tabs == ["Generate", "Edit", "Video", "Gallery", "Settings"], f"English by default: {tabs}")
     page.locator("button.qs-lang").click()
     page.wait_for_timeout(2000)
     tabs = [t.inner_text() for t in page.locator('button[role="tab"]').all()]
     report.check(tabs == ["\u0413\u0435\u043d\u0435\u0440\u0430\u0446\u0438\u044f",
                           "\u0420\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0435",
+                          "\u0412\u0438\u0434\u0435\u043e",
                           "\u0413\u0430\u043b\u0435\u0440\u0435\u044f",
                           "\u041d\u0430\u0441\u0442\u0440\u043e\u0439\u043a\u0438"],
-                 "RU button: all four tabs switched to Russian")
+                 "RU button: all five tabs switched to Russian")
     hint = page.evaluate(f"""() => {{
         const host = [...document.querySelectorAll('#{PAINTER} *')].find(n => n.shadowRoot);
         return host.shadowRoot.querySelector('.qp-empty-title').textContent;
@@ -290,7 +367,7 @@ def scenario_painter(browser, url, report: Report, fake: FakeGenerator, samples:
     """Кисть от загрузки до маски в запросе: маска там, где её нарисовали."""
     print("painter:")
     page, errors = fresh_page(browser, url)
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     state = load_into_painter(page, sample_image(samples, 1888, 1280))
     report.check(state["width"] == 1888 and state["height"] == 1280, f"image loaded: {state['width']}x{state['height']}")
     report.check(bool(state["source"]), "source sent to the server")
@@ -345,7 +422,7 @@ def scenario_painter(browser, url, report: Report, fake: FakeGenerator, samples:
 def scenario_annotation(browser, url, report: Report, fake: FakeGenerator, samples: Path) -> None:
     print("annotation:")
     page, errors = fresh_page(browser, url)
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     load_into_painter(page, sample_image(samples, 1024, 768))
     page.get_by_label("Annotation", exact=True).check()
     page.wait_for_timeout(800)
@@ -369,7 +446,7 @@ def scenario_outpaint(browser, url, report: Report, fake: FakeGenerator, samples
     """«Расширить»: одна кнопка — расширенный кадр, без маски и второго шага."""
     print("outpaint and result round trip:")
     page, errors = fresh_page(browser, url)
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     load_into_painter(page, sample_image(samples, 1024, 768))
     page.get_by_text("Outpaint", exact=True).first.click()
     page.wait_for_timeout(500)
@@ -405,7 +482,7 @@ def scenario_crop(browser, url, report: Report, fake: FakeGenerator, samples: Pa
     """Кадрирование в кисти правки: рамка мышью, обрезка, новый исходник, Ctrl+Z."""
     print("crop in the editor:")
     page, errors = fresh_page(browser, url)
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     load_into_painter(page, sample_image(samples, 1200, 800))
     stroke(page, [(0.3, 0.3), (0.4, 0.4)])  # разметка обязана пережить обрезку
     page.locator(f"#{PAINTER} [data-act='crop']").first.click()
@@ -459,7 +536,7 @@ def scenario_latency(browser, url, report: Report, samples: Path) -> None:
     """
     print("painter latency:")
     page, errors = fresh_page(browser, url, scale=2)
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     load_into_painter(page, sample_image(samples, 3840, 2160))
     box = stage_box(page)
     x0, y0, w, h = box["x"], box["y"], box["width"], box["height"]
@@ -493,7 +570,7 @@ def scenario_paste(browser, url, report: Report) -> None:
     """
     print("clipboard paste:")
     page, errors = fresh_page(browser, url)
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     page.locator(f"#{PAINTER}").hover()
     page.evaluate("""async () => {
         const canvas = document.createElement('canvas');
@@ -526,7 +603,7 @@ def scenario_gallery(browser, url, report: Report, fake: FakeGenerator, samples:
                       {"prompt": "a lighthouse at dawn", "seed": 777, "preset": "LowQuality",
                        "width": 640, "height": 480, "aspect": "4:3", "true_cfg_scale": 1.0})
     page, errors = fresh_page(browser, url)
-    open_tab(page, 2)
+    open_tab(page, TAB_GALLERY)
     page.wait_for_timeout(800)
     thumbs = page.locator(".qs-browse img")
     report.check(thumbs.count() >= 1, f"gallery refreshed on open: {thumbs.count()} images")
@@ -552,7 +629,7 @@ def scenario_gallery(browser, url, report: Report, fake: FakeGenerator, samples:
     # Выбор переживает уход с вкладки: карточка на месте, кликать снова не
     # нужно. И нельзя: галерея открыта в режиме просмотра, где клик по
     # крупному кадру листает на следующий, — сценарий выбирал бы чужой файл.
-    open_tab(page, 2)
+    open_tab(page, TAB_GALLERY)
     card = page.locator(".block.qs-card").inner_text()
     report.check("a lighthouse at dawn" in card, "selection survived leaving the tab")
     click_text(page, "Reuse parameters")
@@ -758,7 +835,7 @@ def scenario_references(browser, url, report: Report, fake: FakeGenerator, sampl
     report.check(True, f"tags follow the order of filled slots: '{first}', '{third}'")
 
     # С правки — снова в первый свободный, то есть во второй, и переход сюда.
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     load_into_painter(page, sample_image(samples, 1024, 768))
     apply_edit(page)
     fake.wait(before + 2)
@@ -968,7 +1045,7 @@ def scenario_tools(browser, url, report: Report, fake: FakeGenerator, samples: P
                  f"sketch: stroke in the centre is dark ({centre:.0f}), canvas is white ({corner:.0f})")
 
     # --- вкладка правки: своя сетка слева от кисти ---
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     load_into_painter(page, sample_image(samples, 1024, 768))
     stroke(page, [(0.6, 0.6), (0.8, 0.8)])
     geometry = page.evaluate(f"""() => {{
@@ -1077,7 +1154,7 @@ def scenario_viewer(browser, url, report: Report, fake: FakeGenerator, samples: 
     report.check(True, "clicking the backdrop closes it")
 
     # Результат правки.
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     load_into_painter(page, sample_image(samples, 640, 480))
     before = len(fake.requests)
     apply_edit(page)
@@ -1091,7 +1168,7 @@ def scenario_viewer(browser, url, report: Report, fake: FakeGenerator, samples: 
     wait_viewer(page, False)
 
     # Галерея: одиночный клик — карточка, двойной — просмотр.
-    open_tab(page, 2)
+    open_tab(page, TAB_GALLERY)
     page.wait_for_timeout(1200)
     thumb = page.locator(".qs-browse img").first
     thumb.click()
@@ -1165,7 +1242,7 @@ def scenario_sketch_colour(browser, url, report: Report, fake: FakeGenerator, sa
     report.check(corner.tolist() == [255, 255, 255], f"canvas stays white: {corner.tolist()}")
 
     # У кисти маски на правке — ни своего цвета, ни прозрачности.
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     load_into_painter(page, sample_image(samples, 320, 240))
     page.get_by_label("Annotation", exact=True).check()
     page.wait_for_timeout(500)
@@ -1395,7 +1472,7 @@ def scenario_tall(browser, url, report: Report, samples: Path) -> None:
     print("tall windows on the Edit tab:")
     for width, height in ((1920, 1500), (1280, 1440), (1920, 1080)):
         page, errors = fresh_page(browser, url, width, height)
-        open_tab(page, 1)
+        open_tab(page, TAB_EDIT)
         load_into_painter(page, sample_image(samples, 1024, 1024))
         page.wait_for_timeout(500)
         boxes = page.evaluate("""() => {
@@ -1421,7 +1498,7 @@ def scenario_quality(browser, url, report: Report, samples: Path) -> None:
     shot = samples.parent / "quality.png"
     page.screenshot(path=str(shot))
     print(f"  screenshot: {shot}")
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     page.wait_for_timeout(500)
     report.check(choices_are_stacked(page, texts), "Edit: quality options stand in a column too")
     report.check(not errors, "no page errors" + (f": {errors[:2]}" if errors else ""))
@@ -1435,7 +1512,7 @@ def scenario_performance(browser, url, report: Report, fake: FakeGenerator, samp
     from fooocus_qwen.engine import attention
 
     page, errors = fresh_page(browser, url)
-    open_tab(page, 3)
+    open_tab(page, TAB_SETTINGS)
     page.wait_for_timeout(800)
     status = " ".join(box.input_value() for box in page.locator("textarea").all())
     report.check("Precision: BF16" in status and "Memory profile:" in status,
@@ -1492,7 +1569,7 @@ def scenario_secret(browser, url, report: Report) -> None:
         "\n".join(["llama.cpp", "192.0.2.10:8000", "token=ui-check-secret", ""]), encoding="utf-8"
     )
     page, errors = fresh_page(browser, url)
-    open_tab(page, 3)
+    open_tab(page, TAB_SETTINGS)
     page.wait_for_timeout(800)
     html = page.content()
     fields = " ".join(t.input_value() for t in page.locator("textarea, input").all() if t.is_visible())
@@ -1619,7 +1696,7 @@ def scenario_formats(browser, url, report: Report, samples: Path) -> None:
     report.check(not reference_slots(page)[3]["loaded"], "broken file: the cell stays empty")
 
     # Кисть правки: перетаскивание в теневой DOM и выбор файла там же.
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     drop_file(page, f"#{PAINTER}", 0, heic)
     page.wait_for_function(f"() => {API}.state().width === 300 && !{API}.state().uploading", timeout=30000)
     state = painter_state(page)
@@ -1704,7 +1781,7 @@ def scenario_prompts(browser, url, report: Report, samples: Path) -> None:
     saved = library.load_prompt("Fox", config.PROMPT_DIR)
     report.check(saved.get("prompt") == "a red fox" and "seed" in saved, "Generate saves the whole setup")
 
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     pick_saved_prompt(page, "Fox")
     report.check(visible_input(page, "Prompt").input_value() == "a red fox",
                  "Edit: a prompt saved on Generate shows up without reloading the page")
@@ -1763,7 +1840,7 @@ def scenario_compact(browser, url, report: Report, fake: FakeGenerator, samples:
     report.check(heights and max(heights) <= 36, f"“Send to …” buttons are small: {heights}")
 
     # Правка на FHD: результат под кистью, после правки страница докручивает до него.
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     load_into_painter(page, sample_image(samples, 1200, 800))
     page.evaluate("() => window.scrollTo(0, 0)")
     report.check(not in_view(page, ".qs-preview"), "Edit at 1920×1080: the result starts below the fold")
@@ -1778,7 +1855,7 @@ def scenario_compact(browser, url, report: Report, fake: FakeGenerator, samples:
     # Сценарий секрета сохраняет поддельный токен: сверка — с тем, что лежит в файле.
     from fooocus_qwen.ui import tab_settings
 
-    open_tab(page, 3)
+    open_tab(page, TAB_SETTINGS)
     shown = page.get_by_role("button", name="Remove the token", exact=True).first.is_visible()
     report.check(shown == tab_settings.has_token(),
                  f"Settings: “Remove the token” is shown only with a saved token (shown {shown})")
@@ -1786,13 +1863,13 @@ def scenario_compact(browser, url, report: Report, fake: FakeGenerator, samples:
     page.close()
 
     page, errors = fresh_page(browser, url, 430, 900)
-    for tab, name in enumerate(("Generate", "Edit", "Gallery", "Settings")):
+    for tab, name in enumerate(("Generate", "Edit", "Video", "Gallery", "Settings")):
         open_tab(page, tab)
         if name == "Edit":
             load_into_painter(page, sample_image(samples, 1200, 800))
         overflow = page.evaluate(NO_OVERFLOW_JS)
         report.check(not overflow, f"430 px {name}: nothing sticks out past the screen edge {overflow}")
-    open_tab(page, 1)
+    open_tab(page, TAB_EDIT)
     zoom = painter_state(page).get("zoom") or 0
     box = page.evaluate("""() => { const n = [...document.querySelectorAll('.qs-refs')].find(e => e.offsetParent);
         const b = [...document.querySelectorAll('.qs-painter')].find(e => e.offsetParent);
@@ -1804,11 +1881,98 @@ def scenario_compact(browser, url, report: Report, fake: FakeGenerator, samples:
     page.close()
 
 
+def video_mode(page, label: str) -> None:
+    page.get_by_label(label, exact=True).first.check()
+    page.wait_for_timeout(600)
+
+
+def scenario_video(browser, url, report: Report, fake: FakeGenerator, video: FakeVideoEngine, samples: Path) -> None:
+    """Вкладка «Видео»: режимы, длительность, отправка картинки, ролик, цепочка, телефон."""
+    print("video tab:")
+    page, errors = fresh_page(browser, url)
+    open_tab(page, TAB_VIDEO)
+    note = page.locator(".qs-videonote:visible").all_inner_texts()
+    report.check(any("864×480" in text and "124 frames" in text for text in note),
+                 f"the size note shows the canvas and the frame grid: {note}")
+    first = page.get_by_label("First frame", exact=True)
+    report.check(not any(item.is_visible() for item in first.all()), "Text → video: no frame inputs")
+    video_mode(page, "First frame → video")
+    report.check(any(item.is_visible() for item in page.locator(".qs-videoinputs .image-container").all())
+                 or any(item.is_visible() for item in first.all()), "First frame → video: the frame input appears")
+    video_mode(page, "From references (characters, style, voice)")
+    report.check(page.get_by_text("Up to 9 images").first.is_visible(), "References: the label hint is shown")
+    video_mode(page, "Text → video")
+
+    # Картинка с генерации — «В видео»: первый кадр, режим «первый кадр».
+    open_tab(page, TAB_GENERATE)
+    for box in page.locator("textarea").all():
+        if box.is_visible():
+            box.fill("a gray square")
+            break
+    before = len(fake.requests)
+    click_text(page, "Generate")
+    fake.wait(before + 1)
+    page.wait_for_function("() => document.querySelector('.preview img')", timeout=20000)
+    click_text(page, "To video")
+    page.wait_for_timeout(2500)
+    active = page.locator('button[role="tab"][aria-selected="true"]').inner_text()
+    report.check(active == "Video", f"“To video” opens the Video tab: {active}")
+    loaded = page.evaluate("""() => [...document.querySelectorAll('.qs-videoinputs img')]
+        .some(img => img.offsetParent && img.complete && img.naturalWidth > 0)""")
+    report.check(loaded, "the generated image is the first frame")
+    checked = page.get_by_label("First frame → video", exact=True).first.is_checked()
+    report.check(checked, "the mode switched to First frame → video")
+
+    # Ролик: задание ушло, плеер показал MP4, строка состояния — сид и размер.
+    jobs = len(video.jobs)
+    for box in page.locator("textarea").all():
+        if box.is_visible():
+            box.fill("The camera slowly pushes in.")
+            break
+    click_text(page, "Make video")
+    deadline = time.time() + 30
+    while len(video.jobs) <= jobs and time.time() < deadline:
+        time.sleep(0.2)
+    job = video.jobs[-1] if len(video.jobs) > jobs else {}
+    report.check(bool(job) and (job.get("media") or {}).get("first"), f"the job carries the first frame: {list(job)}")
+    report.check("For the target video, at 0.00 seconds" in (job.get("prompts") or [""])[0],
+                 "the H3 prompt starts with the I2VA alignment line")
+    page.wait_for_function("""() => [...document.querySelectorAll('.qs-videoboard video')]
+        .some(v => v.offsetParent && v.currentSrc)""", timeout=30000)
+    status = page.locator(".qs-status textarea:visible").first.input_value()
+    report.check("Done" in status and "864×480" in status, f"status reports the result: {status[:120]}")
+
+    # Цепочка: последний кадр — первым кадром следующего шота.
+    click_text(page, "Last frame → next shot")
+    page.wait_for_timeout(2500)
+    status = page.locator(".qs-status textarea:visible").first.input_value()
+    report.check("next shot" in status, f"“Last frame → next shot” fills the first frame: {status[:100]}")
+    report.check(not errors, "no page errors" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+    # Галерея показывает ролик, карточка — параметры ролика.
+    page, errors = fresh_page(browser, url)
+    open_tab(page, TAB_GALLERY)
+    page.wait_for_timeout(1500)
+    report.check(page.locator(".qs-browse video, .qs-browse [data-testid*='video']").count() > 0
+                 or page.evaluate("() => document.querySelector('.qs-browse').innerHTML.includes('.mp4')"),
+                 "the gallery lists the video")
+    report.check(not errors, "gallery: no page errors" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+    page, errors = fresh_page(browser, url, 430, 900)
+    open_tab(page, TAB_VIDEO)
+    overflow = page.evaluate(NO_OVERFLOW_JS)
+    report.check(not overflow, f"430 px Video: nothing sticks out past the screen edge {overflow}")
+    report.check(not errors, "phone: no page errors" + (f": {errors[:2]}" if errors else ""))
+    page.close()
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Browser check of the interface")
     parser.add_argument("--port", type=int, default=7899)
     parser.add_argument("--only", nargs="*", default=None,
-                        help="layout language painter annotation outpaint latency paste gallery send references tools viewer sketch poses performance secret formats prompts compact")
+                        help="layout language painter annotation outpaint latency paste gallery send references tools viewer sketch poses performance secret formats prompts compact video")
     args = parser.parse_args()
 
     from playwright.sync_api import sync_playwright
@@ -1847,11 +2011,14 @@ def main() -> int:
     prompt_library.install_defaults(config.DEFAULT_PROMPT_DIR, config.PROMPT_DIR)
 
     fake = FakeGenerator()
+    # Ролики подставного движка и рабочие каталоги заданий — тоже в прогоне.
+    config.VIDEO_RUNS_DIR = work / "video_runs"
+    video = FakeVideoEngine(work / "fake_video")
     # Сценарии ищут на странице подписи английского интерфейса — он по
     # умолчанию; русский проверяет сценарий языка переключением.
     lora_dir = make_loras(work / "loras")
     cfg = config.AppConfig(host="127.0.0.1", port=args.port, preload=False, lang="en", lora_dir=lora_dir)
-    app.start(cfg, prepare=lambda studio: setattr(studio, "_generator", fake))
+    app.start(cfg, prepare=lambda studio: prepare_studio(studio, fake, video))
     url = f"http://127.0.0.1:{args.port}/"
     samples = work / "samples"
     samples.mkdir()
@@ -1880,6 +2047,7 @@ def main() -> int:
         "formats": lambda b, r: scenario_formats(b, url, r, samples),
         "prompts": lambda b, r: scenario_prompts(b, url, r, samples),
         "compact": lambda b, r: scenario_compact(b, url, r, fake, samples),
+        "video": lambda b, r: scenario_video(b, url, r, fake, video, samples),
     }
     chosen = args.only or list(scenarios)
     report = Report()

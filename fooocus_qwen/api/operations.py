@@ -14,8 +14,13 @@ API говорят по-английски, как и весь журнал.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
+import shutil
+import time
+import uuid
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from PIL import Image
@@ -52,6 +57,10 @@ Work = Callable[[Job], dict]
 
 class UpstreamError(RuntimeError):
     """Языковая модель недоступна или ответила ошибкой: ответ 502."""
+
+
+class EngineUnavailable(RuntimeError):
+    """Движок видео не установлен или не готов: ответ 503."""
 
 
 class RequestError(ValueError):
@@ -335,6 +344,357 @@ def prepare_outpaint(studio, body: schemas.OutpaintRequest) -> Work:
     return work
 
 
+# --- видео -------------------------------------------------------------------------
+#
+# Те же шаги, что у вкладки Video: ``VideoRequest`` собирается здесь, ролик
+# снимает ``Studio.run_video`` (освобождение карты от Qwen, задание движку,
+# сохранение в галерею с соседним JSON). Загруженные клиентом референсы
+# лежат в каталоге заданий FreeVideo до конца работы: движок всё равно
+# копирует их в свой каталог входов.
+
+VIDEO_INSTALL = "python -m fooocus_qwen --setup-video"
+_DEFAULT_SUFFIX = {"video": ".mp4", "audio": ".wav"}
+
+
+def _video_ready(studio) -> None:
+    found = studio.video_status()
+    if not found.ready:
+        raise EngineUnavailable(f"the video engine is not ready: {found.reason}. Install it with: {VIDEO_INSTALL}")
+
+
+def _video_loras(items: list[schemas.VideoLora]) -> tuple[tuple[str, float], ...]:
+    """LoRA видео — файлы ``loras/video``; имя ложится в путь, поэтому только имя, без каталогов."""
+    chosen = []
+    for item in items:
+        name = item.name if item.name.lower().endswith(".safetensors") else f"{item.name}.safetensors"
+        if Path(name).name != name or "/" in name or "\\" in name:
+            raise RequestError(f"bad video LoRA name: {item.name}")
+        path = config.VIDEO_LORA_DIR / name
+        if not path.is_file():
+            raise RequestError(f"no video LoRA {item.name!r} (see GET {API_PREFIX}/video/loras)", not_found=True)
+        chosen.append((str(path), float(item.strength)))
+    return tuple(chosen)
+
+
+def _gallery_video(relative: str, what: str) -> Path:
+    try:
+        path = images.output_path(relative)
+    except images.ImageError as error:
+        raise RequestError(f"{what}: {error}", not_found=error.not_found) from error
+    if path.suffix.lower() not in images.VIDEO_SUFFIXES:
+        raise RequestError(f"{what}: {relative} is not a video")
+    return path
+
+
+class _Uploads:
+    """Каталог файлов-референсов из base64 на время одной работы; ``close`` его удаляет."""
+
+    def __init__(self) -> None:
+        self.directory: Path | None = None
+
+    def path(self, name: str) -> Path:
+        if self.directory is None:
+            day = time.strftime("%Y-%m-%d")
+            self.directory = config.VIDEO_RUNS_DIR / "api_uploads" / day / uuid.uuid4().hex[:12]
+            self.directory.mkdir(parents=True, exist_ok=True)
+        return self.directory / name
+
+    def close(self) -> None:
+        if self.directory is not None:
+            shutil.rmtree(self.directory, ignore_errors=True)
+            self.directory = None
+
+
+def _video_references(items: list[schemas.VideoReference], uploads: _Uploads) -> tuple:
+    """Референсы клиента — файлами на диске, с видом; пределы набора — до очереди."""
+    from ..video.request import Reference, check_references, kind_of
+
+    found = []
+    for index, item in enumerate(items):
+        what = f"references[{index}]"
+        if item.gallery:
+            try:
+                path = images.output_path(item.gallery)
+            except images.ImageError as error:
+                raise RequestError(f"{what}: {error}", not_found=error.not_found) from error
+            kind = item.kind or kind_of(path)
+            if kind is None:
+                raise RequestError(f"{what}: {item.gallery} is neither a picture, a video nor a sound")
+        else:
+            kind = item.kind or (kind_of(item.name) if item.name else None)
+            if kind is None:
+                raise RequestError(f"{what}: give kind (image, video or audio) or a file name with an extension")
+            try:
+                if kind == "image":
+                    path = uploads.path(f"ref{index:02d}.png")
+                    images.decode_base64(item.base64).save(path)
+                else:
+                    suffix = Path(item.name).suffix.lower() if item.name and kind_of(item.name) == kind \
+                        else _DEFAULT_SUFFIX[kind]
+                    path = uploads.path(f"ref{index:02d}{suffix}")
+                    path.write_bytes(images.decode_bytes(item.base64, what))
+            except images.ImageError as error:
+                raise RequestError(f"{what}: {error}") from error
+        found.append(Reference(kind, str(path)))
+    references = tuple(found)
+    try:
+        check_references(references)
+    except ValueError as error:
+        raise RequestError(str(error)) from error
+    return references
+
+
+def _video_progress(job: Job):
+    """События движка — в прогресс задачи: доля, подпись, шаги сэмплинга, остаток."""
+    from ..video.engine import progress_view
+
+    def on_event(event: dict, prefix: str = "", share: tuple[int, int] = (0, 1)) -> None:
+        view = progress_view(event)
+        if view is None:
+            return
+        index, total = share
+        progress = job.progress
+        progress.stage = f"{prefix}{view.label or 'generating'}"
+        progress.fraction = None if view.fraction is None else (index + view.fraction) / total
+        progress.remaining_seconds = view.remaining_seconds
+        if view.step:
+            progress.step, progress.steps = view.step
+
+    return on_event
+
+
+def _video_entry(path, parameters: dict, return_base64: bool) -> dict[str, Any]:
+    # Параметры — как в галерее, из соседнего JSON: там и ``engine_output``,
+    # нужный доводке и продлению.
+    parameters = _read_video(path) or parameters
+    relative = images.relative_output(path)
+    entry: dict[str, Any] = {
+        "path": relative,
+        "url": f"{API_PREFIX}/files/{relative}",
+        "width": parameters.get("width"),
+        "height": parameters.get("height"),
+        "seconds": parameters.get("seconds"),
+        "seed": parameters.get("seed"),
+        "parameters": parameters,
+    }
+    if return_base64:
+        entry["base64"] = images.encode_png(path)
+    return entry
+
+
+def _framed(mode: str, first, last) -> tuple:
+    """Кадры, которые режим действительно берёт: первый — i2v и flf2v, последний — flf2v."""
+    from ..video import prompt_h3
+
+    return (first if mode in (prompt_h3.MODE_I2V, prompt_h3.MODE_FLF2V) else None,
+            last if mode == prompt_h3.MODE_FLF2V else None)
+
+
+def prepare_video(studio, body: schemas.VideoGenerateRequest) -> Work:
+    from ..ui.i18n import say
+    from ..video import board, geometry, prompt_h3
+    from ..video.request import VideoRequest
+
+    _video_ready(studio)
+    follow = body.continue_from or body.refine_from
+    if not follow:
+        _need_prompt(body.prompt)
+    notes: list[str] = []
+    loras = _video_loras(body.loras)
+    uploads = _Uploads()
+    try:
+        if follow:
+            # Доводка и продление — по параметрам самого ролика, как кнопки вкладки.
+            kind = board.EXTEND if body.continue_from else board.FINISH
+            source = _gallery_video(follow, "continue_from" if body.continue_from else "refine_from")
+            changes: dict[str, Any] = {}
+            if kind == board.EXTEND:
+                if body.prompt.strip():
+                    changes.update(prompt=body.prompt, prompt_original=body.prompt)
+                for name in ("seconds", "seed"):
+                    if name in body.model_fields_set:
+                        changes[name] = getattr(body, name)
+                if loras:
+                    changes["loras"] = loras
+            elif body.prompt.strip() or loras:
+                notes.append("refine_from finishes the draft as it is; prompt and loras are ignored.")
+            ignored = [name for name in ("mode", "first", "last", "references") if name in body.model_fields_set]
+            if ignored:
+                notes.append(f"Ignored with {'continue_from' if body.continue_from else 'refine_from'}: "
+                             f"{', '.join(ignored)}.")
+            try:
+                request = board.follow_up_request(source, kind, body.quality, **changes)
+            except board.NoEngineOutput as error:
+                raise RequestError(f"{follow}: {error}") from error
+        else:
+            first = _load(body.first, "first") if body.first is not None else None
+            last = _load(body.last, "last") if body.last is not None else None
+            used_first, used_last = _framed(body.mode, first, last)
+            if first is not None and used_first is None:
+                notes.append(f"The first frame is ignored in mode '{body.mode}'.")
+            if last is not None and used_last is None:
+                notes.append(f"The last frame is ignored in mode '{body.mode}'.")
+            if body.mode == prompt_h3.MODE_I2V and used_first is None:
+                raise RequestError("mode 'i2v' needs a first frame")
+            if body.mode == prompt_h3.MODE_FLF2V and used_first is None and used_last is None:
+                raise RequestError("mode 'flf2v' needs a first or a last frame")
+            references: tuple = ()
+            if body.mode == prompt_h3.MODE_REF:
+                references = _video_references(body.references, uploads)
+                if not references:
+                    raise RequestError("mode 'ref' needs at least one reference")
+            elif body.references:
+                notes.append(f"References are ignored in mode '{body.mode}'.")
+            request = VideoRequest(
+                prompt=body.prompt, prompt_original=body.prompt, mode=body.mode, resolution=body.resolution,
+                aspect=body.aspect, seconds=body.seconds, seed=body.seed, quality=body.quality,
+                first=used_first, last=used_last, references=references, loras=loras,
+            )
+    except BaseException:
+        uploads.close()
+        raise
+
+    def work(job: Job) -> dict:
+        try:
+            messages = list(notes)
+            chosen = request
+            own_prompt = body.prompt.strip() and not body.refine_from
+            if body.boost and own_prompt:
+                job.stage("boosting the prompt")
+                frame_first, frame_last = _framed(chosen.mode, chosen.first, chosen.last)
+                text, said = studio.boost_video(
+                    body.prompt, chosen.mode, geometry.duration(chosen.seconds), chosen.references,
+                    frame_first, frame_last, chosen.aspect, LANG,
+                )
+                messages.append(said)
+                if text:
+                    chosen = dataclasses.replace(chosen, prompt=text)
+            elif own_prompt and prompt_h3.off_language(body.prompt):
+                messages.append(say("video_not_english", LANG))
+            job.stage("starting")
+            path, parameters, failure = studio.run_video(chosen, LANG, _video_progress(job))
+            if failure is not None:
+                raise JobFailed(failure)
+            return {
+                "video": _video_entry(path, parameters, body.return_base64),
+                "prompt": parameters.get("prompt_h3", chosen.prompt),
+                "messages": [line for line in messages if line],
+            }
+        finally:
+            uploads.close()
+
+    return work
+
+
+def video_boost(studio, body: schemas.VideoBoostRequest) -> dict[str, Any]:
+    """Промт H3 языковой моделью — как кнопка «AI буст» вкладки Video."""
+    from ..video import geometry, prompt_h3
+
+    first = _load(body.first, "first") if body.first is not None else None
+    last = _load(body.last, "last") if body.last is not None else None
+    first, last = _framed(body.mode, first, last)
+    uploads = _Uploads()
+    try:
+        references = _video_references(body.references, uploads) if body.mode == prompt_h3.MODE_REF else ()
+        text, message = studio.boost_video(
+            body.prompt, body.mode, geometry.duration(body.seconds), references, first, last, body.aspect, LANG,
+        )
+    finally:
+        uploads.close()
+    if not text:
+        raise UpstreamError(message)
+    return {"prompt": text, "message": message}
+
+
+def storyboard_plan(studio, body: schemas.StoryboardRequest) -> dict[str, Any]:
+    """Бриф — в шоты языковой моделью; строки таблицы вкладки — объектами."""
+    from ..video import board
+
+    rows, message = studio.plan_storyboard(body.brief, body.seconds, body.structure, body.aspect, LANG)
+    if rows is None:
+        raise UpstreamError(message)
+    shots = board.shot_objects(rows)
+    return {"shots": shots, "seconds": round(sum(float(shot["seconds"]) for shot in shots), 3), "message": message}
+
+
+def prepare_storyboard_run(studio, body: schemas.StoryboardRunRequest) -> Work:
+    """Все шоты подряд и склейка — та же ``video.board.run_board``, что у кнопки вкладки."""
+    from ..ui.i18n import say
+    from ..video import board
+
+    _video_ready(studio)
+    first = _load(body.first, "first") if body.first is not None else None
+    loras = _video_loras(body.loras)
+    planned = board.shots_from([shot.model_dump() for shot in body.shots])
+    if not planned:
+        raise RequestError("the storyboard has no shots with a prompt")
+
+    def work(job: Job) -> dict:
+        report = _video_progress(job)
+        total = len(planned)
+
+        def on_event(index: int, event: dict) -> None:
+            report(event, prefix=f"shot {index + 1} of {total}: ", share=(index, total))
+
+        result = board.run_board(
+            studio, planned, chain=body.chain, resolution=body.resolution, aspect=body.aspect, seed=body.seed,
+            quality=body.quality, first=first, loras=loras, lang=LANG,
+            title=lambda count: say("video_board_title", LANG, count=count),
+            on_event=on_event, stopped=lambda: job.cancel_requested,
+            on_joining=lambda: job.stage("joining the shots"),
+        )
+        if result.failure is not None:
+            raise JobFailed(f"shot {result.failed_shot} failed: {result.failure}")
+        if result.path is None:
+            raise JobFailed("interrupted")
+        sheet = images.relative_output(result.sheet) if result.sheet is not None else None
+        return {
+            "video": _video_entry(result.path, result.parameters, body.return_base64),
+            "shots": [_video_entry(path, {}, False) for path in result.produced],
+            "contact_sheet": {"path": sheet, "url": f"{API_PREFIX}/files/{sheet}"} if sheet else None,
+            "seconds": round(result.seconds, 3),
+        }
+
+    return work
+
+
+def _read_video(path) -> dict:
+    from ..video.request import read_parameters
+
+    return read_parameters(path)
+
+
+def video_status(studio) -> dict[str, Any]:
+    found = studio.video_status()
+    return {"installed": found.cloned, "ready": found.ready, "reason": found.reason, "install": VIDEO_INSTALL}
+
+
+def video_lora_list() -> list[str]:
+    directory = config.VIDEO_LORA_DIR
+    if not directory.is_dir():
+        return []
+    return sorted(path.name for path in directory.glob("*.safetensors"))
+
+
+def video_catalogue() -> dict[str, Any]:
+    """Значения полей видео — для клиентов, которые строят форму сами."""
+    from ..video import geometry, prompt_h3, storyboard
+    from ..video import request as video_request
+
+    return {
+        "modes": list(prompt_h3.MODES),
+        "resolutions": list(geometry.RESOLUTIONS),
+        "aspect_ratios": [*geometry.ASPECT_RATIOS, geometry.FOLLOW_IMAGE],
+        "qualities": list(video_request.QUALITY),
+        "default_quality": video_request.DEFAULT_QUALITY,
+        "seconds": {"min": geometry.MIN_SECONDS, "max": geometry.MAX_SECONDS,
+                    "single_max": geometry.SINGLE_MAX_SECONDS, "fps": geometry.FPS},
+        "structures": list(storyboard.STRUCTURES),
+        "transitions": list(storyboard.TRANSITIONS),
+        "lora_dir": str(config.VIDEO_LORA_DIR),
+    }
+
+
 # --- позы --------------------------------------------------------------------------
 
 
@@ -521,11 +881,16 @@ def lora_list(studio) -> list[dict[str, Any]]:
 
 
 def gallery_list(limit: int) -> list[dict[str, Any]]:
+    """Картинки и ролики: параметры картинки — из PNG, ролика — из соседнего JSON."""
+    from ..video.request import read_parameters as read_video
+
     listed = []
     for path in gallery.recent(config.OUTPUT_DIR, limit):
-        parameters = metadata.read_png(path) or {}
+        video = path.suffix.lower() in images.VIDEO_SUFFIXES
+        parameters = (read_video(path) if video else metadata.read_png(path)) or {}
         relative = images.relative_output(path)
-        listed.append({"path": relative, "url": f"{API_PREFIX}/files/{relative}", "parameters": parameters})
+        listed.append({"path": relative, "url": f"{API_PREFIX}/files/{relative}",
+                       "kind": "video" if video else "image", "parameters": parameters})
     return listed
 
 
@@ -604,4 +969,5 @@ def info(studio) -> dict[str, Any]:
         "outpaint_sides": list(outpaint.SIDES),
         "lora_dir": str(studio.config.lora_dir),
         "settings": settings_state(studio),
+        "video": video_catalogue(),
     }

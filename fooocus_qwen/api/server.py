@@ -76,6 +76,10 @@ def create_app(studio, token: str | None = None, queue: JobQueue | None = None) 
     async def upstream_error(_request: Request, error: operations.UpstreamError):
         return JSONResponse({"detail": str(error)}, status_code=502)
 
+    @app.exception_handler(operations.EngineUnavailable)
+    async def engine_unavailable(_request: Request, error: operations.EngineUnavailable):
+        return JSONResponse({"detail": str(error)}, status_code=503)
+
     @app.get(f"{PREFIX}/health", tags=["service"])
     def health() -> dict[str, Any]:
         """Жив ли сервер — без токена: для проверок готовности и балансировщиков."""
@@ -118,6 +122,39 @@ def create_app(studio, token: str | None = None, queue: JobQueue | None = None) 
         """Расширение кадра одной операцией (лора outpaint), без маски."""
         return _finish(queue.submit("outpaint", operations.prepare_outpaint(studio, body)), queue, wait)
 
+    # --- видео (MiniMax H3 через FreeVideo) ---
+
+    @api.post("/video", tags=["video"])
+    def video(body: schemas.VideoGenerateRequest, wait: bool = True) -> JSONResponse:
+        """Ролик: текст, кадры или референсы → MP4 в галерее; продление и доводка черновика."""
+        work = operations.prepare_video(studio, body)
+        return _finish(queue.submit("video", work, interrupt=studio.stop_video), queue, wait)
+
+    @api.post("/video/storyboard/run", tags=["video"])
+    def video_storyboard_run(body: schemas.StoryboardRunRequest, wait: bool = True) -> JSONResponse:
+        """Все шоты подряд (с цепочкой кадров) и склейка с переходами."""
+        work = operations.prepare_storyboard_run(studio, body)
+        return _finish(queue.submit("video_storyboard", work, interrupt=studio.stop_video), queue, wait)
+
+    @api.post("/video/boost", tags=["video"])
+    def video_boost(body: schemas.VideoBoostRequest) -> dict[str, Any]:
+        """Сценарий — в промт H3 языковой моделью."""
+        return operations.video_boost(studio, body)
+
+    @api.post("/video/storyboard", tags=["video"])
+    def video_storyboard(body: schemas.StoryboardRequest) -> dict[str, Any]:
+        """Бриф — в шоты языковой моделью."""
+        return operations.storyboard_plan(studio, body)
+
+    @api.get("/video/status", tags=["video"])
+    def video_status() -> dict[str, Any]:
+        """Готов ли движок видео; установка — только из командной строки (--setup-video)."""
+        return operations.video_status(studio)
+
+    @api.get("/video/loras", tags=["video"])
+    def video_loras() -> list[str]:
+        return operations.video_lora_list()
+
     @api.get("/jobs", tags=["jobs"])
     def job_list() -> list[dict[str, Any]]:
         return [job.describe(queue.position(job)) for job in queue.list()]
@@ -137,9 +174,10 @@ def create_app(studio, token: str | None = None, queue: JobQueue | None = None) 
 
     @api.post("/interrupt", tags=["jobs"])
     def interrupt() -> dict[str, Any]:
-        """Прервать работу, которая идёт сейчас, — как кнопка «Стоп»."""
+        """Прервать работу, которая идёт сейчас, — как кнопка «Стоп» (и картинку, и ролик)."""
         if studio.model_loaded:
             studio.generator.interrupt()
+        studio.stop_video()
         return {"interrupted": studio.model_loaded}
 
     def _job(job_id: str) -> Job:
@@ -226,13 +264,14 @@ def create_app(studio, token: str | None = None, queue: JobQueue | None = None) 
 
     @api.get("/gallery", tags=["gallery"])
     def gallery_list(limit: int = Query(60, ge=1, le=1000)) -> list[dict[str, Any]]:
-        """Последние картинки, новые первыми, с параметрами из PNG."""
+        """Последние картинки и ролики, новые первыми, с параметрами (PNG или соседний JSON ролика)."""
         return operations.gallery_list(limit)
 
     @api.get("/files/{path:path}", tags=["gallery"], response_class=FileResponse)
     def file_get(path: str):
         try:
-            return FileResponse(images.output_path(path), media_type="image/png")
+            found = images.output_path(path)
+            return FileResponse(found, media_type=images.media_type(found))
         except images.ImageError as error:
             raise HTTPException(404 if error.not_found else 400, str(error)) from error
 

@@ -46,6 +46,10 @@ class Progress:
     images: int = 0
     step: int = 0
     steps: int = 0
+    # Доля всей работы и оценка остатка — их сообщает движок видео; у
+    # картинок прогресс считается шагами, и здесь пусто.
+    fraction: float | None = None
+    remaining_seconds: float | None = None
 
 
 @dataclass
@@ -63,6 +67,9 @@ class Job:
     finished: float | None = None
     done: threading.Event = field(default_factory=threading.Event)
     cancel_requested: bool = False
+    # Своё прерывание у работ не генератора картинок (видео — движок FreeVideo);
+    # ``None`` — прерывание очереди по умолчанию.
+    interrupt: Callable[[], None] | None = None
 
     def report(self, index: int, step: int, total: int) -> None:
         """Обратный вызов генератора: (номер картинки, шаг, всего шагов)."""
@@ -103,8 +110,8 @@ class JobQueue:
         self._worker = threading.Thread(target=self._run, name="api-jobs", daemon=True)
         self._worker.start()
 
-    def submit(self, kind: str, work: Callable[[Job], dict]) -> Job:
-        job = Job(id=uuid.uuid4().hex, kind=kind, work=work, order=next(self._counter))
+    def submit(self, kind: str, work: Callable[[Job], dict], interrupt: Callable[[], None] | None = None) -> Job:
+        job = Job(id=uuid.uuid4().hex, kind=kind, work=work, order=next(self._counter), interrupt=interrupt)
         with self._condition:
             self._jobs[job.id] = job
             self._pending.append(job)
@@ -136,8 +143,9 @@ class JobQueue:
                 self._pending.remove(job)
                 self._finish(job, CANCELLED)
                 return True
-        # Идёт сейчас: генератор остановится после текущего шага.
-        self._interrupt()
+        # Идёт сейчас: генератор остановится после текущего шага, движок
+        # видео — по своей команде отмены.
+        (job.interrupt or self._interrupt)()
         return True
 
     def _finish(self, job: Job, status: str, result: dict | None = None, error: str | None = None) -> None:

@@ -19,9 +19,10 @@ from . import (
     tab_gallery,
     tab_generate,
     tab_settings,
+    tab_video,
     viewer,
 )
-from .i18n import LANGUAGES, Localizer, pick
+from .i18n import LANGUAGES, Localizer, T, pick
 from .state import Studio
 
 LOGGER = logging.getLogger(__name__)
@@ -160,6 +161,38 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
                 show_progress="hidden",
             )
 
+            video_tab = localizer.bind(
+                gr.Tab(pick("tab_video", cfg.lang), id=layout.TAB_VIDEO),
+                label=T["tab_video"],
+            )
+            with video_tab:
+                video_components = tab_video.build(studio, localizer, language)
+            # Есть ли видеодвижок — при каждом открытии вкладки: установка могла
+            # закончиться в другом окне или из командной строки.
+            video_tab.select(
+                video_components["engine_state"], language,
+                [video_components["engine_note"], video_components["install_button"]],
+                queue=False,
+            )
+            # Картинка с генерации или правки — во вкладку Video. Два шага, как у
+            # отправки в референсы: значение поля на скрытой вкладке не
+            # отрисовывается (см. tab_generate.open_generate_tab).
+            for source in (generate_components, edit_components):
+                source["send_to_video"].click(
+                    tab_video.open_video_tab, None, tabs, queue=False,
+                ).then(
+                    tab_video.send_to_video,
+                    [
+                        source["result"], source["selected"], video_components["mode"],
+                        video_components["first"], video_components["references"], language,
+                    ],
+                    [
+                        video_components["mode"], video_components["first"], video_components["last"],
+                        video_components["references"], video_components["status"],
+                    ],
+                    show_progress="hidden",
+                )
+
             gallery_tab = localizer.bind(
                 gr.Tab(pick("tab_gallery", cfg.lang), id=layout.TAB_GALLERY),
                 label=("Галерея", "Gallery"),
@@ -167,7 +200,7 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
             with gallery_tab:
                 gallery_components = tab_gallery.build(
                     studio, localizer, generate_components, language,
-                    edit_components=edit_components, tabs=tabs,
+                    edit_components=edit_components, tabs=tabs, video_components=video_components,
                 )
             # Галерея обновляется при каждом открытии: новые картинки видны
             # сразу, без кнопки «Обновить», о которой надо было помнить.
@@ -351,4 +384,11 @@ def launch(cfg: config.AppConfig) -> None:
         studio.preload_in_background()
     # Поток держим сами — тем же ``block_thread``, который позвал бы Gradio,
     # не попроси мы управление обратно. Он же ловит Ctrl+C и закрывает сервер.
-    demo.block_thread()
+    try:
+        demo.block_thread()
+    finally:
+        # Драйвер FreeVideo — отдельный процесс с моделью в памяти.
+        # ``getattr`` — для заглушек состояния в тестах запуска.
+        close = getattr(studio, "close", None)
+        if close is not None:
+            close()

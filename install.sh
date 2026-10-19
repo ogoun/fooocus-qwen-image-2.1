@@ -8,7 +8,7 @@ venv="$root/.venv"
 python="$venv/bin/python"
 torch_index="https://download.pytorch.org/whl/cu128"
 
-step() { printf '\n\033[36m[%s/7] %s\033[0m\n' "$1" "$2"; }
+step() { printf '\n\033[36m[%s/8] %s\033[0m\n' "$1" "$2"; }
 
 cd "$root"
 
@@ -44,7 +44,10 @@ step 5 "Checking the model weights and the pose recognition weights"
 step 6 "Setting up the language model for prompt AI boost"
 "$python" -m fooocus_qwen --setup-llm
 
-step 7 "Checking readiness"
+step 7 "Video engine for the Video tab (optional, ~40-55 GB)"
+"$python" -m fooocus_qwen --setup-video
+
+step 8 "Checking readiness"
 "$python" -m fooocus_qwen --selftest
 
 printf '\n\033[32mDone. To start:\033[0m\n    ./run.sh\n'

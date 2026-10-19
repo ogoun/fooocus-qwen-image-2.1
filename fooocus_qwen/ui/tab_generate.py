@@ -170,6 +170,11 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     gr.Button(pick("send_to_references", lang), size="sm"),
                     value=("Отправить в референсы", "Send to references"),
                 )
+                # Связывается в app.py: вкладка Video собирается позже.
+                send_to_video = localizer.bind(
+                    gr.Button(pick("send_to_video", lang), size="sm"),
+                    value=T["send_to_video"],
+                )
             selected = gr.State(None)
 
             with gr.Row(elem_classes=[layout.PROMPT_BAR]):
@@ -557,6 +562,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         "reference_slots": grid.slots,
         "reference_tags": grid.tags,
         "send_to_edit": send_to_edit,
+        "send_to_video": send_to_video,
         "selected": selected,
         "prompt": prompt,
         "boosted": boosted,

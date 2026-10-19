@@ -10,6 +10,9 @@
 /Qwen-Image-2.1-TurboOfficial/
 # Распознавание позы (DWPose, качается установкой — шаг --fetch-model)
 /DWPose/
+# Видео (вкладка Video): движок FreeVideo — свой git-клон на закреплённом
+# теге, своё окружение Python и ~50 ГБ весов MiniMax H3 (--setup-video)
+/FreeVideo/
 # Пользовательские LoRA — файлы человека, не проекта
 /loras/
 

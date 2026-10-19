@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import subprocess
 import sys
@@ -102,6 +103,43 @@ def restore_fields(parameters: dict | None, lora_dir: Path | None = None) -> tup
     )
 
 
+VIDEO_FIELDS = ("prompt", "mode", "resolution", "aspect", "seconds", "quality", "seed")
+
+
+def video_restore_outputs(video_components: dict | None) -> list:
+    """Поля вкладки Video, которые восстанавливает ролик, — в порядке ``VIDEO_FIELDS``."""
+    if video_components is None:
+        return []
+    return [video_components[name] for name in VIDEO_FIELDS]
+
+
+def restore_video_fields(parameters: dict) -> tuple:
+    """Значения полей вкладки Video по параметрам ролика; чужие значения — умолчаниями."""
+    from ..video import geometry, prompt_h3
+    from ..video.request import DEFAULT_QUALITY, QUALITY
+
+    def text(name: str) -> str | None:
+        # Только строки: список или словарь из чужого JSON не хешируется, и
+        # проверка «in QUALITY» уронила бы обработчик.
+        value = parameters.get(name)
+        return value if isinstance(value, str) else None
+
+    mode, resolution, aspect_value, quality = text("mode"), text("resolution"), text("aspect"), text("quality")
+    frames = _safe_int(parameters.get("frames"), 0)
+    seconds = frames / geometry.FPS if frames > 0 else _safe_float(parameters.get("requested_seconds"), 5.0)
+    # Ползунок вкладки — от MIN_SECONDS до MAX_SECONDS; значение вне него Gradio не примет.
+    seconds = min(max(seconds, geometry.MIN_SECONDS), geometry.MAX_SECONDS) if math.isfinite(seconds) else 5.0
+    return (
+        text("prompt") or "",
+        mode if mode in prompt_h3.MODES else prompt_h3.MODE_T2V,
+        resolution if resolution in geometry.RESOLUTIONS else geometry.DEFAULT_RESOLUTION,
+        aspect_value if aspect_value in (*geometry.ASPECT_RATIOS, geometry.FOLLOW_IMAGE) else geometry.DEFAULT_ASPECT,
+        seconds,
+        quality if quality in QUALITY else DEFAULT_QUALITY,
+        _safe_int(parameters.get("seed", -1), -1),
+    )
+
+
 def _open_folder(path: Path) -> None:
     """Открывает каталог в файловом менеджере системы."""
     if sys.platform == "win32":
@@ -120,10 +158,50 @@ def _escape(text: str) -> str:
     return "".join(f"\\{char}" if char in "\\`*_{}[]<>()#+-.!|" else char for char in text)
 
 
+def is_video(path: Path | str | None) -> bool:
+    return path is not None and Path(path).suffix.lower() == ".mp4"
+
+
+def read_parameters(path: Path) -> dict:
+    """Параметры результата: из PNG — чанком, у ролика — из соседнего JSON."""
+    if is_video(path):
+        from ..video.request import read_parameters as read_video
+
+        return read_video(path)
+    return metadata.read_png(path)
+
+
+def describe_video(parameters: dict, path: Path, lang: str) -> str:
+    """Карточка ролика: сценарий, промт H3, режим, кадр, длительность, сид."""
+    lines = []
+    if parameters.get("prompt"):
+        lines += [f"**{say('card_prompt', lang)}**", "", _escape(str(parameters["prompt"])), ""]
+    rows = []
+    if parameters.get("mode"):
+        rows.append((say("card_mode", lang), str(parameters["mode"])))
+    if parameters.get("width") and parameters.get("height"):
+        rows.append((say("card_size", lang), f"{parameters['width']}×{parameters['height']}"))
+    if parameters.get("frames"):
+        rows.append((say("card_duration", lang), say("card_frames", lang, seconds=parameters.get("seconds"),
+                                                      frames=parameters["frames"])))
+    if "seed" in parameters:
+        rows.append((say("card_seed", lang), str(parameters["seed"])))
+    if parameters.get("quality"):
+        rows.append((say("card_quality", lang), str(parameters["quality"])))
+    if parameters.get("seconds_taken") is not None:
+        rows.append((say("card_time", lang), say("card_seconds", lang, seconds=parameters["seconds_taken"])))
+    rows.append((say("card_file", lang), path.name))
+    lines += ["| | |", "|---|---|"]
+    lines += [f"| {_escape(key)} | {_escape(value)} |" for key, value in rows]
+    return "\n".join(lines)
+
+
 def describe(parameters: dict | None, path: Path | None, lang: str) -> str:
-    """Карточка выбранной картинки в Markdown."""
+    """Карточка выбранной картинки или ролика в Markdown."""
     if path is None:
         return say("gallery_pick", lang)
+    if is_video(path) and parameters:
+        return describe_video(parameters, path, lang)
     if not parameters:
         return f"**{_escape(path.name)}**\n\n{say('png_without_parameters', lang)}"
 
@@ -165,6 +243,7 @@ def build(
     language=None,
     edit_components: dict | None = None,
     tabs=None,
+    video_components: dict | None = None,
 ) -> dict:
     """Собирает вкладку.
 
@@ -229,7 +308,7 @@ def build(
         if found is None:
             return gr.update(), gr.update()
         path = Path(found)
-        return str(path), describe(metadata.read_png(path), path, lang)
+        return str(path), describe(read_parameters(path), path, lang)
 
     def open_outputs(lang):
         config.OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -243,14 +322,24 @@ def build(
             return ()
         return (gr.Tabs(selected=target) if target else gr.update(),)
 
+    video_fields = video_restore_outputs(video_components)
+    keep_video = (gr.update(),) * len(video_fields)
+
     def _restore_from(source: Path | None, lang):
         if source is None:
-            return (gr.update(),) * RESTORED_FIELDS + (say("gallery_pick", lang),) + _switch(None)
-        parameters = metadata.read_png(source)
+            return (gr.update(),) * RESTORED_FIELDS + keep_video + (say("gallery_pick", lang),) + _switch(None)
+        parameters = read_parameters(source)
         if not parameters:
-            return (gr.update(),) * RESTORED_FIELDS + (say("parameters_not_found", lang),) + _switch(None)
+            return (gr.update(),) * RESTORED_FIELDS + keep_video + (say("parameters_not_found", lang),) \
+                + _switch(None)
         message = say("parameters_restored", lang, name=source.name)
-        return restore_fields(parameters, studio.config.lora_dir) + (message,) + _switch(layout.TAB_GENERATE)
+        if is_video(source):
+            if not video_fields:
+                return (gr.update(),) * RESTORED_FIELDS + (say("parameters_not_found", lang),) + _switch(None)
+            return (gr.update(),) * RESTORED_FIELDS + restore_video_fields(parameters) \
+                + (say("video_parameters_restored", lang, name=source.name),) + _switch(layout.TAB_VIDEO)
+        return restore_fields(parameters, studio.config.lora_dir) + keep_video + (message,) \
+            + _switch(layout.TAB_GENERATE)
 
     def restore(path, lang):
         return _restore_from(Path(path) if path else None, lang)
@@ -261,6 +350,15 @@ def build(
     def send_to_editor(path, lang):
         if not path:
             return (gr.update(), say("gallery_pick", lang)) + _switch(None)
+        if is_video(path):
+            # В кисть уходит картинка: у ролика — его последний кадр (с него
+            # обычно и продолжают — поправить и снять следующий шот).
+            from ..video import assemble
+
+            frame = assemble.last_frame(path)
+            from . import painter
+
+            return (painter.encode(frame.convert("RGBA")), say("sent_to_editor", lang)) + _switch(layout.TAB_EDIT)
         return (editor_value_for(path), say("sent_to_editor", lang)) + _switch(layout.TAB_EDIT)
 
     restore_outputs = [
@@ -273,6 +371,7 @@ def build(
         generate_components["cfg"],
         generate_components["ratio"],
         *generate_components["loras"].components,
+        *video_fields,
         status,
     ]
     switch_output = [tabs] if tabs is not None else []

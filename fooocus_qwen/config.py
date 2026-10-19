@@ -39,6 +39,12 @@ OUTPAINT_DIR = PROJECT_ROOT / "Qwen-Image-2.1-outpaint"
 # Пользовательские LoRA (``*.safetensors``) — как ``models/loras`` у Fooocus.
 # Ключ ``--lora-dir`` указывает другой каталог, например каталог ComfyUI.
 LORA_DIR = PROJECT_ROOT / "loras"
+# Видео (вкладка Video): движок FreeVideo для MiniMax H3 — git-клон на
+# закреплённом теге, его собственное окружение (Python 3.12, torch 2.13) и
+# веса (~50 ГБ) — всё внутри этого каталога (``video/engine.py``).
+FREEVIDEO_DIR = PROJECT_ROOT / "FreeVideo"
+# LoRA для H3 (*.safetensors) — отдельно от LoRA Qwen: модели разные.
+VIDEO_LORA_DIR = LORA_DIR / "video"
 RESOURCES_DIR = PROJECT_ROOT / "resources"
 STYLES_DIR = RESOURCES_DIR / "styles"
 SYSTEM_PROMPT_DIR = RESOURCES_DIR / "prompts"
@@ -48,6 +54,10 @@ DEFAULT_PROMPT_DIR = RESOURCES_DIR / "default_prompts"
 
 USER_DIR = PROJECT_ROOT / "user"
 OUTPUT_DIR = USER_DIR / "outputs"
+# Рабочие каталоги заданий FreeVideo: промт, входы, отчёты движка, части
+# длинного ролика и его кэш результатов. Готовый ролик копируется в
+# OUTPUT_DIR рядом с картинками — галерея одна.
+VIDEO_RUNS_DIR = USER_DIR / "video_runs"
 PROMPT_DIR = USER_DIR / "prompts"
 # Каталог поз openposes.com (модель — Эмма Уотсон) — часть поставки, лежит в
 # репозитории. Позы, распознанные на фотографиях пользователя, — его данные и
@@ -200,6 +210,20 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="ask for weight precision (bf16/INT8) and SageAttention, save the choice and exit",
     )
+    parser.add_argument(
+        "--setup-video",
+        dest="setup_video",
+        action="store_true",
+        help="install the FreeVideo engine for the Video tab (MiniMax H3, ~40-55 GB) and exit",
+    )
+    parser.add_argument(
+        "--video-reuse-models",
+        dest="video_reuse_models",
+        type=Path,
+        help="with --setup-video: a folder with MiniMax H3 weights already on disk (e.g. a ComfyUI models folder); "
+        "matching files are hard-linked instead of downloaded",
+    )
+    parser.add_argument("--yes", action="store_true", help="with --setup-video: do not ask for confirmation")
     parser.add_argument(
         "--setup-llm",
         dest="setup_llm",

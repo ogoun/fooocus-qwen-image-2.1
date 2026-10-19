@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
+import uuid
 from typing import Any
 
 from PIL import Image
@@ -117,6 +119,9 @@ class Studio:
         # же именем — перезапуск оболочки вернёт попытку.
         self._text_only_models: set[tuple[str, str]] = set()
         self._pose_detector: Any = None
+        # Движок видео (FreeVideo, ``video/engine.py``) — подпроцесс; создаётся
+        # при первом ролике.
+        self._video: Any = None
 
     @property
     def generator(self):
@@ -396,6 +401,144 @@ class Studio:
             misses=self._cache.misses,
         )
 
+    # --- видео -------------------------------------------------------------------
+
+    @property
+    def video_engine(self):
+        """Движок видео; процесс его драйвера стартует с первым заданием."""
+        if self._video is None:
+            from ..video.engine import VideoEngine
+
+            self._video = VideoEngine()
+        return self._video
+
+    def video_status(self):
+        from ..video import engine
+
+        return engine.status()
+
+    def release_video(self) -> None:
+        """Отпускает видеопамять модели FreeVideo — перед работой Qwen."""
+        if self._video is not None and not self._video.busy:
+            self._video.release()
+
+    def claim_gpu_for_video(self) -> None:
+        """Освобождает карту под видео: Qwen выгружается целиком.
+
+        FreeVideo планирует размещение по реально свободной памяти; оставленные
+        на карте 13–20 ГБ Qwen перевели бы его в режим малой карты — поблочная
+        подкачка вместо резидентных блоков, в разы медленнее. Обратная загрузка
+        Qwen стоит 20–50 секунд при следующей картинке; ролик идёт минутами.
+        """
+        if self._generator is not None:
+            LOGGER.info("Unloading the image model to free the GPU for video")
+            self.unload()
+
+    def run_video(self, request: Any, lang: str, on_event: Any = None) -> tuple[Any, dict, str | None]:
+        """Ролик по запросу: ``(путь в галерее, параметры, сообщение об ошибке или None)``.
+
+        Сбой — строка состояния, как у картинок. Прерывание — тоже сообщение,
+        не исключение.
+        """
+        from ..video import assemble, engine
+        from ..video import request as video_request
+
+        moment = time.strftime("%Y-%m-%d")
+        run_dir = config.VIDEO_RUNS_DIR / "inputs" / moment / uuid.uuid4().hex[:12]
+        try:
+            job, parameters = video_request.build_job(
+                request, run_dir, config.VIDEO_RUNS_DIR,
+                video_has_audio=lambda path: assemble.probe(path).has_audio,
+            )
+            self.claim_gpu_for_video()
+            started = time.perf_counter()
+            done = self.video_engine.generate(job, on_event)
+            parameters["seconds_taken"] = round(time.perf_counter() - started, 1)
+            parameters["parts"] = len(done.get("parts") or [])
+            destination = video_request.save_result(
+                done["output"], config.OUTPUT_DIR, parameters, config.VIDEO_RUNS_DIR
+            )
+            return destination, parameters, None
+        except engine.VideoCancelled:
+            return None, {}, say("video_cancelled", lang)
+        except ValueError as error:
+            return None, {}, say("video_invalid", lang, error=_quote(error))
+        except Exception as error:  # noqa: BLE001 — тост с traceback хуже строки статуса
+            LOGGER.exception("Video generation failed")
+            if isinstance(error, engine.VideoEngineError):
+                return None, {}, say("video_failed", lang, error=_quote(error))
+            return None, {}, describe_failure(error, lang)
+
+    def boost_video(
+        self, text: str, mode: str, duration: Any, references: Any, first: Any, last: Any, aspect: str, lang: str,
+    ) -> tuple[str, str]:
+        """Сценарий — в промт H3 языковой моделью: ``(промт или "", сообщение)``.
+
+        Модель видит кадры и картинки-референсы: описание персонажа и места
+        тогда пишется по ним, а не выдумывается.
+        """
+        from PIL import Image as PILImage
+
+        from ..video import assemble, prompt_h3
+        from ..video.request import engine_references
+
+        ordered = engine_references(tuple(references or ()))
+        has_audio = []
+        for item in ordered:
+            if item.kind == "video":
+                try:
+                    has_audio.append(assemble.probe(item.path).has_audio)
+                except Exception:  # noqa: BLE001 — нечитаемое видео: без метки дорожки
+                    has_audio.append(False)
+        labels = prompt_h3.reference_labels([item.kind for item in ordered], has_audio) if ordered else []
+        images = [image for image in (first, last) if image is not None]
+        for item in ordered:
+            if item.kind == "image":
+                with PILImage.open(item.path) as opened:
+                    images.append(opened.convert("RGB"))
+        try:
+            client = self.llm_client()
+            key = (client.base_url, client.model)
+            result = prompt_h3.boost(
+                client, text, mode, duration, prompt_dir=config.SYSTEM_PROMPT_DIR, labels=labels,
+                has_first=first is not None, has_last=last is not None, aspect=aspect,
+                images=(images or None) if key not in self._text_only_models else None,
+            )
+        except (LlmError, FileNotFoundError, ValueError, OSError) as error:
+            LOGGER.warning("Video AI boost failed: %s", error)
+            return "", say("boost_failed", lang, error=error)
+        if result.images_skipped:
+            self._text_only_models.add(key)
+        if result.problems:
+            return result.prompt, say("video_boost_problems", lang, problems="; ".join(result.problems[:4]))
+        return result.prompt, say("video_boost_done", lang)
+
+    def plan_storyboard(
+        self, brief: str, total_seconds: float, structure: str, aspect: str, lang: str,
+    ) -> tuple[list | None, str]:
+        """Бриф — в шоты языковой моделью: ``(строки таблицы или None, сообщение)``."""
+        from ..video import storyboard
+
+        try:
+            shots = storyboard.plan(
+                self.llm_client(), brief, total_seconds, structure=structure, aspect=aspect,
+                prompt_dir=config.SYSTEM_PROMPT_DIR,
+            )
+        except (LlmError, FileNotFoundError, ValueError, OSError) as error:
+            LOGGER.warning("Storyboard planning failed: %s", error)
+            return None, say("video_plan_failed", lang, error=error)
+        seconds = sum(shot.seconds for shot in shots)
+        return storyboard.to_rows(shots), say("video_plan_done", lang, count=len(shots), seconds=f"{seconds:.1f}")
+
+    def stop_video(self) -> None:
+        if self._video is not None:
+            self._video.cancel()
+
+    def close(self) -> None:
+        """Закрывает подпроцессы при выходе: драйвер FreeVideo держит память модели."""
+        if self._video is not None:
+            self._video.close()
+
     def run_generation(
         self, request: Any, lang: str, progress: Any = None
     ) -> tuple[list[Any], str | None]:
@@ -411,6 +554,8 @@ class Studio:
         денойзинга по нехватке памяти.
         """
         try:
+            # Модель видео живёт в своём процессе и могла остаться на карте.
+            self.release_video()
             return self.generator.generate(request, progress=progress), None
         except Exception as error:  # noqa: BLE001 — тост с traceback хуже строки статуса
             LOGGER.exception("Generation failed")

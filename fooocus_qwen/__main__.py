@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import sys
+from pathlib import Path
 
 from . import config, logging_setup
 
@@ -111,6 +112,15 @@ def selftest() -> int:
         print(f"[--] image formats: not installed {names}: {formats.INSTALL_HINT}")
     else:
         print("[ok ] image formats: HEIC, JPEG XL, camera RAW, EXR")
+
+    # Видео — необязательная часть: без движка не работает только вкладка «Видео».
+    from .video import engine as video_engine
+
+    video = video_engine.status()
+    if video.ready:
+        print(f"[ok ] video engine: FreeVideo {video_engine.TAG} in {video_engine.root()}")
+    else:
+        print(f"[--] video engine: {video.reason}; install with --setup-video (optional)")
 
     if problems:
         print("\nNot ready:")
@@ -231,6 +241,39 @@ def setup_llm() -> int:
     return 0
 
 
+def setup_video(assume_yes: bool = False, reuse_models: Path | None = None) -> int:
+    """Ставит видеодвижок FreeVideo (вкладка Video) — по согласию: это ~40–55 ГБ.
+
+    Без консоли и без ``--yes`` шаг пропускается, а не падает: видео —
+    необязательная часть, и поставить его можно позже той же командой или
+    кнопкой на вкладке. ``isatty`` в Git Bash врёт (``< /dev/null`` выглядит
+    консолью), поэтому конец ввода ловится как ответ «нет».
+    """
+    from .video import engine
+
+    found = engine.status()
+    if found.ready:
+        print(f"  Video engine is ready: {engine.root()}")
+        return 0
+    if not assume_yes:
+        print("  The Video tab uses MiniMax H3 through the FreeVideo engine (8 GB VRAM and up).")
+        print(f"  Setup downloads its own Python environment and ~40-55 GB of weights into {engine.root()}.")
+        try:
+            answer = input("  Install the video engine now? [y/N] ").strip().lower()
+        except EOFError:
+            answer = ""
+        if answer not in ("y", "yes", "д", "да"):
+            print("  Skipped. Later: python -m fooocus_qwen --setup-video, or the button on the Video tab.")
+            return 0
+    try:
+        engine.install(lambda line: print("  " + line, flush=True), reuse_models=reuse_models)
+    except engine.VideoEngineError as error:
+        print(f"  Video engine setup failed: {error}")
+        return 1
+    print("  Video engine is ready.")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     args = config.build_parser().parse_args(argv)
     logging_setup.setup_logging(args.verbose)
@@ -241,6 +284,9 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.setup_llm:
         return setup_llm()
+
+    if args.setup_video:
+        return setup_video(args.yes, args.video_reuse_models)
 
     if args.setup_performance:
         return setup_performance()

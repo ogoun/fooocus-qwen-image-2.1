@@ -27,6 +27,9 @@ MAX_BASE64_CHARS = 80 * 1024 * 1024
 # но 16K — уже не фотография.
 MAX_SIDE = 16384
 
+VIDEO_SUFFIXES = (".mp4",)
+MEDIA_TYPES = {".png": "image/png", ".mp4": "video/mp4", ".json": "application/json"}
+
 
 class ImageError(ValueError):
     """Картинку не прочитать или она указывает не туда; ответ — 400 или 404."""
@@ -92,9 +95,27 @@ def load(source: ImageInput) -> Image.Image:
     if ref.pose:
         with Image.open(pose_entry(ref.pose).skeleton) as opened:
             return opened.convert("RGB")
-    with Image.open(output_path(ref.gallery)) as opened:
+    path = output_path(ref.gallery)
+    if path.suffix.lower() in VIDEO_SUFFIXES:
+        return video_last_frame(path)
+    with Image.open(path) as opened:
         opened.load()
         return opened.copy()
+
+
+def video_last_frame(path: Path) -> Image.Image:
+    """Ролик галереи вместо картинки — его последний кадр («Последний кадр → следующий шот»)."""
+    from ..video import assemble
+
+    try:
+        return assemble.last_frame(path).convert("RGB")
+    except Exception as error:  # noqa: BLE001 — битый ролик или нет PyAV: ошибка клиента, не 500
+        raise ImageError(f"cannot read the last frame of {path.name}: {error}") from error
+
+
+def media_type(path: Path) -> str:
+    """Тип содержимого файла галереи: картинки PNG, ролики MP4 (и соседние JSON)."""
+    return MEDIA_TYPES.get(Path(path).suffix.lower(), "application/octet-stream")
 
 
 def to_mask(image: Image.Image, size: tuple[int, int]) -> Image.Image:
@@ -129,5 +150,20 @@ def crop(image: Image.Image, box: tuple[int, int, int, int] | None) -> Image.Ima
 
 
 def encode_png(path: Path) -> str:
-    """Готовый PNG с метаданными — как есть, без пересжатия."""
+    """Готовый PNG с метаданными — как есть, без пересжатия (и MP4 так же — байты файла)."""
     return base64.b64encode(Path(path).read_bytes()).decode("ascii")
+
+
+def decode_bytes(text: str, what: str = "the file") -> bytes:
+    """Произвольный файл из base64 или data URL — для видео- и звуковых референсов."""
+    if len(text) > MAX_BASE64_CHARS:
+        raise ImageError(f"{what} is too large")
+    if text.startswith("data:"):
+        _, _, text = text.partition(",")
+    try:
+        raw = base64.b64decode(text, validate=False)
+    except (binascii.Error, ValueError) as error:
+        raise ImageError(f"{what} is not valid base64: {error}") from error
+    if not raw:
+        raise ImageError(f"{what} is empty")
+    return raw

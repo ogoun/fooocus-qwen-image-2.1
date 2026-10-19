@@ -19,11 +19,13 @@
        are downloaded. On cards under 20 GB the INT8 text encoder is built
        here as well (about 20 s).
     6. The language model address for prompt AI boost (optional).
-    7. Self-test: "installed" must mean "will start".
+    7. The video engine for the Video tab: FreeVideo with MiniMax H3, its own
+       Python environment and ~40-55 GB of weights (optional, asks first).
+    8. Self-test: "installed" must mean "will start".
 
-    Steps 4-6 are done by the package itself (--setup-performance,
-    --fetch-model, --setup-llm): the same logic written twice, in two shell
-    languages, drifts apart.
+    Steps 4-7 are done by the package itself (--setup-performance,
+    --fetch-model, --setup-llm, --setup-video): the same logic written twice,
+    in two shell languages, drifts apart.
 
 .EXAMPLE
     .\install.ps1
@@ -47,7 +49,7 @@ $torchIndex = 'https://download.pytorch.org/whl/cu128'
 
 function Step($number, $text) {
     Write-Host ''
-    Write-Host "[$number/7] $text" -ForegroundColor Cyan
+    Write-Host "[$number/8] $text" -ForegroundColor Cyan
 }
 
 Push-Location $root
@@ -96,7 +98,10 @@ try {
     Step 6 'Setting up the language model for prompt AI boost'
     & $python -m fooocus_qwen --setup-llm
 
-    Step 7 'Checking readiness'
+    Step 7 'Video engine for the Video tab (optional, ~40-55 GB)'
+    & $python -m fooocus_qwen --setup-video
+
+    Step 8 'Checking readiness'
     & $python -m fooocus_qwen --selftest
     if ($LASTEXITCODE -ne 0) { throw 'Self-test failed' }
 

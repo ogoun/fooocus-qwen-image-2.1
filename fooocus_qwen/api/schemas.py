@@ -15,6 +15,10 @@ from .. import config
 from ..engine import generator as generator_module
 from ..imaging import aspect, outpaint
 from ..settings import MEMORY_PROFILES, PRECISIONS
+from ..video import geometry as video_geometry
+from ..video import prompt_h3 as video_prompt
+from ..video import request as video_request
+from ..video import storyboard as video_storyboard
 
 PresetName = Literal[config.PRESET_NAMES]  # type: ignore[valid-type]
 # «Как у исходника/референса» внутри приложения записано по-русски
@@ -36,7 +40,8 @@ class ImageRef(Strict):
     """Картинка: ровно одно из полей.
 
     ``base64`` — PNG/JPEG/WebP в base64 или data URL; ``pose`` — имя позы из
-    ``GET /poses`` (её скелет); ``gallery`` — путь картинки из ``GET /gallery``.
+    ``GET /poses`` (её скелет); ``gallery`` — путь картинки из ``GET /gallery``
+    (ролик галереи даёт свой последний кадр — «следующий шот»).
     Вместо объекта можно прислать строку — это ``base64``.
     """
 
@@ -154,4 +159,110 @@ class SettingsPatch(Strict):
     precision: Literal[PRECISIONS] | None = None  # type: ignore[valid-type]
     sage_attention: bool | None = None
     memory_profile: Literal[MEMORY_PROFILES] | None = None  # type: ignore[valid-type]
+
+
+# --- видео ---------------------------------------------------------------------------
+#
+# Имена полей — как в параметрах ролика (соседний JSON в галерее): что
+# записано у ролика, то и отправляется обратно повтором.
+
+VideoMode = Literal[video_prompt.MODES]  # type: ignore[valid-type]
+VideoResolution = Literal[tuple(video_geometry.RESOLUTIONS)]  # type: ignore[valid-type]
+VideoAspect = Literal[video_geometry.ASPECT_RATIOS + (video_geometry.FOLLOW_IMAGE,)]  # type: ignore[valid-type]
+VideoQuality = Literal[tuple(video_request.QUALITY)]  # type: ignore[valid-type]
+VideoStructure = Literal[tuple(video_storyboard.STRUCTURES)]  # type: ignore[valid-type]
+
+
+def _seconds():
+    return Field(5.0, ge=video_geometry.MIN_SECONDS, le=video_geometry.MAX_SECONDS,
+                 description="snapped up to the frame grid (17n+5 frames at 24 fps); over 15 s, made in parts")
+
+
+class VideoReference(Strict):
+    """Референс режима ``ref``: ровно одно из ``base64`` и ``gallery``.
+
+    ``kind`` по имени файла галереи (или ``name``) узнаётся сам; у base64 без
+    имени он обязателен. ``name`` — имя исходного файла: из него берётся
+    расширение для видео и звука.
+    """
+
+    kind: Literal["image", "video", "audio"] | None = None
+    base64: str | None = None
+    gallery: str | None = Field(None, description="a path from GET /gallery (a picture or a video)")
+    name: str | None = Field(None, max_length=200, description="original file name, e.g. voice.mp3")
+
+    @model_validator(mode="after")
+    def _exactly_one(self):
+        if bool(self.base64) == bool(self.gallery):
+            raise ValueError("a reference needs exactly one of: base64, gallery")
+        return self
+
+
+class VideoLora(Strict):
+    name: str = Field(description="file name from GET /video/loras (loras/video), .safetensors may be omitted")
+    strength: float = Field(1.0, ge=-2.0, le=2.0)
+
+
+class VideoShot(Strict):
+    """Шот раскадровки — как строка таблицы вкладки, без номера."""
+
+    prompt: str = Field(min_length=1)
+    seconds: float = Field(video_storyboard.DEFAULT_SHOT_SECONDS, gt=0.0, le=video_geometry.SINGLE_MAX_SECONDS)
+    transition: str = Field(video_storyboard.DEFAULT_TRANSITION,
+                            description=f"into this shot: {', '.join(video_storyboard.TRANSITIONS)}")
+    title: str = ""
+
+
+class VideoSettings(Strict):
+    """Общее у ролика и раскадровки: холст, качество, сид, LoRA, возврат файла."""
+
+    resolution: VideoResolution = video_geometry.DEFAULT_RESOLUTION  # type: ignore[valid-type]
+    aspect: VideoAspect = video_geometry.DEFAULT_ASPECT  # type: ignore[valid-type]
+    seed: int = -1
+    quality: VideoQuality = video_request.DEFAULT_QUALITY  # type: ignore[valid-type]
+    loras: list[VideoLora] = Field([], max_length=8)
+    return_base64: bool = Field(False, description="also return the MP4 itself in base64")
+
+
+class VideoGenerateRequest(VideoSettings):
+    prompt: str = Field("", description="required, except with continue_from or refine_from")
+    mode: VideoMode = video_prompt.MODE_T2V  # type: ignore[valid-type]
+    seconds: float = _seconds()
+    first: ImageInput | None = Field(None, description="first frame (i2v, flf2v); a gallery video gives its last frame")
+    last: ImageInput | None = Field(None, description="last frame (flf2v)")
+    references: list[VideoReference] = Field([], max_length=video_request.MAX_IMAGES + video_request.MAX_VIDEOS
+                                             + video_request.MAX_AUDIOS)
+    boost: bool = Field(False, description="rewrite the prompt into an H3 prompt with the language model first")
+    continue_from: str | None = Field(None, description="a gallery video to extend")
+    refine_from: str | None = Field(None, description="a gallery draft to finish without generating anew")
+
+    @model_validator(mode="after")
+    def _one_follow_up(self):
+        if self.continue_from and self.refine_from:
+            raise ValueError("give either continue_from or refine_from, not both")
+        return self
+
+
+class VideoBoostRequest(Strict):
+    prompt: str = Field(min_length=1)
+    mode: VideoMode = video_prompt.MODE_T2V  # type: ignore[valid-type]
+    seconds: float = _seconds()
+    aspect: VideoAspect = video_geometry.DEFAULT_ASPECT  # type: ignore[valid-type]
+    first: ImageInput | None = None
+    last: ImageInput | None = None
+    references: list[VideoReference] = Field([], max_length=video_request.MAX_IMAGES + video_request.MAX_VIDEOS
+                                             + video_request.MAX_AUDIOS)
+
+
+class StoryboardRequest(Strict):
+    brief: str = Field(min_length=1)
+    seconds: float = Field(20.0, ge=5.0, le=120.0, description="total length of the film")
+    structure: VideoStructure = video_storyboard.DEFAULT_STRUCTURE  # type: ignore[valid-type]
+    aspect: VideoAspect = video_geometry.DEFAULT_ASPECT  # type: ignore[valid-type]
+
+
+class StoryboardRunRequest(VideoSettings):
+    shots: list[VideoShot] = Field(min_length=1, max_length=40)
+    chain: bool = Field(True, description="each shot starts from the last frame of the previous one")
+    first: ImageInput | None = Field(None, description="first frame of the first shot")
 

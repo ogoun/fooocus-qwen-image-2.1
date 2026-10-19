@@ -209,6 +209,62 @@ T: dict[str, tuple[str, str]] = {
     "gallery_reuse": ("Повторить параметры", "Reuse parameters"),
     "gallery_to_editor": ("Открыть в редакторе", "Open in editor"),
     "gallery_from_file": ("Параметры из PNG-файла…", "Parameters from a PNG file…"),
+    # --- вкладка Video ---
+    "tab_video": ("Видео", "Video"),
+    "send_to_video": ("В видео", "To video"),
+    "video_first": ("Первый кадр", "First frame"),
+    "video_last": ("Последний кадр", "Last frame"),
+    "video_refs": ("Референсы: картинки, видео, звук", "References: images, videos, audio"),
+    "video_result": ("Ролик", "Video"),
+    "video_to_next": ("Последний кадр → следующий шот", "Last frame → next shot"),
+    "video_extend": ("Продлить ролик", "Extend video"),
+    "video_finish": ("Довести черновик до финала", "Finish the draft"),
+    "video_prompt": ("Сценарий ролика", "Video script"),
+    "video_prompt_placeholder": (
+        "Что происходит в кадре, как движется камера, что звучит… Можно по-русски.",
+        "What happens on screen, how the camera moves, what is heard…",
+    ),
+    "video_generate": ("Снять ролик", "Make video"),
+    "video_boost": ("AI буст (формат H3)", "AI boost (H3 format)"),
+    "video_boost_info": (
+        "Языковая модель перепишет сценарий в структуру, на которой учили H3: шоты, тайм-коды, звук, музыка.",
+        "A language model rewrites the script into the structure H3 was trained on: shots, timecodes, sound, music.",
+    ),
+    "video_boosted": ("Промт H3", "H3 prompt"),
+    "video_install": ("Установить видеодвижок (~50 ГБ)", "Install the video engine (~50 GB)"),
+    "video_mode": ("Режим", "Mode"),
+    "video_mode_t2v": ("Текст → видео", "Text → video"),
+    "video_mode_i2v": ("Первый кадр → видео", "First frame → video"),
+    "video_mode_flf2v": ("Первый и последний кадр", "First and last frame"),
+    "video_mode_ref": ("По референсам (персонажи, стиль, голос)", "From references (characters, style, voice)"),
+    "video_resolution": ("Разрешение", "Resolution"),
+    "video_aspect_image": ("как у кадра", "as the frame"),
+    "video_seconds": ("Длительность, с", "Duration, s"),
+    "video_quality": ("Качество и скорость", "Quality and speed"),
+    "video_quality_draft": ("Черновик — половинный размер, быстро", "Draft — half size, fast"),
+    "video_quality_light": ("Обычное — 8 + 3 шага", "Standard — 8 + 3 steps"),
+    "video_quality_medium": ("Повыше — первый проход крупнее", "Better — larger first pass"),
+    "video_quality_high": ("Высокое — 16 шагов, медленно", "High — 16 steps, slow"),
+    "video_quality_max": ("Максимум — 20 шагов, очень медленно", "Max — 20 steps, very slow"),
+    "video_loras": ("LoRA для H3", "H3 LoRA"),
+    "video_loras_info": ("Файлы *.safetensors из папки loras/video.", "*.safetensors files from loras/video."),
+    "video_storyboard": ("Раскадровка", "Storyboard"),
+    "video_brief": ("Бриф ролика", "Video brief"),
+    "video_brief_placeholder": (
+        "О чём ролик, для кого, герой, место, настроение. Модель разобьёт его на шоты.",
+        "What the video is about, the audience, the hero, the place, the mood. The model splits it into shots.",
+    ),
+    "video_structure": ("Структура", "Structure"),
+    "video_total": ("Общая длительность, с", "Total length, s"),
+    "video_chain": ("Цепочка кадров", "Frame chain"),
+    "video_chain_info": (
+        "Последний кадр шота становится первым кадром следующего: герой и место не меняются.",
+        "Each shot starts from the previous shot's last frame: the hero and the place stay the same.",
+    ),
+    "video_plan": ("Разбить на шоты", "Split into shots"),
+    "video_shots": ("Шоты (можно править)", "Shots (editable)"),
+    "video_board_run": ("Снять все шоты и склеить", "Make all shots and join them"),
+    "video_contact": ("Контактный лист", "Contact sheet"),
 }
 
 
@@ -613,11 +669,95 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "card_time": ("Время", "Time"),
     "card_seconds": ("{seconds} с", "{seconds} s"),
     "card_file": ("Файл", "File"),
+    "card_mode": ("Режим", "Mode"),
+    "card_duration": ("Длительность", "Duration"),
+    "card_frames": ("{seconds} с · {frames} кадров", "{seconds} s · {frames} frames"),
+    "video_parameters_restored": (
+        "Параметры ролика {name} перенесены на вкладку «Видео».",
+        "Parameters of {name} moved to the Video tab.",
+    ),
     "painter_bad_value": (
         "Не удалось прочитать изображение из редактора: {error}",
         "Could not read the image from the editor: {error}",
     ),
     "failure_other": ("Сбой: {kind}: {error}", "Failure: {kind}: {error}"),
+    # --- вкладка Video ---
+    "video_size": (
+        "{width}×{height} · {frames} кадров · {seconds} с",
+        "{width}×{height} · {frames} frames · {seconds} s",
+    ),
+    "video_size_parts": (
+        "{width}×{height} · {frames} кадров · {seconds} с — частями по 15 с с бесшовным продолжением",
+        "{width}×{height} · {frames} frames · {seconds} s — in 15 s parts with seamless continuation",
+    ),
+    "video_refs_empty": (
+        "До 9 картинок, 3 видео и 3 звуков. Зовите их в сценарии метками — они появятся здесь.",
+        "Up to 9 images, 3 videos and 3 audio files. Refer to them in the script by the labels shown here.",
+    ),
+    "video_refs_labels": ("Метки для сценария: {labels}", "Labels for the script: {labels}"),
+    "video_engine_missing": (
+        "Видеодвижок FreeVideo не готов: {reason}. Установка скачает MiniMax H3 (~40–55 ГБ) в папку FreeVideo.",
+        "The FreeVideo engine is not ready: {reason}. Setup downloads MiniMax H3 (~40-55 GB) "
+        "into the FreeVideo folder.",
+    ),
+    "video_install_failed": ("Установка видеодвижка не удалась: {error}", "Video engine setup failed: {error}"),
+    "video_install_done": ("Видеодвижок установлен.", "The video engine is installed."),
+    "video_progress_step": ("{label} · шаг {done} из {total}", "{label} · step {done} of {total}"),
+    "video_progress_left": ("{label} · осталось ~{left}", "{label} · ~{left} left"),
+    "video_done": (
+        "Готово: {width}×{height}, {seconds} с, сид {seed}, за {taken} с",
+        "Done: {width}×{height}, {seconds} s, seed {seed}, in {taken} s",
+    ),
+    "video_draft_hint": (
+        "Это черновик: понравился — «Довести черновик до финала», без новой генерации",
+        "This is a draft: if you like it, use “Finish the draft” — no new generation",
+    ),
+    "video_boosting": ("Переписываю сценарий в формат H3…", "Rewriting the script into the H3 format…"),
+    "video_prompt_required": ("Опишите ролик в поле сценария.", "Describe the video in the script field."),
+    "video_starting": ("Готовлю видеодвижок…", "Starting the video engine…"),
+    "video_nothing": ("Сначала снимите ролик.", "Make a video first."),
+    "video_no_engine_output": (
+        "У этого ролика нет рабочих файлов движка — снимите его заново.",
+        "This video has no engine files left; make it again.",
+    ),
+    "video_next_ready": (
+        "Последний кадр — первым кадром следующего шота. Опишите, что дальше.",
+        "The last frame is the first frame of the next shot. Describe what happens next.",
+    ),
+    "video_invalid": ("Не получится: {error}", "Cannot do that: {error}"),
+    "video_board_empty": ("Сначала разбейте бриф на шоты.", "Split the brief into shots first."),
+    "video_board_progress": ("Шот {index} из {total}: {label}", "Shot {index} of {total}: {label}"),
+    "video_board_failed": ("Шот {index} не снят: {error}", "Shot {index} failed: {error}"),
+    "video_board_joining": ("Склеиваю шоты…", "Joining the shots…"),
+    "video_board_title": ("Раскадровка из {count} шотов", "Storyboard of {count} shots"),
+    "video_board_done": (
+        "Готово: {count} шотов склеены, {seconds} с. Контактный лист — под раскадровкой",
+        "Done: {count} shots joined, {seconds} s. The contact sheet is under the storyboard",
+    ),
+    "video_cancelled": ("Ролик прерван.", "Video stopped."),
+    "video_failed": ("Видеодвижок не справился: {error}", "The video engine failed: {error}"),
+    "video_sent_first": ("Картинка — первым кадром ролика.", "The picture is the video's first frame."),
+    "video_sent_last": ("Картинка — последним кадром ролика.", "The picture is the video's last frame."),
+    "video_sent_reference": (
+        "Картинка добавлена в референсы ролика.",
+        "The picture was added to the video references.",
+    ),
+    "video_boost_done": ("Сценарий переписан в формат H3.", "The script was rewritten into the H3 format."),
+    "video_boost_problems": (
+        "Сценарий переписан, но проверка нашла: {problems}",
+        "The script was rewritten, but the check found: {problems}",
+    ),
+    "video_plan_done": (
+        "Шотов: {count}, всего {seconds} с. Их можно править в таблице.",
+        "{count} shots, {seconds} s in total. You can edit them in the table.",
+    ),
+    "video_plan_failed": ("Раскадровка не получилась: {error}", "Storyboard planning failed: {error}"),
+    "video_not_english": (
+        "Сценарий не по-английски, а H3 учили на английских описаниях: включите AI буст — он переведёт "
+        "и разложит сцену по формату (реплики останутся на вашем языке)",
+        "The script is not in English, and H3 was trained on English descriptions: turn on AI boost to "
+        "translate and structure it (spoken lines keep their language)",
+    ),
 }
 
 

@@ -111,13 +111,17 @@ def collect(value, mode: str) -> tuple[Image.Image | None, Image.Image | None]:
 
 
 def gallery_path(item) -> str | None:
-    """Путь картинки из значения галереи: строка, пара (путь, подпись) или словарь."""
+    """Путь картинки из значения галереи: строка, пара (путь, подпись) или словарь.
+
+    Ролик в галерее приходит словарём ``{"video": {...}}``, а не ``{"image": {...}}``.
+    """
     if item is None:
         return None
     if isinstance(item, (list, tuple)):
         item = item[0] if item else None
     if isinstance(item, dict):
-        item = (item.get("image") or {}).get("path") if isinstance(item.get("image"), dict) else item.get("path")
+        media = item.get("image") if isinstance(item.get("image"), dict) else item.get("video")
+        item = media.get("path") if isinstance(media, dict) else item.get("path")
     return str(item) if item else None
 
 
@@ -271,6 +275,12 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                         send_to_refs = localizer.bind(
                             gr.Button(pick("send_to_references", lang), size="sm"),
                             value=("Отправить в референсы", "Send to references"),
+                        )
+                        # Связывается в app.py: результат — во вкладку Video
+                        # (первым кадром, последним или в референсы — по режиму).
+                        send_to_video = localizer.bind(
+                            gr.Button(pick("send_to_video", lang), size="sm"),
+                            value=T["send_to_video"],
                         )
 
             with gr.Row(elem_classes=[layout.PROMPT_BAR, layout.SLOT_PROMPT]):
@@ -738,6 +748,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         "result": result,
         "selected": selected,
         "send_to_references": send_to_refs,
+        "send_to_video": send_to_video,
         "prompt": prompt,
         "prompts": prompts,
         "status": status,
