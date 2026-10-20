@@ -110,6 +110,8 @@ def _generate_part(bridge, job: dict, part: dict, index: int, total: int, previo
         # входы, только апскейл латентов и шаги уточнения.
         preview=bool(job.get("preview")),
         refine_from=job.get("refine_from"),
+        # Финальный апскейл латентов — наша правка движка (freevideo_patches).
+        **({"final_upscale": tuple(job["final_upscale"])} if job.get("final_upscale") else {}),
     )
 
 

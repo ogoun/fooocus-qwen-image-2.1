@@ -213,14 +213,33 @@ class VideoShot(Strict):
     title: str = ""
 
 
+class VideoUpscale(Strict):
+    """Финальный апскейл латентов — как у галочки Upscale вкладки (``video.geometry.Upscale``)."""
+
+    mode: Literal[video_geometry.UPSCALE_MODES] = video_geometry.UPSCALE_MULTIPLIER  # type: ignore[valid-type]
+    factor: float = Field(2.0, ge=1.0, le=video_geometry.MAX_UPSCALE, description="mode multiplier")
+    width: int = Field(1920, ge=video_geometry.MIN_SIDE, le=16384,
+                       description="mode dimensions; rounded to a multiple of 32")
+    height: int = Field(1088, ge=video_geometry.MIN_SIDE, le=16384,
+                        description="mode dimensions; rounded to a multiple of 32")
+    megapixels: float = Field(2.0, gt=0.0, le=64.0, description="mode megapixels (1 MP = 1024 x 1024)")
+
+    def settings(self) -> video_geometry.Upscale:
+        return video_geometry.Upscale(mode=self.mode, factor=self.factor, width=self.width, height=self.height,
+                                      megapixels=self.megapixels)
+
+
 class VideoSettings(Strict):
-    """Общее у ролика и раскадровки: холст, качество, сид, LoRA, возврат файла."""
+    """Общее у ролика и раскадровки: холст, качество, сид, LoRA, апскейл, возврат файла."""
 
     resolution: VideoResolution = video_geometry.DEFAULT_RESOLUTION  # type: ignore[valid-type]
     aspect: VideoAspect = video_geometry.DEFAULT_ASPECT  # type: ignore[valid-type]
     seed: int = -1
     quality: VideoQuality = video_request.DEFAULT_QUALITY  # type: ignore[valid-type]
     loras: list[VideoLora] = Field([], max_length=8)
+    upscale: VideoUpscale | None = Field(
+        None, description="learned latent upscale after sampling, decoded at the larger size; drafts are not "
+                          "upscaled, finishing them is")
     return_base64: bool = Field(False, description="also return the MP4 itself in base64")
 
 

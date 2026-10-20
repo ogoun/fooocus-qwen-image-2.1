@@ -58,6 +58,11 @@ MODE_LABELS = {
     prompt_h3.MODE_FLF2V: "video_mode_flf2v",
     prompt_h3.MODE_REF: "video_mode_ref",
 }
+UPSCALE_LABELS = {
+    geometry.UPSCALE_MULTIPLIER: "video_upscale_multiplier",
+    geometry.UPSCALE_DIMENSIONS: "video_upscale_dimensions",
+    geometry.UPSCALE_MEGAPIXELS: "video_upscale_megapixels",
+}
 QUALITY_LABELS = {
     "draft": "video_quality_draft",
     "light": "video_quality_light",
@@ -73,6 +78,41 @@ def mode_choices(lang: str) -> list[tuple[str, str]]:
 
 def quality_choices(lang: str) -> list[tuple[str, str]]:
     return [(pick(QUALITY_LABELS[name], lang), name) for name in QUALITY]
+
+
+def upscale_choices(lang: str) -> list[tuple[str, str]]:
+    return [(pick(UPSCALE_LABELS[name], lang), name) for name in geometry.UPSCALE_MODES]
+
+
+def upscale_from(enabled, mode, factor, width, height, megapixels) -> geometry.Upscale | None:
+    """Настройки апскейла из полей; None — галочка снята."""
+    if not enabled:
+        return None
+    defaults = geometry.Upscale()
+
+    def number(value, default, kind=float):
+        try:
+            return kind(value)
+        except (TypeError, ValueError):
+            return default
+
+    return geometry.Upscale(
+        mode=mode if mode in geometry.UPSCALE_MODES else defaults.mode,
+        factor=number(factor, defaults.factor),
+        width=number(width, defaults.width, int),
+        height=number(height, defaults.height, int),
+        megapixels=number(megapixels, defaults.megapixels),
+    )
+
+
+def upscale_visibility(enabled, mode) -> tuple:
+    """Какие поля апскейла видны: блок, множитель, стороны, мегапиксели."""
+    return (
+        gr.update(visible=bool(enabled)),
+        gr.update(visible=mode == geometry.UPSCALE_MULTIPLIER),
+        gr.update(visible=mode == geometry.UPSCALE_DIMENSIONS),
+        gr.update(visible=mode == geometry.UPSCALE_MEGAPIXELS),
+    )
 
 
 def aspect_choices(lang: str) -> list[tuple[str, str]]:
@@ -119,14 +159,27 @@ def references_from(files) -> tuple[Reference, ...]:
     return tuple(items)
 
 
-def describe_size(mode, resolution, aspect, seconds, first, last, lang: str) -> str:
-    """Строка под ползунком: холст, кадры, фактическая длительность, части."""
+def describe_size(mode, resolution, aspect, seconds, first, last, lang: str,
+                  upscale: geometry.Upscale | None = None, quality: str | None = None) -> str:
+    """Строка под ползунком: холст, кадры, фактическая длительность, части и размер после апскейла."""
     anchor = first if mode in (prompt_h3.MODE_I2V, prompt_h3.MODE_FLF2V) else None
     anchor = anchor or (last if mode == prompt_h3.MODE_FLF2V else None)
     width, height = geometry.canvas(resolution, aspect, anchor.size if anchor is not None else None)
     duration = geometry.duration(float(seconds or geometry.MIN_SECONDS))
     key = "video_size_parts" if duration.seconds > geometry.SINGLE_MAX_SECONDS else "video_size"
-    return say(key, lang, width=width, height=height, frames=duration.frames, seconds=duration.label)
+    line = say(key, lang, width=width, height=height, frames=duration.frames, seconds=duration.label)
+    if upscale is None:
+        return line
+    try:
+        size = geometry.upscaled_size(width, height, upscale)
+    except ValueError as error:
+        return sentences(line, say("video_size_upscale_invalid", lang, error=error))
+    if size is None:
+        return sentences(line, say("video_size_upscale_none", lang))
+    if quality == "draft":
+        return sentences(line, say("video_size_upscale_draft", lang, width=size[0], height=size[1]))
+    factor = max(size[0] / width, size[1] / height)
+    return sentences(line, say("video_size_upscaled", lang, width=size[0], height=size[1], factor=f"{factor:.2f}"))
 
 
 def reference_note(files, lang: str) -> str:
@@ -274,6 +327,43 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                          elem_classes=[layout.CHOICES]),
                 label=T["video_quality"], choices=(quality_choices("ru"), quality_choices("en")),
             )
+            upscale_enabled = localizer.bind(
+                gr.Checkbox(label=pick("video_upscale", lang), value=False, info=pick("video_upscale_info", lang)),
+                label=T["video_upscale"], info=T["video_upscale_info"],
+            )
+            # Параметры как у узла AGSoft Minimax H3 Latent Upscaler: видны,
+            # только когда галочка стоит, и только поля выбранного режима.
+            with gr.Column(visible=False) as upscale_box:
+                upscale_mode = localizer.bind(
+                    gr.Radio(choices=upscale_choices(lang), value=geometry.UPSCALE_MULTIPLIER,
+                             label=pick("video_upscale_mode", lang), elem_classes=[layout.CHOICES]),
+                    label=T["video_upscale_mode"], choices=(upscale_choices("ru"), upscale_choices("en")),
+                )
+                # Ползунки — в своих контейнерах: в Gradio 6.5 обновление
+                # visible у самого Slider прячет его не до конца (остаются
+                # поле числа и подпись), а контейнер прячется целиком.
+                with gr.Column() as upscale_factor_box:
+                    upscale_factor = localizer.bind(
+                        gr.Slider(1.0, geometry.MAX_UPSCALE, value=2.0, step=0.05,
+                                  label=pick("video_upscale_factor", lang)),
+                        label=T["video_upscale_factor"],
+                    )
+                with gr.Row(visible=False) as upscale_dims:
+                    upscale_width = localizer.bind(
+                        gr.Number(value=1920, precision=0, step=geometry.SIDE_STEP, minimum=geometry.MIN_SIDE,
+                                  label=pick("video_upscale_width", lang), min_width=100),
+                        label=T["video_upscale_width"],
+                    )
+                    upscale_height = localizer.bind(
+                        gr.Number(value=1088, precision=0, step=geometry.SIDE_STEP, minimum=geometry.MIN_SIDE,
+                                  label=pick("video_upscale_height", lang), min_width=100),
+                        label=T["video_upscale_height"],
+                    )
+                with gr.Column(visible=False) as upscale_mp_box:
+                    upscale_megapixels = localizer.bind(
+                        gr.Slider(0.5, 8.0, value=2.0, step=0.1, label=pick("video_upscale_mp", lang)),
+                        label=T["video_upscale_mp"],
+                    )
             status = localizer.bind(
                 gr.Textbox(label=pick("status", lang), interactive=False, lines=3, elem_classes=[layout.STATUS]),
                 label=T["status"],
@@ -361,8 +451,11 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         note, button = engine_state(lang)
         return note, button, say("video_install_done", lang)
 
-    def update_size(mode_value, resolution_value, aspect_value, seconds_value, first_image, last_image, lang):
-        return describe_size(mode_value, resolution_value, aspect_value, seconds_value, first_image, last_image, lang)
+    def update_size(mode_value, resolution_value, aspect_value, seconds_value, first_image, last_image,
+                    quality_value, use_upscale, upscale_mode_value, factor, width, height, megapixels, lang):
+        upscale = upscale_from(use_upscale, upscale_mode_value, factor, width, height, megapixels)
+        return describe_size(mode_value, resolution_value, aspect_value, seconds_value, first_image, last_image,
+                             lang, upscale=upscale, quality=quality_value)
 
     def change_mode(mode_value):
         return visibility(mode_value)
@@ -409,7 +502,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         draft = parameters.get("quality") == "draft"
         line = say("video_done", lang, seed=parameters.get("seed"),
                    seconds=f"{float(parameters.get('seconds') or 0):.2f}",
-                   width=parameters.get("width"), height=parameters.get("height"),
+                   # Размер файла: после апскейла он больше холста.
+                   width=parameters.get("output_width") or parameters.get("width"),
+                   height=parameters.get("output_height") or parameters.get("height"),
                    taken=parameters.get("seconds_taken"))
         if draft:
             line = sentences(line, say("video_draft_hint", lang))
@@ -431,7 +526,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         return text or gr.update(), gr.update(value=bool(text)), message
 
     def run(prompt_text, boosted_text, use_boost, mode_value, resolution_value, aspect_value, seconds_value,
-            seed_value, quality_value, first_image, last_image, files, lora_names, strength, lang,
+            seed_value, quality_value, first_image, last_image, files, lora_names, strength,
+            use_upscale, upscale_mode_value, factor, width, height, megapixels, lang,
             progress=gr.Progress()):
         try:
             stop_requested.clear()
@@ -450,7 +546,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 return gr.update(), say("video_prompt_required", lang), gr.update(), gr.update(), gr.update()
             request = request_from(effective or prompt_text, mode_value, resolution_value, aspect_value,
                                    seconds_value, seed_value, quality_value, first_image, last_image, files,
-                                   lora_names, strength, prompt_original=prompt_text or "")
+                                   lora_names, strength, prompt_original=prompt_text or "",
+                                   upscale=upscale_from(use_upscale, upscale_mode_value, factor, width, height,
+                                                        megapixels))
             progress(0, desc=say("video_starting", lang))
             path, parameters, failure = studio.run_video(request, lang, reporter(progress, lang))
             video, line, state, finish_button = finish_result(path, parameters, failure, message, lang)
@@ -497,7 +595,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         return (rows if rows is not None else gr.update()), message
 
     def run_board(rows, chain_frames, resolution_value, aspect_value, seed_value, quality_value,
-                  first_image, lora_names, strength, lang, progress=gr.Progress()):
+                  first_image, lora_names, strength, use_upscale, upscale_mode_value, factor, width, height,
+                  megapixels, lang, progress=gr.Progress()):
         """Все шоты подряд, затем склейка с переходами и контактный лист (``video.board``)."""
         try:
             planned = storyboard.from_rows(rows)
@@ -522,6 +621,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             title=lambda count: say("video_board_title", lang, count=count),
             on_event=on_event, stopped=stop_requested.is_set,
             on_joining=lambda: progress(0.99, desc=say("video_board_joining", lang)),
+            upscale=upscale_from(use_upscale, upscale_mode_value, factor, width, height, megapixels),
         )
         if result.failure is not None:
             return (str(result.produced[-1]) if result.produced else gr.update()), \
@@ -562,9 +662,17 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     # --- связи ------------------------------------------------------------------
 
-    size_inputs = [mode, resolution, aspect, seconds, first, last, language]
-    for trigger in (mode.change, resolution.change, aspect.change, seconds.release, first.change, last.change):
+    upscale_inputs = [upscale_enabled, upscale_mode, upscale_factor, upscale_width, upscale_height,
+                      upscale_megapixels]
+    size_inputs = [mode, resolution, aspect, seconds, first, last, quality, *upscale_inputs, language]
+    for trigger in (mode.change, resolution.change, aspect.change, seconds.release, first.change, last.change,
+                    quality.change, upscale_enabled.change, upscale_mode.change, upscale_factor.release,
+                    upscale_width.change, upscale_height.change, upscale_megapixels.release):
         trigger(update_size, size_inputs, size_note, queue=False, show_progress="hidden")
+    for trigger in (upscale_enabled.change, upscale_mode.change):
+        trigger(upscale_visibility, [upscale_enabled, upscale_mode],
+                [upscale_box, upscale_factor_box, upscale_dims, upscale_mp_box], queue=False,
+                show_progress="hidden")
     mode.change(change_mode, mode, [first, last, references, refs_note], queue=False, show_progress="hidden")
     references.change(reference_note, [references, language], refs_note, queue=False, show_progress="hidden")
 
@@ -578,7 +686,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     boost_now.click(rewrite, boost_inputs, [boosted, boost_enabled, status])
 
     run_inputs = [prompt, boosted, boost_enabled, mode, resolution, aspect, seconds, seed, quality,
-                  first, last, references, loras, lora_strength, language]
+                  first, last, references, loras, lora_strength, *upscale_inputs, language]
     run_button.click(run, run_inputs, [result, status, last_result, finish, boosted],
                      concurrency_id=GPU_CONCURRENCY_ID)
     stop_button.click(stop, language, status, queue=False)
@@ -592,7 +700,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     plan_button.click(plan_shots, [brief, total, structure, aspect, language], [shots, status])
     board_button.click(
         run_board,
-        [shots, chain, resolution, aspect, seed, quality, first, loras, lora_strength, language],
+        [shots, chain, resolution, aspect, seed, quality, first, loras, lora_strength, *upscale_inputs, language],
         [result, status, contact, last_result],
         concurrency_id=GPU_CONCURRENCY_ID,
     )
@@ -625,6 +733,12 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         "shots": shots,
         "prompts": prompts,
         "loras": loras,
+        "upscale_enabled": upscale_enabled,
+        "upscale_mode": upscale_mode,
+        "upscale_factor": upscale_factor,
+        "upscale_width": upscale_width,
+        "upscale_height": upscale_height,
+        "upscale_megapixels": upscale_megapixels,
     }
 
 

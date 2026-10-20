@@ -75,7 +75,7 @@ def test_run_without_a_prompt_does_not_start_anything(built, monkeypatch):
     studio, handlers, _components = built
     monkeypatch.setattr(studio, "run_video", lambda *_a, **_k: pytest.fail("nothing to film"))
     answer = handlers["run"]("  ", "", False, prompt_h3.MODE_T2V, "480p", "16:9", 5.0, -1, "light",
-                             None, None, None, [], 1.0, "en", progress=_no_progress)
+                             None, None, None, [], 1.0, False, "multiplier", 2.0, 1920, 1088, 2.0, "en", progress=_no_progress)
     assert "Describe the video" in answer[1]
 
 
@@ -92,7 +92,7 @@ def test_run_hands_the_request_to_the_studio(built, monkeypatch, tmp_path):
     monkeypatch.setattr(studio, "run_video", run_video)
     result, line, last_result, finish, _boosted = handlers["run"](
         "a cat walks", "", False, prompt_h3.MODE_T2V, "768p", "9:16", 8.0, 3, "draft",
-        None, None, None, [], 1.0, "en", progress=_no_progress,
+        None, None, None, [], 1.0, False, "multiplier", 2.0, 1920, 1088, 2.0, "en", progress=_no_progress,
     )
     (request,) = asked
     assert (request.prompt, request.mode, request.resolution, request.aspect) == ("a cat walks", "t2v", "768p", "9:16")
@@ -108,7 +108,7 @@ def test_a_failure_is_a_status_line(built, monkeypatch):
     monkeypatch.setattr(studio, "run_video", lambda *_a, **_k: (None, {}, "Video stopped."))
     result, line, last_result, _finish, _boosted = handlers["run"](
         "a cat", "", False, prompt_h3.MODE_T2V, "480p", "16:9", 5.0, -1, "light",
-        None, None, None, [], 1.0, "en", progress=_no_progress,
+        None, None, None, [], 1.0, False, "multiplier", 2.0, 1920, 1088, 2.0, "en", progress=_no_progress,
     )
     assert "Video stopped." in line
     assert result == gr.update() and last_result == gr.update()
@@ -278,3 +278,43 @@ def test_nothing_to_send(picture):
 
 def test_open_video_tab_switches_to_the_video_tab():
     assert tab_video.open_video_tab().selected == layout.TAB_VIDEO
+
+
+def test_run_passes_the_upscale_settings(built, monkeypatch, tmp_path):
+    from fooocus_qwen.video import geometry
+
+    studio, handlers, _components = built
+    asked = []
+    monkeypatch.setattr(studio, "run_video", lambda request, lang, on_event=None: asked.append(request) or (
+        tmp_path / "v.mp4", {"seed": 1, "seconds": 5.17, "width": 864, "height": 480, "quality": "light"}, None))
+    handlers["run"]("a cat", "", False, prompt_h3.MODE_T2V, "480p", "16:9", 5.0, -1, "light",
+                    None, None, None, [], 1.0, True, "megapixels", 2.0, 1920, 1088, 3.0, "en",
+                    progress=_no_progress)
+    (request,) = asked
+    assert request.upscale == geometry.Upscale(mode="megapixels", factor=2.0, width=1920, height=1088, megapixels=3.0)
+
+
+def test_upscale_fields_turn_into_settings_only_when_checked():
+    from fooocus_qwen.ui import tab_video
+    from fooocus_qwen.video import geometry
+
+    assert tab_video.upscale_from(False, "multiplier", 2.0, 1920, 1088, 2.0) is None
+    assert tab_video.upscale_from(True, "nonsense", None, "x", 1088, 2.0) == geometry.Upscale(
+        mode="multiplier", factor=2.0, width=1920, height=1088, megapixels=2.0)
+    box, factor, dims, megapixels = tab_video.upscale_visibility(True, "dimensions")
+    assert box["visible"] and dims["visible"] and not factor["visible"] and not megapixels["visible"]
+    assert tab_video.upscale_visibility(False, "multiplier")[0]["visible"] is False
+
+
+def test_the_size_line_shows_the_upscaled_frame():
+    from fooocus_qwen.ui import tab_video
+    from fooocus_qwen.video import geometry
+
+    line = tab_video.describe_size("t2v", "480p", "16:9", 5.0, None, None, "en", upscale=geometry.Upscale())
+    assert "864×480" in line and "1728×960" in line and "×2.00" in line
+    draft = tab_video.describe_size("t2v", "480p", "16:9", 5.0, None, None, "en", upscale=geometry.Upscale(),
+                                    quality="draft")
+    assert "not upscaled" in draft
+    too_big = tab_video.describe_size("t2v", "480p", "16:9", 5.0, None, None, "en",
+                                      upscale=geometry.Upscale(mode="dimensions", width=8192, height=4096))
+    assert "more than 4" in too_big

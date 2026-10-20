@@ -321,3 +321,36 @@ def test_broken_parameters_read_as_empty(tmp_path, content):
 
 def test_missing_parameters_read_as_empty(tmp_path):
     assert video_request.read_parameters(tmp_path / "none.mp4") == {}
+
+
+
+# --- финальный апскейл ---
+
+
+def test_the_upscaled_size_goes_to_the_engine_and_the_parameters(tmp_path):
+    job, parameters = _build(tmp_path, VideoRequest(prompt="a cat", upscale=geometry.Upscale(factor=2.0)))
+    assert job["final_upscale"] == [1728, 960]
+    assert (job["width"], job["height"]) == (864, 480), "модель считает холст, а не выход"
+    assert (parameters["output_width"], parameters["output_height"]) == (1728, 960)
+    assert parameters["upscale"] == geometry.Upscale(factor=2.0).as_dict()
+    json.dumps(job)
+
+
+def test_a_draft_is_not_upscaled_but_keeps_the_settings_for_finishing(tmp_path):
+    job, parameters = _build(tmp_path, VideoRequest(prompt="a cat", quality="draft", upscale=geometry.Upscale()))
+    assert job["final_upscale"] is None
+    assert parameters["upscale"] == geometry.Upscale().as_dict()
+    assert (parameters["output_width"], parameters["output_height"]) == (864, 480)
+
+
+def test_without_upscale_the_output_is_the_canvas(tmp_path):
+    job, parameters = _build(tmp_path, VideoRequest(prompt="a cat"))
+    assert job["final_upscale"] is None and parameters["upscale"] is None
+    assert (parameters["output_width"], parameters["output_height"]) == (864, 480)
+
+
+def test_an_impossible_upscale_is_refused_before_the_engine(tmp_path):
+    request = VideoRequest(prompt="a cat", upscale=geometry.Upscale(mode=geometry.UPSCALE_DIMENSIONS,
+                                                                      width=8192, height=4608))
+    with pytest.raises(ValueError, match="more than 4"):
+        _build(tmp_path, request)

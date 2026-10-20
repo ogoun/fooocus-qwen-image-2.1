@@ -49,6 +49,10 @@ TAG = "v0.4.15"
 COMMIT = "71129a7123292e0612f3b7f3ff19f053dd2f72a1"
 
 DRIVER = Path(__file__).with_name("freevideo_driver.py")
+# Наши правки исходников FreeVideo (финальный апскейл латентов и т. п.):
+# накладываются ``git apply`` на закреплённый коммит при установке и перед
+# запуском драйвера. Каталог движка — клон, и правка видна в ``git diff``.
+PATCHES = Path(__file__).with_name("freevideo_patches")
 EVENT_PREFIX = "@@fooocus-video@@ "
 
 # Сколько ждать готовности драйвера: импорт оркестратора без torch — секунды.
@@ -185,11 +189,43 @@ def install(
     ).stdout.strip()
     if head != COMMIT:
         raise VideoEngineError(f"FreeVideo {TAG} resolves to {head}, expected {COMMIT}")
+    apply_patches(base, say)
     say("Running FreeVideo setup (environment and model weights, ~40-55 GB)")
     _run(setup_command(base, reuse_models), say, env=environment(base))
     found = status(base)
     if not found.ready:
         raise VideoEngineError(found.reason)
+
+
+def apply_patches(base: Path | None = None, say: Callable[[str], None] | None = None) -> list[str]:
+    """Накладывает наши патчи на клон FreeVideo; уже наложенные пропускает.
+
+    Возвращает имена наложенных сейчас. Патч, который не накладывается и не
+    наложен, — отказ: клон изменён чем-то ещё, и движок без правки работал бы
+    не так, как ждёт приложение (например, без финального апскейла).
+    """
+    base = base or root()
+    say = say or (lambda line: LOGGER.info("%s", line))
+    applied = []
+    for patch in sorted(PATCHES.glob("*.patch")):
+        if _git_apply(base, patch, "--reverse", "--check"):
+            continue
+        if not _git_apply(base, patch, "--check"):
+            raise VideoEngineError(
+                f"FreeVideo patch {patch.name} does not apply; reinstall the video engine (--setup-video)"
+            )
+        say(f"Applying FreeVideo patch {patch.name}")
+        if not _git_apply(base, patch):
+            raise VideoEngineError(f"FreeVideo patch {patch.name} failed to apply")
+        applied.append(patch.name)
+    return applied
+
+
+def _git_apply(base: Path, patch: Path, *flags: str) -> bool:
+    return subprocess.run(
+        ["git", "-C", str(base), "apply", "--whitespace=nowarn", *flags, str(patch)],
+        capture_output=True, stdin=subprocess.DEVNULL, creationflags=_creation_flags(),
+    ).returncode == 0
 
 
 def _run(command: list[str], say: Callable[[str], None], env: dict | None = None, check: bool = True) -> None:
@@ -279,6 +315,9 @@ class VideoEngine:
         found = status(self._base)
         if not found.ready:
             raise VideoEngineError(found.reason)
+        if (self._base / ".git").exists():
+            # Установка прежней версии приложения правок не знала: догоняем.
+            apply_patches(self._base)
         machine = json.loads(machine_file(self._base).read_text(encoding="utf-8"))
         command = [machine["python"], "-B", "-X", "utf8", str(DRIVER)]
         LOGGER.info("Starting the FreeVideo driver")

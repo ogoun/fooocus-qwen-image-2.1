@@ -109,3 +109,98 @@ def timecode(seconds: float) -> str:
     millis = int(round(max(seconds, 0.0) * 1000))
     minutes, millis = divmod(millis, 60_000)
     return f"{minutes:02d}:{millis / 1000:06.3f}"
+
+
+# --- финальный апскейл латентов ---------------------------------------------------
+#
+# После всех шагов сэмплинга латенты холста поднимаются обученной сетью
+# LBH-123-AI (та же, что у двухпроходного режима FreeVideo) и декодируются в
+# больший кадр. Трансформер больший размер не видит — растут только время
+# апскейлера и тайлового декодера. Размер выхода задаётся, как у узла
+# AGSoft Minimax H3 Latent Upscaler: множителем, точными сторонами или
+# площадью в мегапикселях. Стороны кратны 32 (так их проверяет движок),
+# множитель — больше 1 и до 4 (диапазон обучения сети).
+
+UPSCALE_MULTIPLIER = "multiplier"
+UPSCALE_DIMENSIONS = "dimensions"
+UPSCALE_MEGAPIXELS = "megapixels"
+UPSCALE_MODES: tuple[str, ...] = (UPSCALE_MULTIPLIER, UPSCALE_DIMENSIONS, UPSCALE_MEGAPIXELS)
+MAX_UPSCALE = 4.0
+# Мегапиксель — как у узла AGSoft: 1024 × 1024 пикселей.
+MEGAPIXEL = 1024 * 1024
+
+
+@dataclass(frozen=True)
+class Upscale:
+    """Настройки финального апскейла; размер выхода считает ``upscaled_size``."""
+
+    mode: str = UPSCALE_MULTIPLIER
+    factor: float = 2.0
+    width: int = 1920
+    height: int = 1088
+    megapixels: float = 2.0
+
+    def as_dict(self) -> dict:
+        return {"mode": self.mode, "factor": self.factor, "width": self.width, "height": self.height,
+                "megapixels": self.megapixels}
+
+    @classmethod
+    def from_dict(cls, value: dict | None) -> Upscale | None:
+        if not isinstance(value, dict):
+            return None
+        defaults = cls()
+        try:
+            return cls(
+                mode=value.get("mode") if value.get("mode") in UPSCALE_MODES else defaults.mode,
+                factor=float(value.get("factor", defaults.factor)),
+                width=int(value.get("width", defaults.width)),
+                height=int(value.get("height", defaults.height)),
+                megapixels=float(value.get("megapixels", defaults.megapixels)),
+            )
+        except (TypeError, ValueError):
+            return None
+
+
+def _proportional(target_width: float, target_height: float, ratio: float) -> tuple[int, int]:
+    """Пара кратных 32 возле цели с наилучшим сохранением пропорции (перебор соседей, как у AGSoft)."""
+    width_units = max(1, round(target_width / SIDE_STEP))
+    height_units = max(1, round(target_height / SIDE_STEP))
+    best = None
+    for w in range(max(1, width_units - 2), width_units + 3):
+        for h in range(max(1, height_units - 2), height_units + 3):
+            width, height = w * SIDE_STEP, h * SIDE_STEP
+            ratio_error = abs(math.log(width / height / ratio))
+            size_error = abs(width / target_width - 1) + abs(height / target_height - 1)
+            score = (ratio_error * 4 + size_error, ratio_error, size_error)
+            if best is None or score < best[0]:
+                best = (score, width, height)
+    return best[1], best[2]
+
+
+def upscaled_size(width: int, height: int, upscale: Upscale | None) -> tuple[int, int] | None:
+    """Размер выхода после апскейла холста ``width × height``; None — апскейла нет.
+
+    Пропорциональные режимы держат форму холста; точные стороны могут её
+    сменить — тогда движок поднимает латенты с запасом и обрезает по центру.
+    Меньше холста по любой стороне или больше чем в 4 раза — ``ValueError``.
+    """
+    if upscale is None:
+        return None
+    if upscale.mode == UPSCALE_DIMENSIONS:
+        size = (_round_side(upscale.width), _round_side(upscale.height))
+    elif upscale.mode == UPSCALE_MEGAPIXELS:
+        area = float(upscale.megapixels) * MEGAPIXEL
+        ratio = width / height
+        size = _proportional(math.sqrt(area * ratio), math.sqrt(area / ratio), ratio)
+    else:
+        factor = float(upscale.factor)
+        size = _proportional(width * factor, height * factor, width / height)
+    if size == (width, height) or (upscale.mode != UPSCALE_DIMENSIONS and size[0] * size[1] <= width * height):
+        return None
+    if size[0] < width or size[1] < height:
+        raise ValueError(f"The upscaled frame {size[0]}×{size[1]} must not be smaller than the video frame "
+                         f"{width}×{height}")
+    if max(size[0] / width, size[1] / height) > MAX_UPSCALE + 1e-9:
+        raise ValueError(f"The upscaled frame {size[0]}×{size[1]} is more than {MAX_UPSCALE:g}× the video frame "
+                         f"{width}×{height}")
+    return size

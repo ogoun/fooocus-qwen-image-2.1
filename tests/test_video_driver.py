@@ -418,3 +418,17 @@ def test_a_plain_extension_needs_no_seam_substitute(monkeypatch, stdout):
     fake = _fake(monkeypatch, [136])
     driver.run_job(_job(continue_from="old.mp4"))
     assert fake.leads == [None]
+
+
+
+def test_the_final_upscale_reaches_the_orchestrator(monkeypatch, stdout):
+    fake = _fake(monkeypatch, [124])
+    driver.run_job(_job(final_upscale=[1728, 960]))
+    assert fake.calls[0]["final_upscale"] == (1728, 960)
+
+
+def test_without_upscale_the_orchestrator_gets_no_flag(monkeypatch, stdout):
+    """Без апскейла ключа нет вовсе: оркестратор без нашей правки его бы не принял."""
+    fake = _fake(monkeypatch, [124])
+    driver.run_job(_job())
+    assert "final_upscale" not in fake.calls[0]

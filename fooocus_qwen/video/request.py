@@ -93,6 +93,9 @@ class VideoRequest:
     # машине поменьше. None — по реально свободной памяти.
     vram_gib: float | None = None
     ram_gib: float | None = None
+    # Финальный апскейл латентов (``geometry.Upscale``); None — ролик в размере холста.
+    # Черновик не апскейлится: это быстрый просмотр, апскейл — при доводке.
+    upscale: geometry.Upscale | None = None
     # Исходный текст до буста — для метаданных.
     prompt_original: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
@@ -228,6 +231,8 @@ def build_job(
         continuation_media = {"version": 1, "references": images, "loras": media.get("loras", [])}
 
     has_media = any(key in media for key in ("first", "last", "references", "loras"))
+    preview = bool(quality.get("preview"))
+    output = None if preview else geometry.upscaled_size(width, height, request.upscale)
     job = {
         "prompts": [prompt],
         "width": width,
@@ -235,7 +240,8 @@ def build_job(
         "seconds": duration.seconds,
         "seed": seed,
         "quality": {key: value for key, value in quality.items() if key != "preview"},
-        "preview": bool(quality.get("preview")),
+        "preview": preview,
+        "final_upscale": list(output) if output else None,
         "media": media if has_media else None,
         "continuation_media": continuation_media,
         "continue_from": request.continue_from,
@@ -266,6 +272,10 @@ def build_job(
         "labels": labels,
         "loras": [{"name": Path(path).name, "strength": float(strength)} for path, strength in request.loras],
         "continue_from": request.continue_from,
+        # Настройки апскейла хранятся и у черновика: его доводка апскейлит.
+        "upscale": request.upscale.as_dict() if request.upscale else None,
+        "output_width": output[0] if output else width,
+        "output_height": output[1] if output else height,
         **request.extra,
     }
     return job, parameters

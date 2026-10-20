@@ -124,3 +124,60 @@ def test_a_side_never_drops_below_256():
 )
 def test_timecode(seconds, code):
     assert geometry.timecode(seconds) == code
+
+
+# --- финальный апскейл ---
+
+
+@pytest.mark.parametrize(
+    ("upscale", "size"),
+    [
+        (geometry.Upscale(factor=2.0), (1728, 960)),
+        (geometry.Upscale(factor=1.5), (1312, 736)),
+        (geometry.Upscale(factor=4.0), (3456, 1920)),
+        (geometry.Upscale(mode=geometry.UPSCALE_MEGAPIXELS, megapixels=2.0), (1952, 1088)),
+        (geometry.Upscale(mode=geometry.UPSCALE_DIMENSIONS, width=1920, height=1080), (1920, 1088)),
+    ],
+)
+def test_upscaled_size_of_each_mode(upscale, size):
+    assert geometry.upscaled_size(864, 480, upscale) == size
+
+
+def test_every_upscaled_side_is_a_multiple_of_32():
+    for factor in (1.1, 1.25, 1.5, 2.0, 2.5, 3.3, 4.0):
+        for width, height in ((864, 480), (480, 864), (1344, 768), (704, 704), (1248, 544)):
+            size = geometry.upscaled_size(width, height, geometry.Upscale(factor=factor))
+            assert size is None or (size[0] % 32 == 0 and size[1] % 32 == 0), (factor, width, height, size)
+            assert size is None or (size[0] >= width and size[1] >= height)
+
+
+def test_proportional_modes_keep_the_shape():
+    width, height = geometry.upscaled_size(1344, 768, geometry.Upscale(mode=geometry.UPSCALE_MEGAPIXELS,
+                                                                       megapixels=3.0))
+    assert abs(width / height - 1344 / 768) < 0.03
+    assert abs(width * height / geometry.MEGAPIXEL - 3.0) < 0.15
+
+
+def test_no_upscale_without_settings_or_growth():
+    assert geometry.upscaled_size(864, 480, None) is None
+    assert geometry.upscaled_size(864, 480, geometry.Upscale(factor=1.0)) is None
+    assert geometry.upscaled_size(864, 480, geometry.Upscale(mode=geometry.UPSCALE_MEGAPIXELS,
+                                                             megapixels=0.3)) is None
+    assert geometry.upscaled_size(864, 480, geometry.Upscale(mode=geometry.UPSCALE_DIMENSIONS,
+                                                             width=864, height=480)) is None
+
+
+@pytest.mark.parametrize(("width", "height"), [(800, 1920), (3840, 2160)])
+def test_target_dimensions_must_not_shrink_or_exceed_four_times(width, height):
+    with pytest.raises(ValueError):
+        geometry.upscaled_size(864, 480, geometry.Upscale(mode=geometry.UPSCALE_DIMENSIONS, width=width,
+                                                          height=height))
+
+
+def test_upscale_settings_survive_json_and_reject_garbage():
+    settings = geometry.Upscale(mode=geometry.UPSCALE_DIMENSIONS, factor=3.0, width=2560, height=1440,
+                                megapixels=4.0)
+    assert geometry.Upscale.from_dict(settings.as_dict()) == settings
+    assert geometry.Upscale.from_dict(None) is None
+    assert geometry.Upscale.from_dict({"factor": "much"}) is None
+    assert geometry.Upscale.from_dict({"mode": "magic"}).mode == geometry.UPSCALE_MULTIPLIER

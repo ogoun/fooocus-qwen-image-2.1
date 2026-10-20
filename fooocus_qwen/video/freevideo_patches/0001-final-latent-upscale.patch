@@ -1,0 +1,311 @@
+diff --git a/freevideo_engine/cli.py b/freevideo_engine/cli.py
+index 399a450..6d36907 100644
+--- a/freevideo_engine/cli.py
++++ b/freevideo_engine/cli.py
+@@ -122,6 +122,9 @@ def main():
+     generate.add_argument('--upscale-factor', type=float, choices=(2., 1.5, 1.2), default=2., metavar='{2,1.5,1.2}',
+                           help='Two-pass learned upscale factor (default 2: half-size first pass). 1.5 and 1.2 sample '
+                                'a larger first pass (44%% / 69%% of the pixels) for the same output size.')
++    generate.add_argument('--final-upscale', metavar='WIDTHxHEIGHT',
++                          help='After sampling, lift the final latents with the learned H3 upscaler and decode at '
++                               'this larger size (multiples of 32, factor above 1 and up to 4)')
+     upscale = generate.add_mutually_exclusive_group()
+     upscale.add_argument('--preview', action='store_true',
+                          help='Two-pass only: stop after the half-resolution first pass, save it as a quick preview, '
+diff --git a/freevideo_engine/comfy_bridge.py b/freevideo_engine/comfy_bridge.py
+index 9601098..214f14a 100644
+--- a/freevideo_engine/comfy_bridge.py
++++ b/freevideo_engine/comfy_bridge.py
+@@ -1180,8 +1180,14 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
+              force_regenerate=False, base_steps=8, refine_steps=3, comfy_metadata=None,
+              prompt_rewrite_report=None, preview=False, refine_from=None, report_extra=None,
+              continue_from=None, frames=None, first_frame_reference=False, voice_reference=False, hide_tail=False,
+-             step_cache=None, upscale_factor=2):
++             step_cache=None, upscale_factor=2, final_upscale=None):
+     from .tiers import STEP_CACHES
++    if final_upscale is not None:
++        # Fooocus-Qwen patch: (width, height) of a learned final-latent upscale (final_upscale.py).
++        width_up, height_up = final_upscale
++        final_upscale = dict(width=int(width_up), height=int(height_up))
++        if preview:
++            raise ValueError('A preview is not upscaled; finish it first')
+     from .two_pass import SCALES
+     if upscale_factor not in SCALES:
+         raise ValueError('Upscale factor must be one of ' + ', '.join('%g' % value for value in SCALES))
+@@ -1319,6 +1325,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
+             command.append('--preview')
+     if hide_tail:
+         command.append('--hide-tail')
++    if final_upscale is not None:
++        command += ['--final-upscale', '%dx%d' % (final_upscale['width'], final_upscale['height'])]
+     state = {'status': 'starting', 'geometry': canvas, 'seed': seed, 'installation': str(root),
+              'command': command, 'output': str(output), 'source': str(source), 'resources': resources}
+     if preview:
+@@ -1454,6 +1462,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
+             keyed = dict(keyed, step_cache=step_cache)
+         if hide_tail_frames:
+             keyed = dict(keyed, hide_tail_frames=hide_tail_frames)
++        if final_upscale is not None:
++            keyed = dict(keyed, final_upscale=final_upscale)
+         identify = lambda check: request_key(prompt, seed, canvas, keyed, extra, machine,
+                                              resources, source, environment, inspection=check)
+         state['result_cache'] = dict(enabled=False, hit=False, forced=force_regenerate)
+@@ -1566,7 +1576,8 @@ def generate(prompt, width, height, seconds, seed, output_directory, *,
+                 or bool(report.get('preview')) != preview or bool(report.get('upscaled_preview')) != bool(upscale)
+                 or (hide_tail and report.get('hide_tail') != hidden)
+                 or any(engine.get('geometry', {}).get(k) != shown[k] for k in ('width', 'height', 'frames'))
+-                or (report.get('output_size') or None) != output_size):
++                or (report.get('output_size') or None) != output_size
++                or (report.get('final_upscale') or None) != final_upscale):
+             from .comfy_launcher_api import repair_hint
+             from .failure_details import generation_failure
+             raise RuntimeError('FreeVideo did not complete the requested video.\n' + generation_failure(run, repair=repair_hint()))
+diff --git a/freevideo_engine/final_upscale.py b/freevideo_engine/final_upscale.py
+new file mode 100644
+index 0000000..22d366c
+--- /dev/null
++++ b/freevideo_engine/final_upscale.py
+@@ -0,0 +1,139 @@
++"""Optional learned upscale of the final latents before decoding (Fooocus-Qwen patch).
++
++The two-pass plan lifts a smaller first pass to the requested canvas and refines
++it there. This step comes after all sampling: the finished latents of the
++requested canvas are lifted once more by the same H3 3D v1 network and decoded
++at the larger output size. Nothing is sampled at that size, so the transformer
++never sees it; only the upscaler and the tiled decoder do.
++
++The output keeps the canvas shape: the latents are lifted by one factor that
++covers the requested width and height, then centre-cropped to it, as the
++two-pass plan crops its own lift.
++"""
++import gc
++import math
++import time
++from pathlib import Path
++
++MIN_FACTOR, MAX_FACTOR = 1., 4.
++
++
++def parse(text):
++    """'WIDTHxHEIGHT' -> dict(width, height)."""
++    try:
++        width, height = (int(value) for value in str(text).lower().split('x'))
++    except ValueError:
++        raise ValueError('Final upscale must be WIDTHxHEIGHT, for example 1728x960') from None
++    return dict(width=width, height=height)
++
++
++def plan(canvas, spec):
++    """Validate an output size against the sampled canvas; returns the lift and crop in latent units."""
++    if not isinstance(spec, dict) or any(type(spec.get(key)) is not int for key in ('width', 'height')):
++        raise ValueError('Final upscale needs integer width and height')
++    width, height = spec['width'], spec['height']
++    if width % 32 or height % 32:
++        raise ValueError('Final upscale width and height must be multiples of 32')
++    if width < canvas['width'] or height < canvas['height'] or (width, height) == (canvas['width'], canvas['height']):
++        raise ValueError('Final upscale must enlarge the video')
++    factor = max(width / canvas['width'], height / canvas['height'])
++    if not MIN_FACTOR < factor <= MAX_FACTOR:
++        raise ValueError('Final upscale supports factors above 1 and up to 4')
++    source = (canvas['height'] // 16, canvas['width'] // 16)
++    lift = tuple(max(math.ceil(side * factor - 1e-9), target)
++                 for side, target in zip(source, (height // 16, width // 16)))
++    crop = dict(top=(lift[0] - height // 16) // 2, left=(lift[1] - width // 16) // 2,
++                height=height // 16, width=width // 16)
++    return dict(width=width, height=height, factor=factor, lift=dict(height=lift[0], width=lift[1]), crop=crop)
++
++
++# The network's own temporal chunking: 32 latent frames plus its overlap on both sides.
++CHUNK_FRAMES = 32 + 2 * 5
++
++
++def workspace(canvas, spec, *, chunked=False):
++    """Conservative GPU workspace for the lift, from the two-pass estimate at the lifted size."""
++    from .two_pass import upscale_workspace
++    planned = plan(canvas, spec)
++    lifted = dict(canvas, width=planned['lift']['width'] * 16, height=planned['lift']['height'] * 16)
++    if chunked:
++        latent_frames = (canvas['frames'] - 5) // 17 * 5 + 2
++        if latent_frames > CHUNK_FRAMES:
++            # upscale_workspace counts latent frames from pixel frames: 17 frames per 5 latent ones.
++            lifted['frames'] = (CHUNK_FRAMES - 2) // 5 * 17 + 5
++    return upscale_workspace(lifted)
++
++
++def admit(canvas, spec, budget_bytes):
++    """Refuse before any work an output whose lift cannot fit even in temporal chunks."""
++    need = workspace(canvas, spec, chunked=True)
++    if budget_bytes is not None and need > budget_bytes:
++        raise ValueError('Final upscale to %dx%d needs about %.1f GiB of video memory; the budget is %.1f GiB. '
++                         'Choose a smaller output size.' % (spec['width'], spec['height'], need / 2**30,
++                                                           budget_bytes / 2**30))
++    return need
++
++
++def apply(latents, spec, canvas, checkpoint, *, available=None, memory_saving=True):
++    """Lift normalized (1, 24, T, h, w) latents to the planned output; returns (latents, metrics).
++
++    Buffer reuse keeps the original FP16 rounding, so it is always on. Temporal
++    chunking (the network's own overlap blend) is used only when the whole
++    sequence does not fit the available workspace.
++    """
++    import torch
++    from .latent_upscale import CHECKPOINT_BYTES, CHECKPOINT_SHA256, LATENTS_MEAN, LATENTS_STD, LatentResizer3D
++    from .streamed_weights import _open_safetensors
++    from .two_pass import verified_checkpoint
++    planned = plan(canvas, spec)
++    if latents.ndim != 5 or tuple(latents.shape[:2]) != (1, 24) or tuple(latents.shape[-2:]) != (
++            canvas['height'] // 16, canvas['width'] // 16):
++        raise ValueError('Final upscale received latents of another canvas')
++    checkpoint = Path(checkpoint)
++    tick = time.perf_counter()
++    if checkpoint.stat().st_size != CHECKPOINT_BYTES:
++        raise ValueError('Incomplete latent upscaler checkpoint')
++    if not verified_checkpoint(checkpoint):
++        import hashlib
++        with checkpoint.open('rb') as stream:
++            if hashlib.file_digest(stream, 'sha256').hexdigest() != CHECKPOINT_SHA256:
++                raise ValueError('The selected file is not the supported H3 3D v1 upscaler')
++    device = latents.device if latents.is_cuda else torch.device('cuda')
++    model = None
++    try:
++        with torch.device('meta'):
++            model = LatentResizer3D(reuse_buffers=memory_saving)
++        with _open_safetensors(checkpoint, framework='pt', device='cpu') as handle:
++            state = {name: handle.get_tensor(name).to(device) for name in handle.keys()}
++        model.load_state_dict({key.removeprefix('upscaler.'): value for key, value in state.items()},
++                              strict=True, assign=True)
++        del state
++        model = model.eval().requires_grad_(False).to(device=device, dtype=torch.float16)
++        torch.cuda.synchronize(device)
++        loaded = time.perf_counter() - tick
++        tick = time.perf_counter()
++        with torch.no_grad():
++            mean = torch.tensor(LATENTS_MEAN, device=device, dtype=torch.float16).view(1, -1, 1, 1, 1)
++            std = torch.tensor(LATENTS_STD, device=device, dtype=torch.float16).view(1, -1, 1, 1, 1)
++            normalized = (latents.to(device=device, dtype=torch.float16) - mean) / std
++            lift = planned['lift']
++            chunked = available is not None and available < workspace(canvas, spec)
++            result = model(normalized, scale=planned['factor'],
++                           target_size=(latents.shape[2], lift['height'], lift['width']), enable_chunking=chunked)
++            del normalized
++            crop = planned['crop']
++            result = result[..., crop['top']:crop['top'] + crop['height'], crop['left']:crop['left'] + crop['width']]
++            result = (result * std + mean).to(latents.dtype).contiguous()
++        torch.cuda.synchronize(device)
++        if not bool(torch.isfinite(result).all()):
++            raise RuntimeError('Final latent upscale produced nonfinite values')
++        metrics = dict(width=planned['width'], height=planned['height'], factor=planned['factor'],
++                       lift=planned['lift'], crop=planned['crop'], load_seconds=loaded,
++                       compute_seconds=time.perf_counter() - tick, memory_saving=memory_saving,
++                       temporal_chunking=chunked, available_workspace_bytes=available,
++                       peak_allocated_bytes=torch.cuda.max_memory_allocated(device))
++        return result, metrics
++    finally:
++        del model
++        gc.collect()
++        torch.cuda.empty_cache()
+diff --git a/freevideo_engine/generate.py b/freevideo_engine/generate.py
+index 3d79a00..8434ebd 100644
+--- a/freevideo_engine/generate.py
++++ b/freevideo_engine/generate.py
+@@ -460,6 +460,16 @@ def _run(args):
+     from .two_pass import sampling_canvas
+     canvas, output_size = sampling_canvas(canvas, staged=bool(preview or refine_source), media=media,
+                                           conditioned=bool(args.conditioning))
++    final_upscale = None
++    if getattr(args, 'final_upscale', None):
++        # Fooocus-Qwen patch: lift the finished latents and decode larger (final_upscale.py).
++        from .final_upscale import parse as parse_final_upscale, plan as plan_final_upscale
++        if preview:
++            raise ValueError('A preview is not upscaled; finish it first')
++        if output_size:
++            raise ValueError('Final upscale needs a canvas that is sampled at the requested size')
++        final_upscale = parse_final_upscale(args.final_upscale)
++        plan_final_upscale(canvas, final_upscale)
+     if continue_from is not None:
+         validate_route(task=getattr(args, 'task', None) or ('ref2va' if anchored else 't2va'),
+                        anchor=anchored, two_pass=two_pass,
+@@ -560,6 +570,9 @@ def _run(args):
+                        allocator_config=profile['allocator_config'], policy=profile)
+     base_steps = requested_steps if requested_steps is not None else profile['engine'].get('steps', 8)
+     validate_steps(base_steps, refine_steps, two_pass)
++    if final_upscale is not None:
++        from .final_upscale import admit as admit_final_upscale
++        admit_final_upscale(canvas, final_upscale, round(profile['gpu_budget_gb'] * 1e9))
+     profile['engine']['steps'] = base_steps
+     if args.profile and getattr(args, 'step_cache', None):
+         profile['engine']['step_cache'] = args.step_cache
+@@ -605,6 +618,7 @@ def _run(args):
+     repo = Path(__file__).resolve().parents[1]
+     report = {'profile': profile, 'seed': args.seed, 'success': False, 'geometry': canvas,
+               **({'output_size': output_size} if output_size else {}),
++              **({'final_upscale': final_upscale} if final_upscale else {}),
+               'resource_planning': planning,
+               'artifacts': str(artifacts),
+               'idle_resources': dict(automatic=not bool(args.profile), system=hardware.system,
+@@ -936,6 +950,9 @@ def _run(args):
+                 report['resource_prediction'] = predict(observations, resource_identity, selected, canvas, text_tokens=tokens)
+                 show_prediction(report['resource_prediction'])
+             def validate(metrics, telemetry, selected):
++                if final_upscale is not None:
++                    # A larger decode than the canvas would teach the history wrong decode costs.
++                    return None
+                 observation = complete_observation(metrics, canvas, destination, artifacts, telemetry)
+                 if observation is not None:
+                     observation['conditioning_sha256'] = condition_hash
+@@ -953,6 +970,8 @@ def _run(args):
+                        'decoder_options': profile['decoder'], 'output': str(destination),
+                        'geometry': canvas, 'artifacts': str(artifacts),
+                        **({'output_size': output_size} if output_size else {}),
++                       **({'final_upscale': dict(final_upscale, checkpoint=str(ensure_checkpoint()))}
++                          if final_upscale else {}),
+                        'sampling_plan': sampling_plan, 'upscaler_checkpoint': upscaler_checkpoint,
+                        'automatic_pass_cache': not bool(args.profile),
+                        'metrics': str(destination.with_suffix('.engine.json'))}
+diff --git a/freevideo_engine/worker.py b/freevideo_engine/worker.py
+index b7e1269..1979923 100644
+--- a/freevideo_engine/worker.py
++++ b/freevideo_engine/worker.py
+@@ -654,7 +654,28 @@ def generate(request, resident=None):
+                 continuation_data['audio_lead_in'] = value
+                 # Older retained sampling tails predate the predecessor binding.
+                 continuation_data['metadata']['source_id'] = continuation['source_id']
+-        metrics.update(decode_to_file(latents, audio, request['output'], base=base, artifacts_dir=artifacts,
++        decode_latents = latents
++        final_upscale = request.get('final_upscale')
++        if final_upscale is not None:
++            # Fooocus-Qwen patch: the finished latents are lifted once more and decoded
++            # larger. The continuation record below keeps the sampled latents.
++            from .final_upscale import apply as apply_final_upscale, workspace as final_workspace
++            from .two_pass import UPSCALER_HOST_BYTES
++            print(json.dumps({'event': 'decode_phase', 'phase': 'Upscaling latents to %d x %d'
++                              % (final_upscale['width'], final_upscale['height'])}), flush=True)
++            if resident is not None:
++                resident.make_room('latent_upscaler', final_workspace(canvas, final_upscale, chunked=True),
++                                   ram_need=UPSCALER_HOST_BYTES)
++            torch.cuda.empty_cache()
++            free, _ = torch.cuda.mem_get_info()
++            limit = metrics['device_memory'].get('effective_allocator_limit_bytes') or request['gpu_budget_bytes']
++            available = min(free - request.get('gpu_reserve_bytes', 0), limit - torch.cuda.memory_allocated())
++            decode_latents, metrics['final_upscale'] = apply_final_upscale(
++                latents, final_upscale, canvas, final_upscale['checkpoint'], available=available)
++            # Whole frames of the larger output are written to disk as they decode.
++            decoder = dict(decoder, stream_output=True)
++            save(request['metrics'], metrics)
++        metrics.update(decode_to_file(decode_latents, audio, request['output'], base=base, artifacts_dir=artifacts,
+                                      **({'hide_tail_frames': hide_tail_frames} if hide_tail_frames else {}),
+                                      **({'continuation': continuation} if continuation is not None else {}),
+                                      **({'audio_lead_in_callback': keep_audio_lead_in}
+@@ -705,7 +726,10 @@ def generate(request, resident=None):
+                 # A preview's first pass is kept apart from the complete request's peak.
+                 resident.observe_peak('engine_preview' if request.get('preview') is True else 'engine',
+                     resident.engine_key(request), sampling_workspace_peak(sampled) - foreign_sample_bytes)
+-            resident.observe_peak('decode', key(dict(options=decoder, canvas=canvas)), torch.cuda.max_memory_allocated() - foreign_decode_bytes)
++            resident.observe_peak('decode', key(dict(options=decoder, canvas=canvas,
++                                                     **({'final_upscale': [final_upscale['width'], final_upscale['height']]}
++                                                        if final_upscale is not None else {}))),
++                                  torch.cuda.max_memory_allocated() - foreign_decode_bytes)
+             metrics['resident_models'] = resident.snapshot()
+     except BaseException as error:
+         original_error = error

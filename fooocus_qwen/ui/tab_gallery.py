@@ -103,7 +103,9 @@ def restore_fields(parameters: dict | None, lora_dir: Path | None = None) -> tup
     )
 
 
-VIDEO_FIELDS = ("prompt", "mode", "resolution", "aspect", "seconds", "quality", "seed")
+VIDEO_FIELDS = ("prompt", "mode", "resolution", "aspect", "seconds", "quality", "seed",
+                "upscale_enabled", "upscale_mode", "upscale_factor", "upscale_width", "upscale_height",
+                "upscale_megapixels")
 
 
 def video_restore_outputs(video_components: dict | None) -> list:
@@ -129,6 +131,9 @@ def restore_video_fields(parameters: dict) -> tuple:
     seconds = frames / geometry.FPS if frames > 0 else _safe_float(parameters.get("requested_seconds"), 5.0)
     # Ползунок вкладки — от MIN_SECONDS до MAX_SECONDS; значение вне него Gradio не примет.
     seconds = min(max(seconds, geometry.MIN_SECONDS), geometry.MAX_SECONDS) if math.isfinite(seconds) else 5.0
+    # Апскейл: ролик без него снимает галочку, но поля оставляет умолчаниями.
+    upscale = geometry.Upscale.from_dict(parameters.get("upscale"))
+    shown = upscale or geometry.Upscale()
     return (
         text("prompt") or "",
         mode if mode in prompt_h3.MODES else prompt_h3.MODE_T2V,
@@ -137,6 +142,12 @@ def restore_video_fields(parameters: dict) -> tuple:
         seconds,
         quality if quality in QUALITY else DEFAULT_QUALITY,
         _safe_int(parameters.get("seed", -1), -1),
+        upscale is not None,
+        shown.mode,
+        min(max(shown.factor, 1.0), geometry.MAX_UPSCALE) if math.isfinite(shown.factor) else 2.0,
+        shown.width,
+        shown.height,
+        min(max(shown.megapixels, 0.5), 8.0) if math.isfinite(shown.megapixels) else 2.0,
     )
 
 
@@ -181,6 +192,9 @@ def describe_video(parameters: dict, path: Path, lang: str) -> str:
         rows.append((say("card_mode", lang), str(parameters["mode"])))
     if parameters.get("width") and parameters.get("height"):
         rows.append((say("card_size", lang), f"{parameters['width']}×{parameters['height']}"))
+        output = (parameters.get("output_width"), parameters.get("output_height"))
+        if all(output) and output != (parameters["width"], parameters["height"]):
+            rows.append((say("card_output", lang), f"{output[0]}×{output[1]}"))
     if parameters.get("frames"):
         rows.append((say("card_duration", lang), say("card_frames", lang, seconds=parameters.get("seconds"),
                                                       frames=parameters["frames"])))

@@ -482,6 +482,17 @@ def _video_entry(path, parameters: dict, return_base64: bool) -> dict[str, Any]:
     return entry
 
 
+def _check_upscale(request) -> None:
+    """Размер апскейла — до постановки в очередь: 400, а не сбой задания через минуту."""
+    from ..video import geometry
+    from ..video.request import frame_size
+
+    try:
+        geometry.upscaled_size(*frame_size(request), request.upscale)
+    except ValueError as error:
+        raise RequestError(f"upscale: {error}") from error
+
+
 def _framed(mode: str, first, last) -> tuple:
     """Кадры, которые режим действительно берёт: первый — i2v и flf2v, последний — flf2v."""
     from ..video import prompt_h3
@@ -518,7 +529,10 @@ def prepare_video(studio, body: schemas.VideoGenerateRequest) -> Work:
                     changes["loras"] = loras
             elif body.prompt.strip() or loras:
                 notes.append("refine_from finishes the draft as it is; prompt and loras are ignored.")
-            ignored = [name for name in ("mode", "first", "last", "references") if name in body.model_fields_set]
+            # Размер выхода продления и доводки — как у самого ролика: части
+            # разного размера не склеить, а черновик обещал свой апскейл.
+            ignored = [name for name in ("mode", "first", "last", "references", "upscale")
+                       if name in body.model_fields_set]
             if ignored:
                 notes.append(f"Ignored with {'continue_from' if body.continue_from else 'refine_from'}: "
                              f"{', '.join(ignored)}.")
@@ -549,7 +563,9 @@ def prepare_video(studio, body: schemas.VideoGenerateRequest) -> Work:
                 prompt=body.prompt, prompt_original=body.prompt, mode=body.mode, resolution=body.resolution,
                 aspect=body.aspect, seconds=body.seconds, seed=body.seed, quality=body.quality,
                 first=used_first, last=used_last, references=references, loras=loras,
+                upscale=body.upscale.settings() if body.upscale else None,
             )
+            _check_upscale(request)
     except BaseException:
         uploads.close()
         raise
@@ -628,6 +644,11 @@ def prepare_storyboard_run(studio, body: schemas.StoryboardRunRequest) -> Work:
     planned = board.shots_from([shot.model_dump() for shot in body.shots])
     if not planned:
         raise RequestError("the storyboard has no shots with a prompt")
+    if body.upscale:
+        from ..video.request import VideoRequest
+
+        _check_upscale(VideoRequest(prompt="", resolution=body.resolution, aspect=body.aspect, first=first,
+                                    upscale=body.upscale.settings()))
 
     def work(job: Job) -> dict:
         report = _video_progress(job)
@@ -642,6 +663,7 @@ def prepare_storyboard_run(studio, body: schemas.StoryboardRunRequest) -> Work:
             title=lambda count: say("video_board_title", LANG, count=count),
             on_event=on_event, stopped=lambda: job.cancel_requested,
             on_joining=lambda: job.stage("joining the shots"),
+            upscale=body.upscale.settings() if body.upscale else None,
         )
         if result.failure is not None:
             raise JobFailed(f"shot {result.failed_shot} failed: {result.failure}")

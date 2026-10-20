@@ -206,3 +206,21 @@ def test_extending_a_long_video_takes_at_most_one_part(studio, tmp_path):
     # Ролик без записи последней части продлевается от самого себя, как раньше.
     assert request.continue_from == str(produced.resolve()) and request.continue_whole is None
     assert board.follow_up_request(path, board.FINISH, "light").seconds == pytest.approx(1441 / 24)
+
+
+
+def test_extending_and_finishing_keep_the_upscale_of_the_video(studio, tmp_path):
+    """Продление — в размере ролика (иначе склейка частей разного размера), доводка — с обещанным апскейлом."""
+    from fooocus_qwen.video import board, geometry
+    from fooocus_qwen.video.request import save_result
+
+    produced = tmp_path / "runs" / "2026-10-20" / "up" / "video.mp4"
+    produced.parent.mkdir(parents=True)
+    produced.write_bytes(b"up")
+    settings = geometry.Upscale(factor=2.0)
+    path = save_result(produced, tmp_path / "outputs", {"frames": 124, "seed": 3, "upscale": settings.as_dict()},
+                       tmp_path / "runs")
+    assert board.follow_up_request(path, board.EXTEND, "light").upscale == settings
+    assert board.follow_up_request(path, board.FINISH, "light").upscale == settings
+    plain = save_result(produced, tmp_path / "outputs", {"frames": 124, "seed": 3}, tmp_path / "runs")
+    assert board.follow_up_request(plain, board.EXTEND, "light").upscale is None

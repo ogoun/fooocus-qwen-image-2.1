@@ -1923,6 +1923,32 @@ def scenario_video(browser, url, report: Report, fake: FakeGenerator, video: Fak
     checked = page.get_by_label("First frame → video", exact=True).first.is_checked()
     report.check(checked, "the mode switched to First frame → video")
 
+    # Upscale: галочка открывает параметры, подпись называет выходной кадр,
+    # режим меняет поля, задание несёт размер для движка.
+    page.get_by_label("Upscale", exact=True).first.check()
+    page.wait_for_timeout(1200)
+    multiplier = page.get_by_label("Multiplier of the frame (1-4)")
+    report.check(any(item.is_visible() for item in multiplier.all()), "Upscale: the multiplier appears")
+    note = " ".join(page.locator(".qs-videonote:visible").all_inner_texts())
+    report.check("1728×960" in note, f"Upscale: the size note names the output frame: {note[-80:]}")
+    page.get_by_label("Target dimensions", exact=True).first.check()
+    page.wait_for_timeout(1200)
+    widths = page.get_by_label("Width, px")
+    report.check(any(item.is_visible() for item in widths.all()),
+                 f"Upscale: target dimensions show width and height ({widths.count()} found)")
+    # Slider прятался не до конца (поле числа и подпись оставались) — отсюда
+    # перечень видимых частей в сообщении.
+    shown = [item.evaluate("e => e.tagName + ' ' + e.type") for item in multiplier.all() if item.is_visible()]
+    report.check(not shown, f"Upscale: target dimensions hide the multiplier {shown}")
+    page.get_by_label("Megapixels", exact=True).first.check()
+    page.wait_for_timeout(1200)
+    area = page.get_by_label("Frame area, MP")
+    report.check(any(item.is_visible() for item in area.all())
+                 and not any(item.is_visible() for item in widths.all()),
+                 "Upscale: megapixels show the area slider only")
+    page.get_by_label("Scale by multiplier", exact=True).first.check()
+    page.wait_for_timeout(1200)
+
     # Ролик: задание ушло, плеер показал MP4, строка состояния — сид и размер.
     jobs = len(video.jobs)
     for box in page.locator("textarea").all():
@@ -1940,7 +1966,8 @@ def scenario_video(browser, url, report: Report, fake: FakeGenerator, video: Fak
     page.wait_for_function("""() => [...document.querySelectorAll('.qs-videoboard video')]
         .some(v => v.offsetParent && v.currentSrc)""", timeout=30000)
     status = page.locator(".qs-status textarea:visible").first.input_value()
-    report.check("Done" in status and "864×480" in status, f"status reports the result: {status[:120]}")
+    report.check(job.get("final_upscale") == [1728, 960], f"the job asks for the upscale: {job.get('final_upscale')}")
+    report.check("Done" in status and "1728×960" in status, f"status reports the result: {status[:120]}")
 
     # Цепочка: последний кадр — первым кадром следующего шота.
     click_text(page, "Last frame → next shot")

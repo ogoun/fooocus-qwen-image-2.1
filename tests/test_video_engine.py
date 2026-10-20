@@ -386,3 +386,58 @@ def test_close_closes_stdin_of_the_driver(tmp_path):
     video.close()
     assert fake.stdin.closed and video._process is None
     assert not fake.killed
+
+
+
+# --- правки исходников FreeVideo ---
+
+
+def _git(*args, cwd):
+    import subprocess
+
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+
+def _clone_with(tmp_path, text):
+    base = tmp_path / "FreeVideo"
+    base.mkdir()
+    _git("init", "-q", cwd=base)
+    _git("config", "core.autocrlf", "false", cwd=base)
+    (base / "module.py").write_bytes(text)
+    _git("add", ".", cwd=base)
+    _git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "base", cwd=base)
+    return base
+
+
+def _patches(tmp_path, monkeypatch):
+    directory = tmp_path / "patches"
+    directory.mkdir()
+    (directory / "0001-change.patch").write_bytes(
+        b"--- a/module.py\n+++ b/module.py\n@@ -1 +1 @@\n-value = 1\n+value = 2\n")
+    monkeypatch.setattr(engine, "PATCHES", directory)
+
+
+def test_patches_apply_once_and_then_count_as_applied(tmp_path, monkeypatch):
+    _patches(tmp_path, monkeypatch)
+    base = _clone_with(tmp_path, b"value = 1\n")
+    said = []
+    assert engine.apply_patches(base, said.append) == ["0001-change.patch"]
+    assert (base / "module.py").read_bytes() == b"value = 2\n"
+    assert engine.apply_patches(base, said.append) == [], "наложенный патч не накладывается второй раз"
+    assert said == ["Applying FreeVideo patch 0001-change.patch"]
+
+
+def test_a_patch_that_does_not_fit_is_refused(tmp_path, monkeypatch):
+    _patches(tmp_path, monkeypatch)
+    base = _clone_with(tmp_path, b"value = 7\n")
+    with pytest.raises(engine.VideoEngineError, match="does not apply"):
+        engine.apply_patches(base)
+    assert (base / "module.py").read_bytes() == b"value = 7\n"
+
+
+def test_the_shipped_patches_are_byte_exact_lf():
+    """CRLF сломал бы git apply: .gitattributes держит *.patch как есть."""
+    patches = sorted(engine.PATCHES.glob("*.patch"))
+    assert patches, "патч финального апскейла на месте"
+    for patch in patches:
+        assert b"\r\n" not in patch.read_bytes(), patch.name

@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 from PIL import Image
@@ -291,6 +292,7 @@ def test_a_video_without_parameters_says_so(monkeypatch, tmp_path):
 def test_restore_video_fields_takes_the_values_of_the_video():
     assert tab_gallery.restore_video_fields(VIDEO_PARAMS) == (
         "кот идёт по крыше", "i2v", "768p", "9:16", 124 / 24, "high", 77,
+        False, "multiplier", 2.0, 1920, 1088, 2.0,
     )
 
 
@@ -308,7 +310,8 @@ def test_restore_video_fields_with_garbage_gives_defaults(garbage):
     from fooocus_qwen.video import geometry, prompt_h3
     from fooocus_qwen.video.request import DEFAULT_QUALITY
 
-    prompt, mode, resolution, aspect, seconds, quality, seed = tab_gallery.restore_video_fields(garbage)
+    prompt, mode, resolution, aspect, seconds, quality, seed, *upscale = tab_gallery.restore_video_fields(garbage)
+    assert upscale[0] is False
     assert isinstance(prompt, str)
     assert mode == prompt_h3.MODE_T2V
     assert resolution == geometry.DEFAULT_RESOLUTION
@@ -364,3 +367,20 @@ def test_a_video_without_the_video_tab_restores_nothing(monkeypatch, tmp_path):
     assert len(fields) == tab_gallery.RESTORED_FIELDS
     assert all(field == gr.update() for field in fields)
     assert message
+
+
+def test_restore_video_fields_bring_back_the_upscale():
+    fields = tab_gallery.restore_video_fields(
+        {**VIDEO_PARAMS, "upscale": {"mode": "dimensions", "factor": 9, "width": 2560, "height": 1440,
+                                     "megapixels": "x"}})
+    assert fields[7:] == (False, "multiplier", 2.0, 1920, 1088, 2.0), "испорченный словарь — без апскейла"
+    fields = tab_gallery.restore_video_fields(
+        {**VIDEO_PARAMS, "upscale": {"mode": "dimensions", "factor": 9, "width": 2560, "height": 1440,
+                                     "megapixels": 3}})
+    assert fields[7:] == (True, "dimensions", 4.0, 2560, 1440, 3.0), "множитель зажат в диапазон ползунка"
+
+
+def test_the_card_names_the_upscaled_output():
+    card = tab_gallery.describe({**VIDEO_PARAMS, "width": 864, "height": 480, "output_width": 1728,
+                                 "output_height": 960}, Path("clip.mp4"), "en")
+    assert "864×480" in card and "1728×960" in card and "Output" in card

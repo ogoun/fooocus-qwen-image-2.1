@@ -62,6 +62,9 @@ def follow_up_request(video: str | Path, kind: str, quality: str, **changes: Any
         # продлённый или длинный ролик иначе удваивался бы целиком.
         seconds=_follow_seconds(parameters, kind),
         seed=int(parameters.get("seed", -1)),
+        # Продление и доводка — в размере ролика: склейка частей разного
+        # размера невозможна, а доводка черновика делает то, что он обещал.
+        upscale=geometry.Upscale.from_dict(parameters.get("upscale")),
         **follow,
     )
     values.update(changes)
@@ -126,6 +129,7 @@ def run_board(
     on_event: ShotEvent | None = None,
     stopped: Callable[[], bool] = lambda: False,
     on_joining: Callable[[], None] | None = None,
+    upscale: geometry.Upscale | None = None,
 ) -> BoardResult:
     """Все шоты подряд (кадр-цепочка по желанию), затем склейка с переходами и контактный лист.
 
@@ -154,6 +158,7 @@ def run_board(
             quality=quality,
             first=start_frame,
             loras=tuple(loras),
+            upscale=upscale,
             extra={"storyboard_shot": index + 1, "storyboard_title": shot.title},
         )
         callback = None if on_event is None else (lambda event, _index=index: on_event(_index, event))
@@ -179,6 +184,7 @@ def run_board(
         "kind": "video", "storyboard": [vars(shot).copy() for shot in planned[:count]],
         "shots": [path.name for path in result.produced], "quality": quality,
         "resolution": resolution, "aspect": aspect, "seed": base_seed, "prompt": title(count),
+        "upscale": upscale.as_dict() if upscale else None,
     }
     result.path = save_result(joined, config.OUTPUT_DIR, result.parameters, config.VIDEO_RUNS_DIR)
     # Контактный лист — рядом с роликом в папке результатов: там его и ищут.

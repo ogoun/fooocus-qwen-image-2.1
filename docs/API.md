@@ -233,6 +233,7 @@ loads again with the next image job.
 | `boost` | `false` | rewrite the prompt into an H3 prompt with the language model first. It sees the frames and image references |
 | `continue_from` | `null` | a gallery video to extend. The new part continues its last moments, and the result is the whole video: the source and the new part joined. `prompt`, `seconds` and `seed` default to the source's; give them to change the next part. By default the new part is as long as the source's last part, at most 15 s |
 | `refine_from` | `null` | a gallery `draft` to finish at `light` quality without generating it anew. Other fields are ignored |
+| `upscale` | `null` | a learned latent upscale after all sampling steps, decoded at the larger size (the model itself never samples that size). `{"mode": "multiplier", "factor": 2}` (1–4), `{"mode": "dimensions", "width": 1920, "height": 1088}` (a different shape is centre-cropped) or `{"mode": "megapixels", "megapixels": 2}` (1 MP = 1024×1024, same shape). Sides are rounded to multiples of 32; more than 4× the frame is a `400`. Drafts are not upscaled, finishing them is; `continue_from` and `refine_from` keep the source video's upscale |
 | `return_base64` | `false` | also return the MP4 in base64 |
 
 References get the labels the model knows them by, in the order images,

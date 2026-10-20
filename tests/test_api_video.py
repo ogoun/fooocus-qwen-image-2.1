@@ -393,3 +393,15 @@ def test_interrupt_also_stops_the_video(api, monkeypatch):
     monkeypatch.setattr(api.studio, "stop_video", lambda: stopped.append(True))
     assert api.post("/api/v1/interrupt").status_code == 200
     assert stopped == [True]
+
+
+
+def test_upscale_settings_reach_the_request_and_bad_sizes_are_refused(api):
+    body = make_video(api, upscale={"mode": "multiplier", "factor": 2.0})
+    assert api.engine.jobs[-1]["final_upscale"] == [1728, 960]
+    assert body["video"]["parameters"]["upscale"]["factor"] == 2.0
+    refused = api.post("/api/v1/video", json={"prompt": "A fox.", "upscale": {"mode": "dimensions",
+                                                                              "width": 8192, "height": 4608}})
+    assert refused.status_code == 400 and "more than 4" in refused.text
+    too_much = api.post("/api/v1/video", json={"prompt": "A fox.", "upscale": {"factor": 5}})
+    assert too_much.status_code == 422

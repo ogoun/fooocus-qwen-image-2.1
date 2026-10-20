@@ -82,7 +82,9 @@ down to an 8 GB laptop.
   VRAM): text to video, first frame to video, first and last frame, and
   references (up to 9 images, 3 videos, 3 audio clips for characters, style
   and voice). Duration in seconds up to a minute; drafts that finish without
-  regenerating; "last frame → next shot"; and a **storyboard** that splits a
+  regenerating; **Upscale** — a learned latent upscale (×1–4) that gives a
+  larger frame without sampling the model at that size; "last frame → next
+  shot"; and a **storyboard** that splits a
   brief into shots, films them in a chain and joins them with transitions.
   Images go to the Video tab with one button. See [Video](#video).
 - **Bilingual interface** (English / Russian), switchable at any time.
