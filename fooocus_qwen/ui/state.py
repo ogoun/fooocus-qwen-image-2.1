@@ -588,8 +588,11 @@ class Studio:
         except Exception as error:  # noqa: BLE001 — тост с traceback хуже строки статуса
             LOGGER.exception("Generation failed")
             if is_gpu_fault(error):
+                from ..engine.faults import snapshot
+
                 self._gpu_fault = _quote(error)
-                LOGGER.error("CUDA no longer works in this process; restart the studio to generate images")
+                LOGGER.error("CUDA no longer works in this process; restart the studio to generate images. "
+                             "State at the failure:\n%s", snapshot())
             else:
                 self.recover_residency()
             return [], describe_failure(error, lang)
