@@ -81,8 +81,14 @@ def create_app(studio, token: str | None = None, queue: JobQueue | None = None) 
         return JSONResponse({"detail": str(error)}, status_code=503)
 
     @app.get(f"{PREFIX}/health", tags=["service"])
-    def health() -> dict[str, Any]:
-        """Жив ли сервер — без токена: для проверок готовности и балансировщиков."""
+    def health() -> Any:
+        """Жив ли сервер — без токена: для проверок готовности и балансировщиков.
+
+        После сбоя CUDA (``engine/faults.py``) сервер отвечает, но изображений
+        уже не сделает до перезапуска: это 503, чтобы надзор его перезапустил.
+        """
+        if studio.gpu_fault is not None:
+            return JSONResponse({"status": "gpu_fault", "detail": studio.gpu_fault}, status_code=503)
         return {"status": "ok"}
 
     api = APIRouter(prefix=PREFIX, dependencies=[Depends(_auth(token))])

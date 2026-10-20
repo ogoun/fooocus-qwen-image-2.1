@@ -17,6 +17,7 @@ from PIL import Image
 
 from .. import config
 from .. import settings as settings_module
+from ..engine.faults import is_gpu_fault
 from ..llm import LlmClient, LlmError, load_endpoint
 from ..prompting import boost
 from ..prompting.styles import Style, load_styles
@@ -96,6 +97,8 @@ def describe_failure(error: BaseException, lang: str) -> str:
     """
     if _is_out_of_memory(error):
         return say("failure_out_of_memory", lang, error=_quote(error))
+    if is_gpu_fault(error):
+        return say("failure_gpu_fault", lang, error=_quote(error))
     if isinstance(error, FileNotFoundError):
         return say("failure_file_not_found", lang, error=_quote(error))
     if isinstance(error, OSError):
@@ -118,6 +121,10 @@ class Studio:
         # картинками. Живёт до перезапуска: сменил модель на сервере под тем
         # же именем — перезапуск оболочки вернёт попытку.
         self._text_only_models: set[tuple[str, str]] = set()
+        # Сбой CUDA, после которого видеокарта в этом процессе не работает
+        # (``engine/faults.py``): текст первой ошибки или None. Сбрасывает
+        # его только перезапуск — как и сам сбой.
+        self._gpu_fault: str | None = None
         self._pose_detector: Any = None
         # Движок видео (FreeVideo, ``video/engine.py``) — подпроцесс; создаётся
         # при первом ролике.
@@ -340,6 +347,13 @@ class Studio:
             torch.cuda.empty_cache()
         except ImportError:  # pragma: no cover
             pass
+        except Exception as error:  # noqa: BLE001
+            # На сломанном контексте падает и сброс кеша. Выгрузка ради видео
+            # от этого срываться не должна: у FreeVideo свой процесс и свой
+            # контекст, и попытка ролика лучше заведомого отказа.
+            if not is_gpu_fault(error):
+                raise
+            LOGGER.warning("Could not release cached GPU memory after a CUDA failure: %s", error)
         LOGGER.info("Model unloaded")
 
     def set_sage_attention(self, enabled: bool) -> bool:
@@ -559,15 +573,31 @@ class Studio:
         После любого сбоя размещение весов приводится в порядок: сбой мог
         оборвать перестановку моделей где угодно, в том числе внутри цикла
         денойзинга по нехватке памяти.
+
+        Исключение — сбой CUDA, ломающий контекст процесса (``engine/faults.py``):
+        восстанавливать на нём нечего, и каждая следующая генерация упала бы
+        с невнятной ошибкой. Он запоминается, и дальше генерация сразу
+        отвечает, что нужен перезапуск, не трогая видеокарту.
         """
+        if self._gpu_fault is not None:
+            return [], say("failure_gpu_fault", lang, error=self._gpu_fault)
         try:
             # Модель видео живёт в своём процессе и могла остаться на карте.
             self.release_video()
             return self.generator.generate(request, progress=progress), None
         except Exception as error:  # noqa: BLE001 — тост с traceback хуже строки статуса
             LOGGER.exception("Generation failed")
-            self.recover_residency()
+            if is_gpu_fault(error):
+                self._gpu_fault = _quote(error)
+                LOGGER.error("CUDA no longer works in this process; restart the studio to generate images")
+            else:
+                self.recover_residency()
             return [], describe_failure(error, lang)
+
+    @property
+    def gpu_fault(self) -> str | None:
+        """Текст сбоя CUDA, после которого нужен перезапуск, или None."""
+        return self._gpu_fault
 
     def recover_residency(self) -> None:
         """Возвращает веса на штатные места после сбоя.

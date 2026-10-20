@@ -108,6 +108,37 @@ def test_pinning_survives_several_cycles():
     assert staged.module.weight.data.is_pinned()
 
 
+class _PinFailure(RuntimeError):
+    """Как ``torch.AcceleratorError``: код ошибки CUDA в ``error_code``."""
+
+    def __init__(self, code: int) -> None:
+        super().__init__(f"CUDA error {code}")
+        self.error_code = code
+
+
+def _failing_pin(monkeypatch, code: int) -> None:
+    def pin(_tensor):
+        raise _PinFailure(code)
+
+    monkeypatch.setattr(torch.Tensor, "pin_memory", pin)
+
+
+def test_pinning_out_of_memory_falls_back_to_unpinned_copies(monkeypatch):
+    _failing_pin(monkeypatch, 2)  # cudaErrorMemoryAllocation
+    staged = StagedModule(tiny_module(), DEVICE, pin_memory=True)
+    staged.to_device()
+    staged.to_host()
+    assert not staged.module.weight.data.is_pinned()
+
+
+def test_any_other_cuda_error_while_pinning_is_not_swallowed(monkeypatch):
+    # 2026-10-20: cudaErrorAlreadyMapped (208) при закреплении, затем мёртвый
+    # контекст. «Продолжить без закрепления» маскировало его до первого ядра.
+    _failing_pin(monkeypatch, 208)
+    with pytest.raises(_PinFailure):
+        StagedModule(tiny_module(), DEVICE, pin_memory=True)
+
+
 def test_module_without_buffers_round_trips():
     # register_buffer нигде не вызывался: _named_tensors должен спокойно
     # отработать на пустом named_buffers(), не породив ни ошибок, ни пропусков.

@@ -29,6 +29,8 @@ from contextlib import contextmanager
 
 import torch
 
+from .faults import is_gpu_fault
+
 # Имена политик — из плана весов (``engine/plan.py``): там решается, какая
 # нужна, и там же они объявлены, без torch.
 from .plan import STREAM, SWAP
@@ -117,8 +119,13 @@ class StagedModule:
                 try:
                     host = host.pin_memory()
                 except RuntimeError as error:
-                    # Закрепить десятки гигабайт удаётся не всегда; работать без
-                    # закрепления медленнее, но полностью корректно.
+                    # Нехватка памяти под закрепление — повод работать без него:
+                    # медленнее, но полностью корректно. Любая другая ошибка CUDA
+                    # здесь значит, что контекст процесса сломан (``faults.py``),
+                    # и «продолжить без закрепления» было бы неправдой: первое же
+                    # ядро упадёт уже с невнятной ошибкой.
+                    if is_gpu_fault(error):
+                        raise
                     LOGGER.warning("Failed to pin memory, continuing without it: %s", error)
                     pin_failed = True
             self._host[name] = host

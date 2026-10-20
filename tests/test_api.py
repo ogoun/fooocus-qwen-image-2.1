@@ -205,6 +205,27 @@ def test_a_generation_failure_is_a_500_with_the_reason(api):
     assert "device lost" in answer.json()["detail"] and answer.json()["status"] == "failed"
 
 
+class _CudaFault(RuntimeError):
+    """Как ``torch.AcceleratorError``: код ошибки CUDA в ``error_code``."""
+
+    def __init__(self, message: str, code: int) -> None:
+        super().__init__(message)
+        self.error_code = code
+
+
+def test_a_cuda_fault_makes_health_unhealthy_and_later_jobs_fail_without_the_gpu(api):
+    api.fake.fail = _CudaFault("CUDA error: shared object initialization failed", 302)
+    first = api.post("/api/v1/generate", json={"prompt": "cat", "preset": "LowQuality"})
+    assert first.status_code == 500 and "Restart the studio" in first.json()["detail"]
+    health = TestClient(api.app).get("/api/v1/health")
+    assert health.status_code == 503 and health.json()["status"] == "gpu_fault"
+    assert "shared object" in health.json()["detail"]
+    calls = len(api.fake.requests)
+    second = api.post("/api/v1/generate", json={"prompt": "dog", "preset": "LowQuality"})
+    assert second.status_code == 500 and "Restart the studio" in second.json()["detail"]
+    assert len(api.fake.requests) == calls  # к видеокарте второй раз не ходили
+
+
 def test_a_queued_job_can_be_cancelled_and_a_running_one_interrupted(api):
     api.fake.gate = threading.Event()
     running = api.post("/api/v1/generate?wait=false", json={"prompt": "one", "preset": "LowQuality"}).json()

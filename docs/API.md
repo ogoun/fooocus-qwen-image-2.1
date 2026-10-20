@@ -372,7 +372,7 @@ Saved prompts are the same files as the interface's saved prompts, in
 
 | Endpoint | |
 |---|---|
-| `GET /api/v1/health` | `{"status": "ok"}`, no token needed |
+| `GET /api/v1/health` | `{"status": "ok"}`, no token needed. After a CUDA failure that breaks the GPU in the server process it answers `503` with `{"status": "gpu_fault", "detail": …}`, and generation requests fail at once until the server is restarted |
 | `GET /api/v1/info` | version, `model_loaded`, GPU memory, presets, aspect ratios, mask modes, outpaint sides, the LoRA folder, settings, and under `video` the video modes, resolutions, aspect ratios, qualities, duration limits, storyboard structures and transitions |
 | `GET /api/v1/presets` | `name`, `resolution`, `steps`, `fast`, `default` |
 | `GET /api/v1/styles` | style names |

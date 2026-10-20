@@ -649,6 +649,12 @@ MESSAGES: dict[str, tuple[str, str]] = {
         "Out of GPU memory. Try a lower quality preset, fewer images at once or fewer "
         "references. {error}",
     ),
+    "failure_gpu_fault": (
+        "Сбой драйвера видеокарты: CUDA в этом процессе больше не работает, и до перезапуска "
+        "студии генерация изображений невозможна. Перезапустите студию. {error}",
+        "GPU driver failure: CUDA no longer works in this process, and images cannot be "
+        "generated until the studio restarts. Restart the studio. {error}",
+    ),
     "failure_file_not_found": (
         "Файл не найден: {error}. Проверьте, что веса модели на месте.",
         "File not found: {error}. Check that the model weights are in place.",
