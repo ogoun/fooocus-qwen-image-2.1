@@ -231,7 +231,7 @@ loads again with the next image job.
 | `references` | `[]` | `ref` mode only: up to 9 images, 3 videos and 3 audio files. Each is `{"kind": "image"\|"video"\|"audio", "base64": "…"}` or `{"gallery": "2026-10-19/12-00-00.png"}`; `"name": "voice.mp3"` gives the file type when `kind` is left out. A sound needs at least one image or video |
 | `loras` | `[]` | `[{"name": "my-motion", "strength": 0.8}]`, files from `GET /video/loras` (the `loras/video` folder), strength −2…2 |
 | `boost` | `false` | rewrite the prompt into an H3 prompt with the language model first. It sees the frames and image references |
-| `continue_from` | `null` | a gallery video to extend. The new part continues its last moments. `prompt`, `seconds` and `seed` default to the source's; give them to change the next part |
+| `continue_from` | `null` | a gallery video to extend. The new part continues its last moments, and the result is the whole video: the source and the new part joined. `prompt`, `seconds` and `seed` default to the source's; give them to change the next part. By default the new part is as long as the source's last part, at most 15 s |
 | `refine_from` | `null` | a gallery `draft` to finish at `light` quality without generating it anew. Other fields are ignored |
 | `return_base64` | `false` | also return the MP4 in base64 |
 

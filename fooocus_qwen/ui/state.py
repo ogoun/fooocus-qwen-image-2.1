@@ -455,8 +455,15 @@ class Studio:
             done = self.video_engine.generate(job, on_event)
             parameters["seconds_taken"] = round(time.perf_counter() - started, 1)
             parameters["parts"] = len(done.get("parts") or [])
+            frames = done.get("frames")
+            if frames and int(frames) != parameters["frames"]:
+                # Продление склеено с исходником: карточка и галерея
+                # показывают ролик целиком, длина новой части — отдельно.
+                parameters["part_frames"] = parameters["frames"]
+                parameters["frames"] = int(frames)
+                parameters["seconds"] = round(int(frames) / parameters.get("fps", 24), 3)
             destination = video_request.save_result(
-                done["output"], config.OUTPUT_DIR, parameters, config.VIDEO_RUNS_DIR
+                done["output"], config.OUTPUT_DIR, parameters, config.VIDEO_RUNS_DIR, last=done.get("last")
             )
             return destination, parameters, None
         except engine.VideoCancelled:

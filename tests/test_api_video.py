@@ -295,6 +295,7 @@ def test_refine_from_finishes_the_draft_and_continue_from_extends(api):
 
     assert api.post("/api/v1/video", json={"continue_from": "x.mp4", "refine_from": "y.mp4"}).status_code == 422
     picture = config.OUTPUT_DIR / "2026-10-19" / "11-00-00.png"
+    picture.parent.mkdir(parents=True, exist_ok=True)
     Image.new("RGB", (8, 8)).save(picture)
     not_video = api.post("/api/v1/video", json={"continue_from": "2026-10-19/11-00-00.png"})
     assert not_video.status_code == 400

@@ -159,3 +159,50 @@ def test_stop_video_cancels_only_an_existing_engine(studio):
     studio._video = None
     studio.stop_video()
     assert studio._video is None, "кнопка «Прервать» не запускает драйвер"
+
+
+def test_an_extension_is_stored_whole_and_extends_from_its_last_part(studio, tmp_path):
+    """Продлённый ролик: длительность — склейки, продолжение — от последней части.
+
+    Карточка и галерея показывают ролик целиком; следующее «Продлить» берёт
+    запись латентов последней части (у склейки её нет) и длину прошлой
+    части, а не всего ролика.
+    """
+    from fooocus_qwen.video import board
+
+    runs = tmp_path / "runs" / "2026-10-20" / "job"
+    runs.mkdir(parents=True)
+    (runs / "joined.mp4").write_bytes(b"whole")
+    (runs / "video.mp4").write_bytes(b"part")
+    studio._video.generate = lambda job, on_event=None: {
+        "event": "done", "output": str(runs / "joined.mp4"), "parts": [str(runs / "video.mp4")],
+        "last": str(runs / "video.mp4"), "frames": 248}
+    path, parameters, failure = studio.run_video(VideoRequest(prompt="a cat", continue_from="old.mp4"), "en")
+
+    assert failure is None and path.read_bytes() == b"whole"
+    stored = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+    assert stored["frames"] == 248 and stored["seconds"] == pytest.approx(248 / 24, abs=1e-3)
+    assert stored["part_frames"] == 124
+    assert stored["engine_output"] == "2026-10-20/job/joined.mp4"
+    assert stored["engine_continue"] == "2026-10-20/job/video.mp4"
+
+    again = board.follow_up_request(path, board.EXTEND, "light")
+    assert again.continue_from == str((runs / "video.mp4").resolve())
+    assert again.continue_whole == str((runs / "joined.mp4").resolve())
+    assert again.seconds == pytest.approx(124 / 24)
+
+
+def test_extending_a_long_video_takes_at_most_one_part(studio, tmp_path):
+    from fooocus_qwen.video import board, geometry
+    from fooocus_qwen.video.request import save_result
+
+    produced = tmp_path / "runs" / "2026-10-20" / "long" / "joined.mp4"
+    produced.parent.mkdir(parents=True)
+    produced.write_bytes(b"long")
+    path = save_result(produced, tmp_path / "outputs", {"frames": 1441, "seed": 3}, tmp_path / "runs")
+
+    request = board.follow_up_request(path, board.EXTEND, "light")
+    assert request.seconds == pytest.approx(geometry.frames_for(geometry.SINGLE_MAX_SECONDS) / geometry.FPS)
+    # Ролик без записи последней части продлевается от самого себя, как раньше.
+    assert request.continue_from == str(produced.resolve()) and request.continue_whole is None
+    assert board.follow_up_request(path, board.FINISH, "light").seconds == pytest.approx(1441 / 24)

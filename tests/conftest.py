@@ -59,6 +59,26 @@ def isolated_settings_and_weights(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "TURBO_DIR", tmp_path / "turbo")
 
 
+@pytest.fixture(autouse=True)
+def isolated_user_data(tmp_path, monkeypatch):
+    """Галерея, сохранённые промты и задания видео — во временном каталоге.
+
+    Без этого тесты, прогоняющие обработчик «Сгенерировать», сохраняли
+    результат подставного генератора в настоящую галерею человека: за месяц в
+    ``user/outputs`` набралось 78 серых картинок по 208 байт, и инструмент
+    замеров видео взял одну из них первым кадром ролика. Точечные подмены в
+    отдельных тестах были, но один забытый файл их обходил — та же история,
+    что с проводником выше. Тест, которому нужен свой каталог, подменяет его
+    поверх, как раньше.
+    """
+    from fooocus_qwen import config
+
+    user = tmp_path / "user"
+    monkeypatch.setattr(config, "OUTPUT_DIR", user / "outputs")
+    monkeypatch.setattr(config, "PROMPT_DIR", user / "prompts")
+    monkeypatch.setattr(config, "VIDEO_RUNS_DIR", user / "video_runs")
+
+
 @pytest.fixture
 def painter_value(tmp_path, monkeypatch):
     """Собирает значение кисти так, как его собрал бы сервер.

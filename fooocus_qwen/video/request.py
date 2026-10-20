@@ -83,8 +83,16 @@ class VideoRequest:
     loras: tuple[tuple[str, float], ...] = ()
     # Продолжить готовый ролик (его хвост — контекст новой части).
     continue_from: str | None = None
+    # Ролик целиком, к которому приклеивается продолжение, если
+    # ``continue_from`` — лишь его последняя часть (продлённый или длинный
+    # ролик). None — склеивать с самим ``continue_from``.
+    continue_whole: str | None = None
     # Довести черновик до финала: путь черновика внутри каталога заданий.
     refine_from: str | None = None
+    # Номинальный бюджет памяти для движка (ГиБ): планировать, как на карте и
+    # машине поменьше. None — по реально свободной памяти.
+    vram_gib: float | None = None
+    ram_gib: float | None = None
     # Исходный текст до буста — для метаданных.
     prompt_original: str = ""
     extra: dict[str, Any] = field(default_factory=dict)
@@ -231,8 +239,11 @@ def build_job(
         "media": media if has_media else None,
         "continuation_media": continuation_media,
         "continue_from": request.continue_from,
+        "continue_whole": request.continue_whole,
         "refine_from": request.refine_from,
         "output_dir": str(runs_root),
+        "vram_gib": request.vram_gib,
+        "ram_gib": request.ram_gib,
     }
     parameters = {
         "app_version": __version__,
@@ -264,24 +275,37 @@ def next_video_path(directory: Path, when: datetime | None = None) -> Path:
     return gallery.next_path(directory, when, suffix=".mp4")
 
 
-def save_result(produced: str | Path, directory: Path, parameters: dict[str, Any], runs_root: Path) -> Path:
+def save_result(
+    produced: str | Path, directory: Path, parameters: dict[str, Any], runs_root: Path,
+    last: str | Path | None = None,
+) -> Path:
     """Готовый ролик — в каталог результатов, параметры — соседним JSON.
 
     Копия, а не перенос: в каталоге заданий FreeVideo держит кэш результатов
     (тот же запрос вернётся мгновенно), а черновик нужен на месте для доводки
     — путь к нему относительно ``runs_root`` и сохраняется в параметрах.
+
+    ``last`` — последняя часть склеенного ролика (длинного или продлённого).
+    Запись латентов для продления движок хранит у неё, а не у склейки:
+    продление от склейки кодировало бы её конец заново, теряя контекст.
     """
     produced = Path(produced)
     destination = next_video_path(directory)
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(produced, destination)
     stored = dict(parameters)
-    try:
-        stored["engine_output"] = produced.resolve().relative_to(Path(runs_root).resolve()).as_posix()
-    except ValueError:
-        stored["engine_output"] = str(produced)
+    stored["engine_output"] = _relative(produced, runs_root)
+    if last is not None and Path(last) != produced:
+        stored["engine_continue"] = _relative(Path(last), runs_root)
     sidecar(destination).write_text(json.dumps(stored, ensure_ascii=False, indent=2), encoding="utf-8")
     return destination
+
+
+def _relative(path: Path, root: Path) -> str:
+    try:
+        return path.resolve().relative_to(Path(root).resolve()).as_posix()
+    except ValueError:
+        return str(path)
 
 
 def sidecar(video: Path) -> Path:

@@ -233,7 +233,7 @@ class VideoGenerateRequest(VideoSettings):
     references: list[VideoReference] = Field([], max_length=video_request.MAX_IMAGES + video_request.MAX_VIDEOS
                                              + video_request.MAX_AUDIOS)
     boost: bool = Field(False, description="rewrite the prompt into an H3 prompt with the language model first")
-    continue_from: str | None = Field(None, description="a gallery video to extend")
+    continue_from: str | None = Field(None, description="a gallery video to extend; the result is the whole video, source and new part joined")
     refine_from: str | None = Field(None, description="a gallery draft to finish without generating anew")
 
     @model_validator(mode="after")

@@ -31,6 +31,7 @@ class FakeEngine:
         self.joined: list[tuple] = []
         self.planned: list[tuple] = []
         self.released: list[str] = []
+        self.leads: list = []
 
     def plan(self, seconds, continued=False):
         self.planned.append((seconds, continued))
@@ -44,8 +45,10 @@ class FakeEngine:
         options["progress"]({"label": "Sampling", "done": 1, "total": 8, "frame_preview": object()})
         return f"{output_directory}/part{len(self.calls)}.mp4"
 
-    def join_files(self, sources, target, cancelled=None, frames=None):
+    def join_files(self, sources, target, cancelled=None, frames=None, leads=None):
         self.joined.append((list(sources), target, frames, cancelled))
+        self.leads.append(leads)
+        return {"frames": 999}
 
     def install(self, monkeypatch) -> None:
         package = types.ModuleType("freevideo_engine")
@@ -161,7 +164,8 @@ def test_a_single_part(monkeypatch, stdout):
     events = _events(stdout)
     assert [event["event"] for event in events] == ["plan", "progress", "part", "done"]
     assert "frame_preview" not in events[1]["value"]
-    assert events[-1] == {"event": "done", "id": "job1", "output": "runs/part1.mp4", "parts": ["runs/part1.mp4"]}
+    assert events[-1] == {"event": "done", "id": "job1", "output": "runs/part1.mp4", "parts": ["runs/part1.mp4"],
+                          "last": "runs/part1.mp4", "frames": None}
 
 
 def test_without_media_no_inputs_are_exported(monkeypatch, stdout):
@@ -190,6 +194,7 @@ def test_several_parts_chain_and_join(monkeypatch, stdout):
     assert cancelled() is False
     done = _events(stdout)[-1]
     assert done["event"] == "done" and done["output"] == target and done["parts"] == sources
+    assert done["last"] == "runs/part3.mp4"
     progress = [event for event in _events(stdout) if event["event"] == "progress"]
     assert [event["part"] for event in progress] == [0, 1, 2, 3]
     assert {event["parts"] for event in progress} == {3}
@@ -305,3 +310,111 @@ def test_main_quits_on_command(monkeypatch):
     assert code == 0
     assert [event["event"] for event in events] == ["ready"]
     assert fake.calls == []
+
+
+def test_a_memory_budget_reaches_the_engine_only_for_its_job(monkeypatch):
+    """Бюджет задания подмешивается к настройкам ресурсов, которые оркестратор
+    превращает в ключи CLI, — и снимается после задания."""
+    settings = types.ModuleType("freevideo_engine.resource_settings")
+    settings.read = lambda root, *, backend="cuda": {"gpu_reserve_gib": None}
+    package = types.ModuleType("freevideo_engine")
+    package.resource_settings = settings
+    monkeypatch.setitem(sys.modules, "freevideo_engine", package)
+    monkeypatch.setitem(sys.modules, "freevideo_engine.resource_settings", settings)
+    original = settings.read
+    seen = []
+    with driver.budget(8, 16):
+        seen.append(settings.read("root"))
+    assert seen == [{"gpu_reserve_gib": None, "vram_gib": 8.0, "ram_gib": 16.0}]
+    assert settings.read is original
+    with driver.budget():
+        assert settings.read is original
+
+
+def test_command_lines_reads_a_plain_stream():
+    assert list(driver.command_lines(io.StringIO('{"cmd": "quit"}\n'))) == ['{"cmd": "quit"}\n']
+
+
+CHILD = """
+import importlib.util, sys, threading, time
+spec = importlib.util.spec_from_file_location("driver", sys.argv[1])
+driver = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(driver)
+threading.Thread(target=lambda: [print("line", line.strip(), flush=True) for line in driver.command_lines()],
+                 daemon=True).start()
+time.sleep(0.5)
+started = time.perf_counter()
+import numpy
+print("imported", round(time.perf_counter() - started, 2), flush=True)
+time.sleep(10)
+"""
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="the loader lock on stdin is a Windows trait")
+def test_waiting_for_a_command_does_not_block_loading_a_dll(tmp_path):
+    """Ожидание команды не держит загрузку DLL: так зависало продление ролика.
+
+    Ребёнок ждёт команд в соседнем потоке и импортирует numpy; при чтении
+    stdin «в лоб» импорт стоял бы до первой строки — а её здесь не шлют,
+    пока импорт не отчитается.
+    """
+    import subprocess
+
+    script = tmp_path / "child.py"
+    script.write_text(CHILD, encoding="utf-8")
+    child = subprocess.Popen([sys.executable, "-I", str(script), driver.__file__], stdin=subprocess.PIPE,
+                             stdout=subprocess.PIPE, text=True)
+    try:
+        first = child.stdout.readline()
+        child.stdin.write("hello\n")
+        child.stdin.flush()
+        second = child.stdout.readline()
+    finally:
+        child.kill()
+        child.wait(timeout=30)
+    assert first.startswith("imported"), first
+    assert second.strip() == "line hello"
+
+
+def test_an_extension_is_joined_to_its_source(monkeypatch, stdout):
+    """«Продлить» отдаёт ролик целиком: исходник и новая часть одной склейкой.
+
+    Обрезки до плана нет — длина исходника в план продолжения не входит.
+    Следующее продление пойдёт от новой части: запись латентов лежит у неё.
+    """
+    fake = _fake(monkeypatch, [136])
+    driver.run_job(_job(continue_from="old.mp4"))
+    ((sources, target, frames, _cancelled),) = fake.joined
+    assert sources == ["old.mp4", "runs/part1.mp4"] and frames is None
+    done = _events(stdout)[-1]
+    assert done["output"] == target and done["parts"] == ["runs/part1.mp4"]
+    assert done["last"] == "runs/part1.mp4" and done["frames"] == 999
+
+
+def test_a_joined_video_is_extended_from_its_last_part_and_joined_whole(monkeypatch, stdout, tmp_path):
+    """Продлённый ролик: движок продолжает последнюю часть, склеивается целое.
+
+    Звук стыка движок сверяет по записи новой части, а она ссылается на
+    последнюю часть, не на склейку, — ``leads`` подменяет предыдущий файл.
+    """
+    fake = _fake(monkeypatch, [136])
+    lead_calls = []
+    continuation = types.ModuleType("freevideo_engine.comfy_continuation")
+    continuation.audio_lead_in = lambda video, previous=None: lead_calls.append((video, previous)) or "lead"
+    monkeypatch.setitem(sys.modules, "freevideo_engine.comfy_continuation", continuation)
+    whole, last = str(tmp_path / "joined.mp4"), str(tmp_path / "video.mp4")
+
+    driver.run_job(_job(continue_from=last, continue_whole=whole))
+    assert fake.calls[0]["continue_from"] == last
+    ((sources, _target, frames, _cancelled),) = fake.joined
+    assert sources == [whole, "runs/part1.mp4"] and frames is None
+    (leads,) = fake.leads
+    assert leads("runs/part1.mp4", whole) == "lead"
+    assert lead_calls == [("runs/part1.mp4", last)]
+    assert leads("runs/part2.mp4", "runs/part1.mp4") is None, "другие стыки движок читает сам"
+
+
+def test_a_plain_extension_needs_no_seam_substitute(monkeypatch, stdout):
+    fake = _fake(monkeypatch, [136])
+    driver.run_job(_job(continue_from="old.mp4"))
+    assert fake.leads == [None]

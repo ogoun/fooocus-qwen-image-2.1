@@ -43,7 +43,10 @@ def follow_up_request(video: str | Path, kind: str, quality: str, **changes: Any
     if kind == FINISH:
         follow = dict(refine_from=engine_output, quality=FINISH_QUALITY)
     elif kind == EXTEND:
-        follow = dict(continue_from=str((config.VIDEO_RUNS_DIR / engine_output).resolve()),
+        # Продолжается последняя часть: у склейки нет записи латентов.
+        last = parameters.get("engine_continue")
+        follow = dict(continue_from=str((config.VIDEO_RUNS_DIR / (last or engine_output)).resolve()),
+                      continue_whole=str((config.VIDEO_RUNS_DIR / engine_output).resolve()) if last else None,
                       quality=FINISH_QUALITY if quality == "draft" else quality)
     else:
         raise ValueError(f"Unknown follow-up: {kind}")
@@ -54,13 +57,22 @@ def follow_up_request(video: str | Path, kind: str, quality: str, **changes: Any
         resolution=parameters.get("resolution", geometry.DEFAULT_RESOLUTION),
         aspect=parameters.get("aspect", geometry.DEFAULT_ASPECT),
         # Из кадров, а не из округлённых секунд: 5.167 с округлились бы
-        # вверх до следующей ступени сетки (141 кадр вместо 124).
-        seconds=int(parameters.get("frames") or geometry.frames_for(5.0)) / geometry.FPS,
+        # вверх до следующей ступени сетки (141 кадр вместо 124). Продление
+        # длится столько, сколько прошлая часть, но не дольше одной части:
+        # продлённый или длинный ролик иначе удваивался бы целиком.
+        seconds=_follow_seconds(parameters, kind),
         seed=int(parameters.get("seed", -1)),
         **follow,
     )
     values.update(changes)
     return VideoRequest(**values)
+
+
+def _follow_seconds(parameters: dict[str, Any], kind: str) -> float:
+    frames = int(parameters.get("frames") or geometry.frames_for(5.0))
+    if kind == EXTEND:
+        frames = min(int(parameters.get("part_frames") or frames), geometry.frames_for(geometry.SINGLE_MAX_SECONDS))
+    return frames / geometry.FPS
 
 
 def shots_from(items: Sequence[dict]) -> list[storyboard.Shot]:
