@@ -311,9 +311,24 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     gr.Checkbox(label=pick("boost", lang), value=False),
                     label=("AI буст", "AI boost"),
                 )
+                # Тот же набор, что на генерации: переписать заранее, увидеть
+                # и поправить текст. Раньше галочка переписывала промт молча
+                # при запуске, и что ушло в модель, было видно только в PNG.
+                boost_now = localizer.bind(
+                    gr.Button(pick("boost_now", lang)), value=T["boost_now"]
+                )
                 describe_button = localizer.bind(
                     gr.Button(pick("describe", lang)), value=("Описать изображение", "Describe image")
                 )
+            # Как на генерации: поле видно, пока буст включён или в нём есть текст.
+            boosted = localizer.bind(
+                gr.Textbox(label=pick("boost_result", lang), lines=3, interactive=True, visible=False,
+                           elem_classes=[layout.SLOT_ACTIONS]),
+                label=T["boost_result"],
+            )
+            # Текст промта, по которому составлен переписанный: правка
+            # исходного после переписки — повод предупредить (boost_stale).
+            boost_source = gr.State("")
 
         with gr.Column(min_width=layout.SIDE_MIN_WIDTH, elem_classes=[layout.SIDE_COL]):
             mode = localizer.bind(
@@ -511,9 +526,56 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         text, message = studio.describe_image(source, lang)
         return (text or gr.update()), message
 
+    def boost_edit(prompt_text, slots, lang):
+        """Переписанная инструкция правки: ``(текст, соотношение, сообщение)``.
+
+        Переписывателю — исходник и референсы (маску он не видит) с теми
+        тегами, под которыми их увидит модель: при маске первый референс —
+        <image3>, а не <image2>.
+        """
+        shown = [slot for slot in slots if slot.role != "mask"]
+        return studio.boost_prompt(
+            prompt_text, boost_module.MODE_EDIT, lang,
+            [slot.image for slot in shown], [slot.tag for slot in shown if slot.tag],
+        )
+
+    def edit_slots(source, mask, mode_value, images):
+        """Условные изображения в том порядке и с теми тегами, что уйдут в модель.
+
+        Режим — по факту, а не по выбору: если ``mask is None``, ``collect()``
+        уже решил, что маскировать нечего (пустая маска в mask/region).
+        Аннотация — исключение: маски там нет по определению режима.
+        """
+        effective_mode = mode_value if mask is not None or mode_value == MASK_ANNOTATION else MASK_NONE
+        return effective_mode, condition_slots(source, mask, effective_mode, images)
+
+    def rewrite(raw, prompt_text, mode_value, current_references, lang):
+        """«Переписать сейчас»: текст — в поле переписанного промта, буст включается.
+
+        Галочка включается по той же причине, что на генерации: нажатие и
+        есть заявление «хочу переписанный промт», а в модель он уходит
+        только при включённой.
+        """
+        value, failure = read_painter(raw, lang)
+        if failure:
+            return gr.update(), gr.update(), gr.update(), failure
+        source, mask = collect(value, mode_value)
+        if source is None:
+            return gr.update(), gr.update(), gr.update(), say("upload_first", lang)
+        if not (prompt_text or "").strip():
+            return gr.update(), gr.update(), gr.update(), say("edit_needs_prompt", lang)
+        _, slots = edit_slots(source, mask, mode_value, references_module.filled(current_references))
+        text, _, message = boost_edit(prompt_text, slots, lang)
+        # Отказ языковой модели возвращает исходный текст: он не «переписан»,
+        # и ни поле, ни галочка, ни источник от него меняться не должны.
+        if not text or text == prompt_text:
+            return gr.update(), gr.update(), gr.update(), message
+        return text, gr.update(value=True), prompt_text, message
+
     def run(
         raw, prompt_text, use_boost, mode_value, quality_name,
         grow_value, feather_value, keep_value, seed_value, current_references, lang, lora_state=None,
+        boosted_text="", boost_source_text="",
         progress=gr.Progress(track_tqdm=True),
     ):
         # Обработчик целиком под try по тем же причинам, что и на вкладке
@@ -522,6 +584,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             return _apply(
                 raw, prompt_text, use_boost, mode_value, quality_name,
                 grow_value, feather_value, keep_value, seed_value, current_references, lora_state, lang, progress,
+                boosted_text, boost_source_text,
             )
         except Exception as error:  # noqa: BLE001
             LOGGER.exception("Edit handler failed")
@@ -530,6 +593,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     def _apply(
         raw, prompt_text, use_boost, mode_value, quality_name,
         grow_value, feather_value, keep_value, seed_value, current_references, lora_state, lang, progress,
+        boosted_text="", boost_source_text="",
     ):
         value, failure = read_painter(raw, lang)
         if failure:
@@ -546,24 +610,17 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             return [], say("edit_needs_prompt", lang)
 
         images = references_module.filled(current_references)
-        # Режим переигрывается по факту, а не по выбору пользователя: если
-        # mask is None, collect() уже решил, что маскировать нечего (пустая
-        # маска в mask/region), и это решение — источник истины, а не
-        # напоминание. Аннотация — исключение: там маски нет по определению
-        # режима, а не из-за пустого рисунка, поэтому её оставляем как есть.
-        effective_mode = mode_value if mask is not None or mode_value == MASK_ANNOTATION else MASK_NONE
-        slots = condition_slots(source, mask, effective_mode, images)
+        effective_mode, slots = edit_slots(source, mask, mode_value, images)
 
-        effective, message = prompt_text, ""
-        if use_boost:
-            # Переписывателю — исходник и референсы (маску он не видит) с теми
-            # тегами, под которыми их увидит модель: при маске первый
-            # референс — <image3>, а не <image2>.
-            shown = [slot for slot in slots if slot.role != "mask"]
-            effective, _, message = studio.boost_prompt(
-                prompt_text, boost_module.MODE_EDIT, lang,
-                [slot.image for slot in shown], [slot.tag for slot in shown if slot.tag],
-            )
+        # Те же правила, что на генерации: переписанное поле в ходу только при
+        # включённом бусте, и о расхождении с полем «Промт» говорится прямо.
+        effective, message = (boosted_text or "").strip() if use_boost else "", ""
+        if not use_boost and (boosted_text or "").strip():
+            message = say("boost_ignored", lang)
+        elif effective and (boost_source_text or "") != (prompt_text or ""):
+            message = say("boost_stale", lang)
+        if use_boost and not effective:
+            effective, _, message = boost_edit(prompt_text, slots, lang)
 
         # Подписи ячеек считаются по выбранному режиму, а маска бывает пустой:
         # тогда её места в очереди нет, и теги референсов сдвигаются на один.
@@ -693,10 +750,23 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         js=flush,
     ).success(reveal_result, None, None, js=SCROLL_TO_RESULT_JS, queue=False, show_progress="hidden")
     describe_button.click(describe, [editor, language], [prompt, status], js=flush)
+    boost_now.click(
+        rewrite,
+        [editor, prompt, mode, grid.state, language],
+        [boosted, boost_enabled, boost_source, status],
+        js=flush,
+    )
+
+    def show_rewritten(enabled, text):
+        return gr.update(visible=bool(enabled) or bool((text or "").strip()))
+
+    for trigger in (boost_enabled.change, boosted.change):
+        trigger(show_rewritten, [boost_enabled, boosted], boosted, queue=False, show_progress="hidden")
+
     run_button.click(
         run,
         [editor, prompt, boost_enabled, mode, quality, grow, feather, keep_outside, seed,
-         grid.state, language, loras.state],
+         grid.state, language, loras.state, boosted, boost_source],
         [result, status],
         # Та же группа очереди, что и у «Сгенерировать»: видеокарта одна.
         concurrency_id=GPU_CONCURRENCY_ID,

@@ -1841,6 +1841,16 @@ def scenario_compact(browser, url, report: Report, fake: FakeGenerator, samples:
 
     # Правка на FHD: результат под кистью, после правки страница докручивает до него.
     open_tab(page, TAB_EDIT)
+    # Буст правки — тем же набором, что на генерации.
+    report.check(not any(item.is_visible() for item in rewritten.all()),
+                 "Edit: the empty rewritten-prompt field is hidden while AI boost is off")
+    report.check(any(item.is_visible() for item in page.get_by_role("button", name="Rewrite now").all()),
+                 "Edit: “Rewrite now” is there, as on Generate")
+    visible_input(page, "AI boost").check()
+    page.wait_for_timeout(600)
+    report.check(any(item.is_visible() for item in rewritten.all()), "Edit: turning AI boost on shows the field")
+    visible_input(page, "AI boost").uncheck()
+    page.wait_for_timeout(600)
     load_into_painter(page, sample_image(samples, 1200, 800))
     page.evaluate("() => window.scrollTo(0, 0)")
     report.check(not in_view(page, ".qs-preview"), "Edit at 1920×1080: the result starts below the fold")

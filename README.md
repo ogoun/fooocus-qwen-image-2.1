@@ -635,7 +635,8 @@ setup accepts it on your behalf, so read it first. Details:
 
 Set the address of an OpenAI-compatible server during installation or on the
 Settings tab. With **AI boost** on, the prompt is rewritten before
-generation. If the language model can't read images, the edit rewrite falls
+generation. **Rewrite now** and the *Rewritten prompt* box work on both the
+Generate and the Edit tab. If the language model can't read images, the edit rewrite falls
 back to the text alone and says so. Rewritten descriptions are in English
 unless the instruction is in Chinese. Text you want drawn in the image — in
 double quotes — keeps its own language.

@@ -150,6 +150,92 @@ def test_the_rewriter_sees_source_and_references_under_the_model_tags(painter_va
     assert recorder.captured.prompt == "rewritten"
 
 
+def _boosting_studio(monkeypatch, answer="rewritten"):
+    """Studio с подставным переписывателем: запоминает каждый вызов."""
+    recorder = _Recorder()
+    studio = Studio(config.AppConfig())
+    studio._generator = recorder
+    calls = []
+
+    def boost_prompt(prompt, mode, lang, images=None, tags=None):
+        calls.append(dict(prompt=prompt, mode=mode, images=images, tags=tags))
+        return answer, None, "boost done"
+
+    monkeypatch.setattr(studio, "boost_prompt", boost_prompt)
+    return studio, recorder, calls
+
+
+def test_rewrite_now_fills_the_field_and_ticks_the_box(painter_value, monkeypatch):
+    studio, _recorder, calls = _boosting_studio(monkeypatch)
+    _studio, _components, handlers = _build(studio)
+    text, enabled, source, status = handlers["rewrite"](
+        painter_value(*_images()), "вставь кота", gen.MASK_MASK, _refs("red"), "ru",
+    )
+    assert (text, enabled["value"], source, status) == ("rewritten", True, "вставь кота", "boost done")
+    # Те же теги, что у запуска: маска занимает <image2>, референс — <image3>.
+    assert calls[0]["tags"] == ["<image1>", "<image3>"] and calls[0]["mode"] == boost.MODE_EDIT
+
+
+def test_a_failed_rewrite_leaves_the_field_alone(painter_value, monkeypatch):
+    # Отказ языковой модели возвращает исходный текст — это не переписанный промт.
+    studio, _recorder, _calls = _boosting_studio(monkeypatch, answer="вставь кота")
+    _studio, _components, handlers = _build(studio)
+    text, enabled, source, _status = handlers["rewrite"](
+        painter_value(*_images()), "вставь кота", gen.MASK_MASK, [], "ru",
+    )
+    assert text == enabled == source == gr.update()
+
+
+@pytest.mark.parametrize("prompt", ["", "   "])
+def test_rewrite_needs_an_instruction(painter_value, monkeypatch, prompt):
+    studio, _recorder, calls = _boosting_studio(monkeypatch)
+    _studio, _components, handlers = _build(studio)
+    *_fields, status = handlers["rewrite"](painter_value(*_images()), prompt, gen.MASK_MASK, [], "ru")
+    assert not calls and "Промт" in status
+
+
+def test_the_run_uses_the_rewritten_field_without_rewriting_again(painter_value, monkeypatch):
+    studio, recorder, calls = _boosting_studio(monkeypatch)
+    _studio, _components, handlers = _build(studio)
+    _paths, status = handlers["run"](
+        painter_value(*_images()), "вставь кота", True, gen.MASK_MASK,
+        config.AppConfig().preset, 8, 12, True, -1, [], "ru", None, "поправленный текст", "вставь кота",
+        progress=_quiet,
+    )
+    assert not calls and recorder.captured.prompt == "поправленный текст"
+    assert recorder.captured.prompt_original == "вставь кота"
+    assert "другому тексту" not in status
+
+
+def test_a_changed_prompt_after_rewriting_is_reported(painter_value, monkeypatch):
+    studio, recorder, _calls = _boosting_studio(monkeypatch)
+    _studio, _components, handlers = _build(studio)
+    _paths, status = handlers["run"](
+        painter_value(*_images()), "вставь собаку", True, gen.MASK_MASK,
+        config.AppConfig().preset, 8, 12, True, -1, [], "ru", None, "rewritten cat", "вставь кота",
+        progress=_quiet,
+    )
+    assert recorder.captured.prompt == "rewritten cat" and "другому тексту" in status
+
+
+def test_a_filled_field_with_boost_off_is_ignored_and_said_so(painter_value, monkeypatch):
+    studio, recorder, calls = _boosting_studio(monkeypatch)
+    _studio, _components, handlers = _build(studio)
+    _paths, status = handlers["run"](
+        painter_value(*_images()), "вставь кота", False, gen.MASK_MASK,
+        config.AppConfig().preset, 8, 12, True, -1, [], "ru", None, "rewritten", "вставь кота",
+        progress=_quiet,
+    )
+    assert not calls and recorder.captured.prompt == "вставь кота" and "выключен" in status
+
+
+def test_the_rewritten_field_shows_only_with_boost_or_text():
+    _studio, _components, handlers = _build()
+    assert handlers["show_rewritten"](False, "")["visible"] is False
+    assert handlers["show_rewritten"](True, "")["visible"] is True
+    assert handlers["show_rewritten"](False, "текст")["visible"] is True
+
+
 def test_user_message_uses_the_given_tags():
     message = boost.build_user_message("вставь кота", 2, ["<image1>", "<image3>"])
     assert message.startswith("Input images: <image1> <image3>")
