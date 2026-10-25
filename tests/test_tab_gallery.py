@@ -300,7 +300,7 @@ def test_restore_video_fields_takes_the_values_of_the_video():
     "garbage",
     [
         {},
-        {"mode": "v2v", "resolution": "8k", "aspect": "5:1", "quality": "ultra", "seed": "x", "frames": "many"},
+        {"mode": "x2v", "resolution": "8k", "aspect": "5:1", "quality": "ultra", "seed": "x", "frames": "many"},
         {"mode": ["i2v"], "resolution": ["768p"], "aspect": {"a": 1}, "quality": ["high"], "seed": None,
          "frames": -48, "prompt": 42},
         {"frames": 0, "requested_seconds": 9999},

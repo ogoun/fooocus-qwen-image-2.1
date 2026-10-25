@@ -81,7 +81,8 @@ down to an 8 GB laptop.
   [FreeVideo](https://github.com/FlashML-org/FreeVideo) engine, from 8 GB of
   VRAM): text to video, first frame to video, first and last frame, and
   references (up to 9 images, 3 videos, 3 audio clips for characters, style
-  and voice). Duration in seconds up to a minute; drafts that finish without
+  and voice, each in its own tile labelled with its prompt tag), and **video to
+  video** — edit an existing video, keeping its framing and sound. Duration in seconds up to a minute; drafts that finish without
   regenerating; **Upscale** — a learned latent upscale (×1–4) that gives a
   larger frame without sampling the model at that size; "last frame → next
   shot"; and a **storyboard** that splits a

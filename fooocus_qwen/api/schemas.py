@@ -251,6 +251,9 @@ class VideoGenerateRequest(VideoSettings):
     last: ImageInput | None = Field(None, description="last frame (flf2v)")
     references: list[VideoReference] = Field([], max_length=video_request.MAX_IMAGES + video_request.MAX_VIDEOS
                                              + video_request.MAX_AUDIOS)
+    source: VideoReference | None = Field(
+        None, description="v2v: the video to edit (a gallery video or base64 with name); it becomes <Video 1>, "
+                          "the edit keeps its proportion and lasts no longer than it (at most 15 s)")
     boost: bool = Field(False, description="rewrite the prompt into an H3 prompt with the language model first")
     continue_from: str | None = Field(None, description="a gallery video to extend; the result is the whole video, source and new part joined")
     refine_from: str | None = Field(None, description="a gallery draft to finish without generating anew")
@@ -271,6 +274,7 @@ class VideoBoostRequest(Strict):
     last: ImageInput | None = None
     references: list[VideoReference] = Field([], max_length=video_request.MAX_IMAGES + video_request.MAX_VIDEOS
                                              + video_request.MAX_AUDIOS)
+    source: VideoReference | None = Field(None, description="v2v: the video to edit")
 
 
 class StoryboardRequest(Strict):

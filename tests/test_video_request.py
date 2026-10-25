@@ -90,7 +90,7 @@ def test_first_and_last_mode_needs_some_frame(tmp_path):
 
 def test_an_unknown_mode_is_refused(tmp_path):
     with pytest.raises(ValueError, match="Unknown video mode"):
-        _build(tmp_path, VideoRequest(prompt="x", mode="v2v"))
+        _build(tmp_path, VideoRequest(prompt="x", mode="x2v"))
 
 
 def test_frames_of_other_modes_are_ignored(tmp_path):
@@ -354,3 +354,54 @@ def test_an_impossible_upscale_is_refused_before_the_engine(tmp_path):
                                                                       width=8192, height=4608))
     with pytest.raises(ValueError, match="more than 4"):
         _build(tmp_path, request)
+
+
+# --- видео → видео ---
+
+
+class _Info:
+    def __init__(self, width=1280, height=720, seconds=6.0, has_audio=True):
+        self.width, self.height, self.seconds, self.has_audio = width, height, seconds, has_audio
+
+
+def _edit(tmp_path, info=None, **fields):
+    source = _file(tmp_path / "source.mp4")
+    request = VideoRequest(prompt="turn the dog into a fox", mode=prompt_h3.MODE_V2V, source_video=str(source),
+                           **fields)
+    info = info or _Info()
+    return video_request.build_job(request, tmp_path / "run", tmp_path / "runs",
+                                   video_has_audio=lambda path: info.has_audio, probe_video=lambda path: info)
+
+
+def test_the_source_video_is_video_1_with_its_sound(tmp_path):
+    face = Reference("image", str(_image(tmp_path / "fox.png")))
+    job, parameters = _edit(tmp_path, references=(face,))
+    assert [row["kind"] for row in job["media"]["references"]] == ["image", "video"]
+    assert parameters["labels"] == ["<Picture 1>", "<Audio 1>", "<Video 1>"]
+    prompt = job["prompts"][0]
+    assert "[video editing + audio reuse] The target video is an edited version of <Video 1>" in prompt
+    assert parameters["source_video"] == "source.mp4"
+
+
+def test_other_videos_are_dropped_in_video_to_video(tmp_path):
+    other = Reference("video", str(_file(tmp_path / "other.mp4")))
+    job, parameters = _edit(tmp_path, references=(other,))
+    assert [row["kind"] for row in job["media"]["references"]] == ["video"]
+    assert Path(job["media"]["references"][0]["path"]).name.endswith(".mp4")
+
+
+def test_the_edit_lasts_no_longer_than_its_source(tmp_path):
+    job, parameters = _edit(tmp_path, _Info(seconds=4.0), seconds=10.0)
+    assert parameters["seconds"] <= 4.0 + 1 / geometry.FPS
+    job, _ = _edit(tmp_path, _Info(seconds=40.0), seconds=40.0)
+    assert job["seconds"] <= geometry.SINGLE_MAX_SECONDS
+
+
+def test_the_edit_keeps_the_source_proportion(tmp_path):
+    job, _ = _edit(tmp_path, _Info(width=720, height=1280), aspect="16:9")
+    assert job["width"] < job["height"], "вертикальный исходник — вертикальный холст, выбор 16:9 не действует"
+
+
+def test_video_to_video_needs_a_source(tmp_path):
+    with pytest.raises(ValueError, match="source video"):
+        _build(tmp_path, VideoRequest(prompt="x", mode=prompt_h3.MODE_V2V))

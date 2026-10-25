@@ -3,8 +3,10 @@
 Компоновка — как у генерации: слева входы и результат, под ними промт и
 кнопка, справа режим, размер, длительность и качество. Режимов четыре, как у
 самой модели: текст → видео, первый кадр → видео, первый и последний кадр,
-референсы (персонажи, стиль, голос; картинки, видео и звук). Видны только
-входы выбранного режима.
+референсы (персонажи, стиль, голос; картинки, видео и звук), и правка
+готового ролика — «видео → видео» (Ref2VA с исходником ``<Video 1>``).
+Видны только входы выбранного режима; референсы — плитками со своими
+метками (``ui.video_refs``).
 
 Автоматизация — по «Вайб-монтажу с ИИ» (docs/research/2026-10-19-video-freevideo.md):
 
@@ -38,16 +40,17 @@ from ..video.request import (
     QUALITY,
     Reference,
     VideoRequest,
+    edit_seconds,
     kind_of,
 )
-from . import layout, prompt_library
+from . import layout, prompt_library, video_refs
 from .i18n import Localizer, T, pick, say, sentences
 from .state import GPU_CONCURRENCY_ID, describe_failure
 from .tab_edit import chosen_path
 
 LOGGER = logging.getLogger(__name__)
 
-MODES = (prompt_h3.MODE_T2V, prompt_h3.MODE_I2V, prompt_h3.MODE_FLF2V, prompt_h3.MODE_REF)
+MODES = prompt_h3.MODES
 
 
 # Подписи режимов и уровней — ключами таблицы, а не собранными строкой:
@@ -57,6 +60,7 @@ MODE_LABELS = {
     prompt_h3.MODE_I2V: "video_mode_i2v",
     prompt_h3.MODE_FLF2V: "video_mode_flf2v",
     prompt_h3.MODE_REF: "video_mode_ref",
+    prompt_h3.MODE_V2V: "video_mode_v2v",
 }
 UPSCALE_LABELS = {
     geometry.UPSCALE_MULTIPLIER: "video_upscale_multiplier",
@@ -139,13 +143,24 @@ def lora_paths(names, strength) -> tuple[tuple[str, float], ...]:
 
 
 def visibility(mode: str) -> tuple:
-    """Какие входы видны: первый кадр, последний кадр, референсы и подпись их меток."""
+    """Какие кадры видны: первый и последний. Плитки референсов — ``video_refs.view``."""
     return (
         gr.update(visible=mode in (prompt_h3.MODE_I2V, prompt_h3.MODE_FLF2V)),
         gr.update(visible=mode == prompt_h3.MODE_FLF2V),
-        gr.update(visible=mode == prompt_h3.MODE_REF),
-        gr.update(visible=mode == prompt_h3.MODE_REF),
     )
+
+
+def source_info(path):
+    """Размер и длительность исходного ролика; ``None`` — нет файла или он нечитаем."""
+    path = video_refs._path(path)
+    if not path:
+        return None
+    try:
+        from ..video import assemble
+
+        return assemble.probe(path)
+    except Exception:  # noqa: BLE001 — нечитаемый ролик: холст и длительность по полям
+        return None
 
 
 def references_from(files) -> tuple[Reference, ...]:
@@ -160,12 +175,23 @@ def references_from(files) -> tuple[Reference, ...]:
 
 
 def describe_size(mode, resolution, aspect, seconds, first, last, lang: str,
-                  upscale: geometry.Upscale | None = None, quality: str | None = None) -> str:
-    """Строка под ползунком: холст, кадры, фактическая длительность, части и размер после апскейла."""
-    anchor = first if mode in (prompt_h3.MODE_I2V, prompt_h3.MODE_FLF2V) else None
-    anchor = anchor or (last if mode == prompt_h3.MODE_FLF2V else None)
-    width, height = geometry.canvas(resolution, aspect, anchor.size if anchor is not None else None)
-    duration = geometry.duration(float(seconds or geometry.MIN_SECONDS))
+                  upscale: geometry.Upscale | None = None, quality: str | None = None, source=None) -> str:
+    """Строка под ползунком: холст, кадры, фактическая длительность, части и размер после апскейла.
+
+    Правка ролика берёт пропорцию и предел длительности у исходника
+    (``source`` — путь к нему), как ``request.build_job``.
+    """
+    requested = float(seconds or geometry.MIN_SECONDS)
+    if mode == prompt_h3.MODE_V2V:
+        info = source_info(source)
+        size = (info.width, info.height) if info else None
+        width, height = geometry.canvas(resolution, geometry.FOLLOW_IMAGE if size else aspect, size)
+        duration = geometry.duration(edit_seconds(requested, info.seconds if info else None))
+    else:
+        anchor = first if mode in (prompt_h3.MODE_I2V, prompt_h3.MODE_FLF2V) else None
+        anchor = anchor or (last if mode == prompt_h3.MODE_FLF2V else None)
+        width, height = geometry.canvas(resolution, aspect, anchor.size if anchor is not None else None)
+        duration = geometry.duration(requested)
     key = "video_size_parts" if duration.seconds > geometry.SINGLE_MAX_SECONDS else "video_size"
     line = say(key, lang, width=width, height=height, frames=duration.frames, seconds=duration.label)
     if upscale is None:
@@ -180,44 +206,6 @@ def describe_size(mode, resolution, aspect, seconds, first, last, lang: str,
         return sentences(line, say("video_size_upscale_draft", lang, width=size[0], height=size[1]))
     factor = max(size[0] / width, size[1] / height)
     return sentences(line, say("video_size_upscaled", lang, width=size[0], height=size[1], factor=f"{factor:.2f}"))
-
-
-def reference_note(files, lang: str) -> str:
-    """Метки референсов для промта: какой файл каким тегом звать."""
-    references = references_from(files)
-    if not references:
-        return say("video_refs_empty", lang)
-    from ..video.request import engine_references
-
-    # Нумерация — порядком подачи модели: картинки, видео (дорожка видео
-    # получает свою метку <Audio j>), затем отдельные звуки.
-    counters = {"image": 0, "video": 0, "audio": 0}
-    pairs = []
-    for item in engine_references(references):
-        name = Path(item.path).name
-        if item.kind == "image":
-            counters["image"] += 1
-            pairs.append(f"`<Picture {counters['image']}>` — {name}")
-        elif item.kind == "video":
-            counters["video"] += 1
-            label = f"`<Video {counters['video']}>`"
-            if _has_audio(item.path):
-                counters["audio"] += 1
-                label += f" + `<Audio {counters['audio']}>`"
-            pairs.append(f"{label} — {name}")
-        else:
-            counters["audio"] += 1
-            pairs.append(f"`<Audio {counters['audio']}>` — {name}")
-    return say("video_refs_labels", lang, labels="; ".join(pairs))
-
-
-def _has_audio(path: str) -> bool:
-    try:
-        from ..video import assemble
-
-        return assemble.probe(path).has_audio
-    except Exception:  # noqa: BLE001 — нечитаемый файл: метку дорожки не обещаем
-        return False
 
 
 def build(studio, localizer: Localizer, language=None) -> dict:
@@ -242,13 +230,9 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                                  sources=["upload", "clipboard"], buttons=["fullscreen"]),
                         label=T["video_last"],
                     )
-                    references = localizer.bind(
-                        gr.File(label=pick("video_refs", lang), file_count="multiple", visible=False,
-                                file_types=["image", "video", "audio"]),
-                        label=T["video_refs"],
-                    )
-                    refs_note = gr.Markdown(say("video_refs_empty", lang), visible=False,
-                                            elem_classes=[layout.VIDEO_NOTE])
+                    tiles = video_refs.build(lang)
+                    references = tiles.state
+                    source = tiles.source
                 result = localizer.bind(
                     gr.Video(label=pick("video_result", lang), interactive=False, loop=True,
                              elem_classes=[layout.VIDEO_BOARD], scale=3),
@@ -452,16 +436,27 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         return note, button, say("video_install_done", lang)
 
     def update_size(mode_value, resolution_value, aspect_value, seconds_value, first_image, last_image,
-                    quality_value, use_upscale, upscale_mode_value, factor, width, height, megapixels, lang):
+                    quality_value, use_upscale, upscale_mode_value, factor, width, height, megapixels, lang,
+                    source_value=None):
         upscale = upscale_from(use_upscale, upscale_mode_value, factor, width, height, megapixels)
         return describe_size(mode_value, resolution_value, aspect_value, seconds_value, first_image, last_image,
-                             lang, upscale=upscale, quality=quality_value)
+                             lang, upscale=upscale, quality=quality_value, source=source_value)
+
+    def source_loaded(source_value, lang):
+        """Исходник правки задаёт длительность: ползунок — на его длину, но не больше 15 с."""
+        info = source_info(source_value)
+        if info is None:
+            return gr.update(), gr.update()
+        seconds_value = edit_seconds(geometry.SINGLE_MAX_SECONDS, info.seconds)
+        return seconds_value, say("video_source_loaded", lang, seconds=f"{info.seconds:.2f}",
+                                  used=f"{geometry.duration(seconds_value).seconds:.2f}")
 
     def change_mode(mode_value):
         return visibility(mode_value)
 
     def request_from(prompt_text, mode_value, resolution_value, aspect_value, seconds_value, seed_value,
-                     quality_value, first_image, last_image, files, lora_names, strength, **changes):
+                     quality_value, first_image, last_image, files, lora_names, strength, source_value=None,
+                     **changes):
         loras = lora_paths(lora_names, strength)
         values = dict(
             prompt=prompt_text or "",
@@ -474,7 +469,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             quality=quality_value,
             first=first_image,
             last=last_image,
-            references=references_from(files) if mode_value == prompt_h3.MODE_REF else (),
+            references=references_from(files) if mode_value in prompt_h3.REF_MODES else (),
+            source_video=video_refs._path(source_value) if mode_value == prompt_h3.MODE_V2V else None,
             loras=loras,
         )
         values.update(changes)
@@ -510,33 +506,47 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             line = sentences(line, say("video_draft_hint", lang))
         return str(path), sentences(message, line), str(path), gr.update(visible=draft)
 
-    def boost_text(prompt_text, mode_value, seconds_value, aspect_value, first_image, last_image, files, lang):
+    def boost_text(prompt_text, mode_value, seconds_value, aspect_value, first_image, last_image, files, lang,
+                   source_value=None):
         """Промт H3 языковой моделью: ``(текст, сообщение)``."""
-        references = references_from(files) if mode_value == prompt_h3.MODE_REF else ()
+        references = references_from(files) if mode_value in prompt_h3.REF_MODES else ()
+        duration = geometry.duration(float(seconds_value))
+        if mode_value == prompt_h3.MODE_V2V:
+            from ..video.request import edit_references
+
+            info = source_info(source_value)
+            references = edit_references(VideoRequest(prompt="", source_video=video_refs._path(source_value),
+                                                      references=references))
+            duration = geometry.duration(edit_seconds(float(seconds_value), info.seconds if info else None))
         return studio.boost_video(
-            prompt_text, mode_value, geometry.duration(float(seconds_value)), references,
+            prompt_text, mode_value, duration, references,
             first_image if mode_value in (prompt_h3.MODE_I2V, prompt_h3.MODE_FLF2V) else None,
             last_image if mode_value == prompt_h3.MODE_FLF2V else None,
             aspect_value, lang,
         )
 
-    def rewrite(prompt_text, mode_value, seconds_value, aspect_value, first_image, last_image, files, lang):
+    def rewrite(prompt_text, mode_value, seconds_value, aspect_value, first_image, last_image, files, lang,
+                source_value):
+        if mode_value == prompt_h3.MODE_V2V and not video_refs._path(source_value):
+            return gr.update(), gr.update(), say("video_source_required", lang)
         text, message = boost_text(prompt_text, mode_value, seconds_value, aspect_value, first_image,
-                                   last_image, files, lang)
+                                   last_image, files, lang, source_value)
         return text or gr.update(), gr.update(value=bool(text)), message
 
     def run(prompt_text, boosted_text, use_boost, mode_value, resolution_value, aspect_value, seconds_value,
             seed_value, quality_value, first_image, last_image, files, lora_names, strength,
-            use_upscale, upscale_mode_value, factor, width, height, megapixels, lang,
+            use_upscale, upscale_mode_value, factor, width, height, megapixels, lang, source_value=None,
             progress=gr.Progress()):
         try:
             stop_requested.clear()
             message = ""
+            if mode_value == prompt_h3.MODE_V2V and not video_refs._path(source_value):
+                return gr.update(), say("video_source_required", lang), gr.update(), gr.update(), gr.update()
             effective = (boosted_text or "").strip() if use_boost else ""
             if use_boost and not effective:
                 progress(0, desc=say("video_boosting", lang))
                 effective, message = boost_text(prompt_text, mode_value, seconds_value, aspect_value,
-                                                first_image, last_image, files, lang)
+                                                first_image, last_image, files, lang, source_value)
             elif not use_boost and prompt_text and prompt_h3.off_language(prompt_text):
                 # H3 учили на английских описаниях (реплики — на любом языке).
                 # Ролик всё равно снимется, но человек должен знать, почему
@@ -546,7 +556,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 return gr.update(), say("video_prompt_required", lang), gr.update(), gr.update(), gr.update()
             request = request_from(effective or prompt_text, mode_value, resolution_value, aspect_value,
                                    seconds_value, seed_value, quality_value, first_image, last_image, files,
-                                   lora_names, strength, prompt_original=prompt_text or "",
+                                   lora_names, strength, source_value, prompt_original=prompt_text or "",
                                    upscale=upscale_from(use_upscale, upscale_mode_value, factor, width, height,
                                                         megapixels))
             progress(0, desc=say("video_starting", lang))
@@ -664,7 +674,11 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     upscale_inputs = [upscale_enabled, upscale_mode, upscale_factor, upscale_width, upscale_height,
                       upscale_megapixels]
-    size_inputs = [mode, resolution, aspect, seconds, first, last, quality, *upscale_inputs, language]
+    size_inputs = [mode, resolution, aspect, seconds, first, last, quality, *upscale_inputs, language, source]
+    # Исходник правки сначала ставит ползунок на свою длину, подпись — после.
+    source.change(source_loaded, [source, language], [seconds, status], queue=False,
+                  show_progress="hidden").then(update_size, size_inputs, size_note, queue=False,
+                                               show_progress="hidden")
     for trigger in (mode.change, resolution.change, aspect.change, seconds.release, first.change, last.change,
                     quality.change, upscale_enabled.change, upscale_mode.change, upscale_factor.release,
                     upscale_width.change, upscale_height.change, upscale_megapixels.release):
@@ -673,8 +687,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         trigger(upscale_visibility, [upscale_enabled, upscale_mode],
                 [upscale_box, upscale_factor_box, upscale_dims, upscale_mp_box], queue=False,
                 show_progress="hidden")
-    mode.change(change_mode, mode, [first, last, references, refs_note], queue=False, show_progress="hidden")
-    references.change(reference_note, [references, language], refs_note, queue=False, show_progress="hidden")
+    mode.change(change_mode, mode, [first, last], queue=False, show_progress="hidden")
+    video_refs.wire(tiles, mode, language)
 
     def show_rewritten(enabled, text):
         return gr.update(visible=bool(enabled) or bool((text or "").strip()))
@@ -682,11 +696,11 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     for trigger in (boost_enabled.change, boosted.change):
         trigger(show_rewritten, [boost_enabled, boosted], boosted, queue=False, show_progress="hidden")
 
-    boost_inputs = [prompt, mode, seconds, aspect, first, last, references, language]
+    boost_inputs = [prompt, mode, seconds, aspect, first, last, references, language, source]
     boost_now.click(rewrite, boost_inputs, [boosted, boost_enabled, status])
 
     run_inputs = [prompt, boosted, boost_enabled, mode, resolution, aspect, seconds, seed, quality,
-                  first, last, references, loras, lora_strength, *upscale_inputs, language]
+                  first, last, references, loras, lora_strength, *upscale_inputs, language, source]
     run_button.click(run, run_inputs, [result, status, last_result, finish, boosted],
                      concurrency_id=GPU_CONCURRENCY_ID)
     stop_button.click(stop, language, status, queue=False)
@@ -724,6 +738,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         "first": first,
         "last": last,
         "references": references,
+        "reference_tiles": tiles.images,
+        "source": source,
         "result": result,
         "status": status,
         "last_result": last_result,
@@ -745,30 +761,36 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 def send_to_video(produced, selected, mode_value, first_image, files, lang: str) -> tuple:
     """«В видео» с вкладок изображений: картинка — в нужный вход по режиму.
 
-    Режим референсов — картинка добавляется к референсам. Первый и
-    последний кадр — в последний, если первый уже есть. Иначе — первым
-    кадром, и режим «текст → видео» сам переключается на «кадр → видео»:
-    человек отправил кадр, значит, хочет ролик от него.
-    Выходы: режим, первый кадр, последний кадр, референсы, строка состояния.
+    Режимы с референсами — картинка ложится в первую свободную плитку
+    картинки. Первый и последний кадр — в последний, если первый уже есть.
+    Иначе — первым кадром, и режим «текст → видео» сам переключается на
+    «кадр → видео»: человек отправил кадр, значит, хочет ролик от него.
+    Выходы: режим, первый кадр, последний кадр, плитки картинок, строка
+    состояния.
     """
     from PIL import Image
 
     keep = gr.update()
+    tiles = [keep] * video_refs.MAX_IMAGES
     path = chosen_path(produced, selected)
     if path is None:
-        return keep, keep, keep, keep, say("nothing_to_send", lang)
-    if mode_value == prompt_h3.MODE_REF:
-        current = [item for item in (files or []) if item]
-        paths = [item if isinstance(item, str) else getattr(item, "path", None) or item.name for item in current]
-        return keep, keep, keep, gr.update(value=[*paths, path], visible=True), say("video_sent_reference", lang)
+        return keep, keep, keep, *tiles, say("nothing_to_send", lang)
+    if mode_value in prompt_h3.REF_MODES:
+        index, _values = video_refs.place_image(files, path)
+        if index is None:
+            return keep, keep, keep, *tiles, say("video_refs_full", lang)
+        # Плитка уже видна: пустая плитка картинки всегда одна на виду, а
+        # занятые видны и так; её колонку откроет ``video_refs.refresh``.
+        tiles[index] = gr.update(value=path)
+        return keep, keep, keep, *tiles, say("video_sent_reference", lang)
     with Image.open(path) as opened:
         image = opened.convert("RGB")
     # Видимость — в том же ответе: поле, скрытое в момент записи, значение не
     # рисует, а смена режима открыла бы его только следующим событием.
     if mode_value == prompt_h3.MODE_FLF2V and first_image is not None:
-        return keep, keep, gr.update(value=image, visible=True), keep, say("video_sent_last", lang)
+        return keep, keep, gr.update(value=image, visible=True), *tiles, say("video_sent_last", lang)
     target_mode = prompt_h3.MODE_I2V if mode_value == prompt_h3.MODE_T2V else mode_value
-    return target_mode, gr.update(value=image, visible=True), keep, keep, say("video_sent_first", lang)
+    return target_mode, gr.update(value=image, visible=True), keep, *tiles, say("video_sent_first", lang)
 
 
 def open_video_tab():

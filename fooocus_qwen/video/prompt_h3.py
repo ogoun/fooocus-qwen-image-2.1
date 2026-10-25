@@ -38,7 +38,14 @@ MODE_I2V = "i2v"
 # другая строка выравнивания.
 MODE_FLF2V = "flf2v"
 MODE_REF = "ref"
-MODES: tuple[str, ...] = (MODE_T2V, MODE_I2V, MODE_FLF2V, MODE_REF)
+# Видео → видео: правка исходного ролика. Отдельного чекпойнта у H3 нет —
+# это Ref2VA, где исходник подан как <Video 1>, а промт начинается словами
+# «The target video is an edited version of <Video 1>» (официальный гайд
+# Ref2VA, тип задачи video editing; docs/research/2026-10-25-video-v2v.md).
+MODE_V2V = "v2v"
+MODES: tuple[str, ...] = (MODE_T2V, MODE_I2V, MODE_FLF2V, MODE_REF, MODE_V2V)
+# Режимы с шестью секциями Ref2VA.
+REF_MODES: tuple[str, ...] = (MODE_REF, MODE_V2V)
 # Не режим генерации, а системный промт раскадровки (``storyboard``).
 STORYBOARD = "storyboard"
 
@@ -61,6 +68,9 @@ REF_FIELDS: tuple[str, ...] = (
     "overall_soundscape",
     "non_diegetic_music",
 )
+
+# Начало сводки при правке ролика — дословно из гайда Ref2VA.
+EDIT_SENTENCE = "The target video is an edited version of <Video 1>"
 
 # Шаблоны строк выравнивания — дословно из официального гайда. У FL2VA метки
 # без угловых скобок, у I2VA и L2VA со скобками: это расхождение первоисточника,
@@ -99,6 +109,7 @@ _PROMPT_FILES = {
     MODE_I2V: "video_system_i2v.md",
     MODE_FLF2V: "video_system_flf2v.md",
     MODE_REF: "video_system_ref.md",
+    MODE_V2V: "video_system_ref.md",
     STORYBOARD: "video_system_storyboard.md",
 }
 
@@ -326,14 +337,29 @@ def _wrap_base(text: str, mode: str, has_first: bool, has_last: bool) -> str:
     )
 
 
-def _wrap_ref(text: str, labels: Sequence[str]) -> str:
+def _source_audio(labels: Sequence[str]) -> str | None:
+    """Метка дорожки исходного ролика: она стоит сразу перед ``<Video 1>``."""
+    labels = list(labels)
+    if "<Video 1>" not in labels:
+        return None
+    index = labels.index("<Video 1>")
+    return labels[index - 1] if index and labels[index - 1].startswith("<Audio") else None
+
+
+def _wrap_ref(text: str, labels: Sequence[str], editing: bool = False) -> str:
     """Свободный текст → шесть секций Ref2VA с минимально корректными определениями.
 
     Изображение по умолчанию задаёт персонажа, предмет или стиль, а не кадр:
     по гайду такое изображение не получает отдельной строки, а цитируется в
     определении ``<Subject N>``. Референс без упоминания не работает, поэтому
     каждая метка, которой нет в тексте, получает фразу в описании.
+
+    ``editing`` — правка ролика (``MODE_V2V``): ``<Video 1>`` — исходник,
+    его дорожка звучит как есть (``audio reuse``), сводка начинается с
+    ``EDIT_SENTENCE``.
     """
+    if editing:
+        return _wrap_edit(text, labels)
     shots = _shot_list(text)
     definitions: list[str] = []
     retention: list[str] = []
@@ -382,6 +408,61 @@ def _wrap_ref(text: str, labels: Sequence[str]) -> str:
     return "\n\n".join(f"{name}:\n{content}" for name, content in sections)
 
 
+def _wrap_edit(text: str, labels: Sequence[str]) -> str:
+    """Свободный текст → шесть секций правки ролика (Ref2VA, тип video editing)."""
+    shots = _shot_list(text)
+    sound = _source_audio(labels)
+    definitions = ["<Video 1> is the source video being edited."]
+    retention = [
+        "<Video 1> (source video): partially_preserved - everything the edit does not change is retained: "
+        "framing, camera movement, timing, subjects and lighting."
+    ]
+    mentions: list[str] = []
+    if sound:
+        definitions.append(f"{sound} is the original sound track of <Video 1>.")
+        retention.append(f"{sound}: fully_copy - the original sound of <Video 1> is kept.")
+        mentions.append(f"The original sound {sound} of <Video 1> continues unchanged.")
+    named: list[str] = []
+    subject = 0
+    for label in labels:
+        if label in ("<Video 1>", sound):
+            continue
+        match = _LABEL.fullmatch(label)
+        kind = match.group(1) if match else ""
+        if kind == "Picture":
+            subject += 1
+            own = f"<Subject {subject}>"
+            definitions.append(f"{own} is the visible content of {label}, brought into <Video 1> by the edit.")
+            retention.append(f"{own} (appears in {shots}): fully_preserved - its referenced appearance is retained.")
+            named.append(own)
+            if own not in text and label not in text:
+                mentions.append(f"{own} appears with the appearance referenced from {label}.")
+        elif kind:
+            definitions.append(f"{label} is a reference whose character guides the edit.")
+            retention.append(f"{label}: reference - it guides the edit without being copied.")
+            named.append(label)
+            if label not in text:
+                mentions.append(f"The edit follows {label}.")
+    task = "[video editing + audio reuse]" if sound else "[video editing]"
+    summary = f"{task} {EDIT_SENTENCE}"
+    summary += f", using {', '.join(named)}." if named else "."
+    body = text.strip()
+    if "<Video 1>" not in body:
+        body = f"In <Video 1>, {body[:1].lower()}{body[1:]}" if body else "<Video 1> plays as it is."
+    if body[-1] not in ".!?":
+        body += "."
+    description = _as_shot(" ".join([body, *mentions]).strip())
+    sections = (
+        ("subject_definitions", "\n".join(definitions)),
+        ("summary", summary),
+        ("retention_analysis", "\n".join(retention)),
+        ("detailed_description", f"The target video keeps the look of <Video 1> except for the edit.\n{description}"),
+        ("overall_soundscape", "The original sound of <Video 1> continues unchanged." if sound else DEFAULT_SOUNDSCAPE),
+        ("non_diegetic_music", DEFAULT_MUSIC),
+    )
+    return "\n\n".join(f"{name}:\n{content}" for name, content in sections)
+
+
 def compose(
     text: str,
     mode: str,
@@ -400,7 +481,8 @@ def compose(
     _check_mode(mode)
     body = _strip_service_lines(text or "")
     if not is_structured(body):
-        body = _wrap_ref(body, labels) if mode == MODE_REF else _wrap_base(body, mode, has_first, has_last)
+        body = (_wrap_ref(body, labels, editing=mode == MODE_V2V) if mode in REF_MODES
+                else _wrap_base(body, mode, has_first, has_last))
     line = alignment_line(mode, duration, has_first, has_last, last_shot=_last_shot(body))
     return "\n\n".join([*([line] if line else []), body, NEGATIVE_LINE])
 
@@ -437,7 +519,7 @@ def off_language(prompt: str) -> bool:
 
 def _check_fields(text: str, mode: str, found: list[tuple[str, int]], contents: dict[str, str]) -> list[str]:
     problems: list[str] = []
-    expected = REF_FIELDS if mode == MODE_REF else BASE_FIELDS
+    expected = REF_FIELDS if mode in REF_MODES else BASE_FIELDS
     names = [name for name, _ in found]
     for name in dict.fromkeys(names):
         if name not in expected:
@@ -582,14 +664,16 @@ def check(
         return ["Prompt is empty"]
     actual = _as_duration(duration)
     found, contents = _sections(text)
-    main = contents.get("detailed_description" if mode == MODE_REF else "integrated_multimodal_description", "")
+    main = contents.get("detailed_description" if mode in REF_MODES else "integrated_multimodal_description", "")
 
     problems = _check_fields(text, mode, found, contents)
     problems += _check_alignment(text, mode, actual, has_first, has_last)
     problems += _check_timeline(main, actual)
     problems += _check_dialogue(main, actual)
-    if mode == MODE_REF:
+    if mode in REF_MODES:
         problems += _check_labels(contents, labels)
+    if mode == MODE_V2V and EDIT_SENTENCE not in contents.get("summary", ""):
+        problems.append(f"Video editing: summary must say \"{EDIT_SENTENCE}.\"")
     for match in _CLOUD.finditer(text):
         problems.append(f"Cloud syntax '{match.group(0)}' is not understood locally; use <Picture N>, <Video N>, <Audio N>")
     if off_language(text):
@@ -650,6 +734,14 @@ def _mode_line(mode: str, has_first: bool, has_last: bool) -> str:
         return "Mode: T2VA (text only, no reference frames)."
     if mode == MODE_REF:
         return "Mode: Ref2VA (full-reference mode, six sections)."
+    if mode == MODE_V2V:
+        return (
+            "Mode: Ref2VA video editing (six sections). <Video 1> is the source video and the task type is "
+            "video editing: the summary begins with \"[video editing]\" — \"[video editing + audio reuse]\" when "
+            f"<Video 1> has its own sound track among the labels and the idea keeps it — then \"{EDIT_SENTENCE}.\" "
+            "Change only what the idea asks for; refer to everything else by <Video 1> instead of describing it "
+            "again. The timeline follows <Video 1>."
+        )
     if mode == MODE_FLF2V and has_first and has_last:
         return "Mode: FL2VA (Picture 1 is the first frame, Picture 2 is the last frame)."
     if mode == MODE_FLF2V and has_last:
@@ -684,8 +776,13 @@ def build_boost_message(
     has_first: bool = False,
     has_last: bool = False,
     aspect: str = geometry.DEFAULT_ASPECT,
+    source_frames: int = 0,
 ) -> str:
     """Сообщение пользователя для переписывателя: условия ролика и сама идея.
+
+    ``source_frames`` — сколько первых картинок запроса — кадры исходного
+    ролика правки: видео языковая модель не принимает, а описывать правку,
+    не видя исходника, значит выдумывать его.
 
     Длительность — фактическая, с кадрами: модель считает тайм-коды от неё,
     и «5 секунд» без пояснения дали бы строку выравнивания с 5.00.
@@ -707,6 +804,11 @@ def build_boost_message(
         note = " (the last frame belongs to the final shot: put its number there)" if has_last else ""
         lines.append(f"First line, verbatim{note}:\n{line}")
     lines.append(aspect_line(aspect))
+    if source_frames:
+        lines.append(
+            f"Attached images: the first {source_frames} are frames of <Video 1> at its start, middle and end; "
+            "the rest are the reference pictures in label order. Use the frames to see what <Video 1> shows."
+        )
     if labels:
         lines.append(
             f"Reference labels, exactly as numbered: {', '.join(labels)}. Mention every label where it applies; "
@@ -766,6 +868,7 @@ def boost(
     has_last: bool = False,
     aspect: str = geometry.DEFAULT_ASPECT,
     images: list[Image.Image] | None = None,
+    source_frames: int = 0,
 ) -> BoostedVideoPrompt:
     """Переписывает идею в промт H3; картинки — подспорье, а не условие.
 
@@ -775,14 +878,17 @@ def boost(
     с пометкой ``BLIND_NOTE``.
     """
     system = system_prompt(mode, prompt_dir)
-    user = build_boost_message(text, mode, duration, labels, has_first, has_last, aspect)
+    user = build_boost_message(text, mode, duration, labels, has_first, has_last, aspect,
+                               source_frames if images else 0)
     skipped = False
     if images:
         try:
             answer = _ask(client, system, user, images)
         except LlmImagesRejected as error:
             LOGGER.warning("Language model rejected the images, rewriting the video prompt from text only: %s", error)
-            answer = _ask(client, system, user + BLIND_NOTE, None)
+            # Без картинок нет и кадров исходника: строка о них солгала бы.
+            blind = build_boost_message(text, mode, duration, labels, has_first, has_last, aspect)
+            answer = _ask(client, system, blind + BLIND_NOTE, None)
             skipped = True
     else:
         answer = _ask(client, system, user, None)

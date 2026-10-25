@@ -405,3 +405,23 @@ def test_upscale_settings_reach_the_request_and_bad_sizes_are_refused(api):
     assert refused.status_code == 400 and "more than 4" in refused.text
     too_much = api.post("/api/v1/video", json={"prompt": "A fox.", "upscale": {"factor": 5}})
     assert too_much.status_code == 422
+
+
+def test_video_to_video_edits_the_source_as_video_1(api, monkeypatch):
+    previous = make_video(api)["video"]["path"]
+    monkeypatch.setattr(assemble, "probe", lambda path: assemble.MediaInfo(720, 1280, 24.0, 96, 4.0, True))
+    body = make_video(api, mode="v2v", prompt="Turn the fox into a wolf.", seconds=10.0,
+                      source={"gallery": previous},
+                      references=[{"base64": png_base64(), "kind": "image"}])
+    job = api.engine.jobs[-1]
+    assert [row["kind"] for row in job["media"]["references"]] == ["image", "video"]
+    assert job["width"] < job["height"], "холст — в пропорции исходника"
+    assert job["seconds"] <= 4.0
+    assert body["video"]["parameters"]["labels"] == ["<Picture 1>", "<Audio 1>", "<Video 1>"]
+    assert "edited version of <Video 1>" in body["prompt"]
+
+    missing = api.post("/api/v1/video", json={"prompt": "x", "mode": "v2v"})
+    assert missing.status_code == 400 and "source" in missing.json()["detail"]
+    picture = api.post("/api/v1/video", json={"prompt": "x", "mode": "v2v",
+                                              "source": {"base64": png_base64(), "kind": "image"}})
+    assert picture.status_code == 400 and "video is needed" in picture.json()["detail"]

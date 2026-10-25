@@ -208,6 +208,49 @@ footer { display: none !important; }
     margin: 0 !important;
 }
 
+/* Плитки референсов ролика: картинки по две в ряд, видео и звук — во всю
+   ширину колонки. Высота фиксирована и мала: пустая плитка одна на вид, но
+   заполненные копятся, и колонка не должна расти выше плеера в разы. */
+.qs-videorefs {
+    gap: 6px !important;
+}
+
+.qs-videotile,
+.qs-videosource {
+    min-width: 0 !important;
+    /* Надпись «перетащите сюда» в узкой плитке: шрифт Gradio по
+       умолчанию (--text-lg) переполнял её высоту. */
+    --text-lg: 12px;
+    --text-md: 12px;
+    --size-5: 14px;
+}
+
+.qs-videotile [data-testid="audio"],
+.qs-videotile .audio-container {
+    min-height: 0 !important;
+    max-height: 110px !important;
+}
+
+.qs-videotile .image-container,
+.qs-videotile .video-container,
+.qs-videotile [data-testid="image"],
+.qs-videotile [data-testid="video"] {
+    height: 110px !important;
+    min-height: 0 !important;
+}
+
+.qs-videotile img,
+.qs-videotile video {
+    object-fit: contain !important;
+    max-height: 110px !important;
+}
+
+.qs-videosource .video-container,
+.qs-videosource [data-testid="video"] {
+    height: 160px !important;
+    min-height: 0 !important;
+}
+
 /* --- сетка референсов ----------------------------------------------------- */
 
 /* Строка «сетка и результат»: сетка держит свою ширину, поле результата

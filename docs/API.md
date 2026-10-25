@@ -221,14 +221,15 @@ loads again with the next image job.
 | Field | Default | Meaning |
 |---|---|---|
 | `prompt` | required, except with `continue_from`/`refine_from` | the scene in plain English, or a ready H3 prompt. The timing line and reference labels are added automatically. H3 was trained on English descriptions; spoken lines may be in any language |
-| `mode` | `t2v` | `t2v` text to video, `i2v` first frame to video, `flf2v` first and last frame, `ref` references (characters, style, voice) |
+| `mode` | `t2v` | `t2v` text to video, `i2v` first frame to video, `flf2v` first and last frame, `ref` references (characters, style, voice), `v2v` edit a video (`source`) |
 | `resolution` | `480p` | area class: `480p` (864×480), `576p` (1024×576), `768p` (1344×768, H3's native size). Portrait and square frames keep the same area |
 | `aspect` | `16:9` | `16:9`, `9:16`, `1:1`, `4:3`, `3:4`, `21:9`, or `image` to follow the first frame |
 | `seconds` | `5` | 1.625–60. Snapped up to H3's frame grid (17n+5 frames at 24 fps); over 15 s the video is made in parts with seamless continuation |
 | `seed` | `-1` | `-1` is random |
 | `quality` | `light` | `draft` (half-size first pass, finish it later with `refine_from`), `light`, `medium`, `high`, `max`; slower to the right |
 | `first`, `last` | `null` | frames, in any image form from [Conventions](#conventions). `first` is used by `i2v` and `flf2v`, `last` by `flf2v`; frames are cropped to the canvas, not stretched. A gallery video gives its last frame |
-| `references` | `[]` | `ref` mode only: up to 9 images, 3 videos and 3 audio files. Each is `{"kind": "image"\|"video"\|"audio", "base64": "…"}` or `{"gallery": "2026-10-19/12-00-00.png"}`; `"name": "voice.mp3"` gives the file type when `kind` is left out. A sound needs at least one image or video |
+| `source` | `null` | `v2v` only: the video to edit, `{"gallery": "2026-10-19/12-00-00.mp4"}` or `{"base64": "…", "name": "clip.mp4"}`. It becomes `<Video 1>` (with its sound as an `<Audio N>` before it); the edit keeps its proportion — `aspect` is ignored — and lasts no longer than it, at most 15 s. Without it `v2v` is a `400` |
+| `references` | `[]` | `ref` and `v2v` (images and sounds only; other videos are ignored with a note): up to 9 images, 3 videos and 3 audio files. Each is `{"kind": "image"\|"video"\|"audio", "base64": "…"}` or `{"gallery": "2026-10-19/12-00-00.png"}`; `"name": "voice.mp3"` gives the file type when `kind` is left out. A sound needs at least one image or video |
 | `loras` | `[]` | `[{"name": "my-motion", "strength": 0.8}]`, files from `GET /video/loras` (the `loras/video` folder), strength −2…2 |
 | `boost` | `false` | rewrite the prompt into an H3 prompt with the language model first. It sees the frames and image references |
 | `continue_from` | `null` | a gallery video to extend. The new part continues its last moments, and the result is the whole video: the source and the new part joined. `prompt`, `seconds` and `seed` default to the source's; give them to change the next part. By default the new part is as long as the source's last part, at most 15 s |
@@ -272,7 +273,7 @@ engine's label). `DELETE /jobs/{id}` and `POST /interrupt` stop the engine.
 
 | Endpoint | Body | Answer |
 |---|---|---|
-| `POST /api/v1/video/boost` | `{"prompt", "mode", "seconds", "aspect", "first", "last", "references"}` | `{"prompt", "message"}`, the H3 prompt. Needs the language model; `502` if it fails |
+| `POST /api/v1/video/boost` | `{"prompt", "mode", "seconds", "aspect", "first", "last", "references", "source"}` | `{"prompt", "message"}`, the H3 prompt. Needs the language model; `502` if it fails |
 | `POST /api/v1/video/storyboard` | `{"brief", "seconds": 20 (total, 5–120), "structure", "aspect"}` | `{"shots": [{"seconds", "transition", "title", "prompt"}], "seconds", "message"}`. `structure` is `free`, `problem_action_result`, `promise_action_result_next`, `explainer` or `story` |
 | `POST /api/v1/video/storyboard/run` | `{"shots", "chain": true, "first", "resolution", "aspect", "seed", "quality", "loras", "return_base64"}` | a GPU job: every shot in turn, then one video joined with the transitions. With `chain`, each shot starts from the last frame of the previous one; shot N gets seed `seed + N - 1`. Answers `{"video", "shots", "contact_sheet", "seconds"}` |
 | `GET /api/v1/video/status` | | `{"installed", "ready", "reason", "install"}` |

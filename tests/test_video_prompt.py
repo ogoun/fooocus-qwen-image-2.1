@@ -321,3 +321,28 @@ def test_boost_falls_back_to_original_text_on_empty_answers():
     result = prompt_h3.boost(client, "A cat sleeps.", MODE_T2V, 5, prompt_dir=PROMPT_DIR)
     assert "[Shot 1] A cat sleeps." in result.prompt
     assert result.problems == []
+
+
+def test_a_free_edit_becomes_a_video_editing_prompt():
+    labels = prompt_h3.reference_labels(["video"], [True])
+    prompt = prompt_h3.compose("Turn the dog into a fox", prompt_h3.MODE_V2V, 5.0, labels=labels)
+    assert "[video editing + audio reuse] The target video is an edited version of <Video 1>." in prompt
+    assert "<Audio 1>: fully_copy" in prompt
+    assert prompt_h3.check(prompt, prompt_h3.MODE_V2V, 5.0, labels) == []
+
+
+def test_a_silent_source_is_plain_video_editing():
+    prompt = prompt_h3.compose("Make it night", prompt_h3.MODE_V2V, 5.0, labels=["<Video 1>"])
+    assert "[video editing] The target video is an edited version of <Video 1>." in prompt
+    assert "fully_copy" not in prompt
+
+
+def test_an_edit_prompt_without_the_edit_sentence_is_reported():
+    prompt = prompt_h3.compose("Turn the dog into a fox", prompt_h3.MODE_REF, 5.0, labels=["<Video 1>"])
+    problems = prompt_h3.check(prompt, prompt_h3.MODE_V2V, 5.0, ["<Video 1>"])
+    assert any("edited version" in problem for problem in problems)
+
+
+def test_the_rewriter_is_told_it_edits_video_1():
+    message = prompt_h3.build_boost_message("убери собаку", prompt_h3.MODE_V2V, 5.0, ["<Video 1>"])
+    assert "video editing" in message and prompt_h3.EDIT_SENTENCE in message

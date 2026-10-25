@@ -106,6 +106,25 @@ def describe_failure(error: BaseException, lang: str) -> str:
     return say("failure_other", lang, kind=type(error).__name__, error=_quote(error))
 
 
+def _source_frames(references: Any) -> list:
+    """Три кадра исходника правки (начало, середина, конец) для языковой модели.
+
+    Нечитаемый ролик — без кадров: переписыватель напишет правку по тексту.
+    """
+    from ..video import assemble
+
+    source = next((item for item in references if item.kind == "video"), None)
+    if source is None:
+        return []
+    try:
+        seconds = assemble.probe(source.path).seconds
+        moments = (0.0, seconds / 2, max(seconds - 0.1, 0.0))
+        return [assemble.frame_at(source.path, moment) for moment in moments]
+    except Exception:  # noqa: BLE001 — кадры лишь подспорье
+        LOGGER.warning("Could not read frames of the source video %s", source.path)
+        return []
+
+
 class Studio:
     """Единственный владелец тяжёлых ресурсов."""
 
@@ -462,7 +481,7 @@ class Studio:
         try:
             job, parameters = video_request.build_job(
                 request, run_dir, config.VIDEO_RUNS_DIR,
-                video_has_audio=lambda path: assemble.probe(path).has_audio,
+                video_has_audio=lambda path: assemble.probe(path).has_audio, probe_video=assemble.probe,
             )
             self.claim_gpu_for_video()
             started = time.perf_counter()
@@ -513,6 +532,9 @@ class Studio:
                     has_audio.append(False)
         labels = prompt_h3.reference_labels([item.kind for item in ordered], has_audio) if ordered else []
         images = [image for image in (first, last) if image is not None]
+        # Правка ролика: кадры исходника — первыми, о них говорит сообщение.
+        source_frames = _source_frames(ordered) if mode == prompt_h3.MODE_V2V else []
+        images = [*source_frames, *images]
         for item in ordered:
             if item.kind == "image":
                 with PILImage.open(item.path) as opened:
@@ -524,6 +546,7 @@ class Studio:
                 client, text, mode, duration, prompt_dir=config.SYSTEM_PROMPT_DIR, labels=labels,
                 has_first=first is not None, has_last=last is not None, aspect=aspect,
                 images=(images or None) if key not in self._text_only_models else None,
+                source_frames=len(source_frames),
             )
         except (LlmError, FileNotFoundError, ValueError, OSError) as error:
             LOGGER.warning("Video AI boost failed: %s", error)

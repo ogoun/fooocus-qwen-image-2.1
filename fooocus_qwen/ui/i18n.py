@@ -214,7 +214,10 @@ T: dict[str, tuple[str, str]] = {
     "send_to_video": ("В видео", "To video"),
     "video_first": ("Первый кадр", "First frame"),
     "video_last": ("Последний кадр", "Last frame"),
-    "video_refs": ("Референсы: картинки, видео, звук", "References: images, videos, audio"),
+    "video_source": ("Исходный ролик", "Source video"),
+    "video_tile_image": ("Картинка", "Image"),
+    "video_tile_video": ("Видео", "Video"),
+    "video_tile_audio": ("Звук", "Audio"),
     "video_result": ("Ролик", "Video"),
     "video_to_next": ("Последний кадр → следующий шот", "Last frame → next shot"),
     "video_extend": ("Продлить ролик", "Extend video"),
@@ -237,6 +240,7 @@ T: dict[str, tuple[str, str]] = {
     "video_mode_i2v": ("Первый кадр → видео", "First frame → video"),
     "video_mode_flf2v": ("Первый и последний кадр", "First and last frame"),
     "video_mode_ref": ("По референсам (персонажи, стиль, голос)", "From references (characters, style, voice)"),
+    "video_mode_v2v": ("Видео → видео (правка ролика)", "Video → video (edit a video)"),
     "video_resolution": ("Разрешение", "Resolution"),
     "video_aspect_image": ("как у кадра", "as the frame"),
     "video_seconds": ("Длительность, с", "Duration, s"),
@@ -724,10 +728,23 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "video_size_upscale_invalid": ("Апскейл: {error}", "Upscale: {error}"),
     "card_output": ("Выход", "Output"),
     "video_refs_empty": (
-        "До 9 картинок, 3 видео и 3 звуков. Зовите их в сценарии метками — они появятся здесь.",
-        "Up to 9 images, 3 videos and 3 audio files. Refer to them in the script by the labels shown here.",
+        "До 9 картинок, 3 видео и 3 звуков. Зовите их в сценарии метками с плиток: `<Picture 1>`, "
+        "`<Video 1>`, `<Audio 1>`.",
+        "Up to 9 images, 3 videos and 3 audio files. Refer to them in the script by the labels on the tiles: "
+        "`<Picture 1>`, `<Video 1>`, `<Audio 1>`.",
     ),
-    "video_refs_labels": ("Метки для сценария: {labels}", "Labels for the script: {labels}"),
+    "video_refs_full": (
+        "Все 9 плиток картинок заняты — освободите одну.",
+        "All 9 image tiles are taken — clear one first.",
+    ),
+    "video_source_loaded": (
+        "Исходный ролик: {seconds} с. Правка — {used} с: не длиннее исходника и 15 с.",
+        "Source video: {seconds} s. The edit lasts {used} s: no longer than the source and 15 s.",
+    ),
+    "video_source_required": (
+        "Загрузите исходный ролик — его и будет править «видео → видео».",
+        "Upload the source video — video → video edits it.",
+    ),
     "video_engine_missing": (
         "Видеодвижок FreeVideo не готов: {reason}. Установка скачает MiniMax H3 (~40–55 ГБ) в папку FreeVideo.",
         "The FreeVideo engine is not ready: {reason}. Setup downloads MiniMax H3 (~40-55 GB) "

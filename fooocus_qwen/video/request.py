@@ -26,7 +26,7 @@ from .. import __version__
 from ..storage import gallery
 from . import geometry, prompt_h3
 
-MODES = (prompt_h3.MODE_T2V, prompt_h3.MODE_I2V, prompt_h3.MODE_FLF2V, prompt_h3.MODE_REF)
+MODES = prompt_h3.MODES
 
 # Уровни качества — уровни самого FreeVideo (``freevideo_engine/tiers.py``),
 # плюс черновик: первый проход в половинном размере, который потом можно
@@ -80,6 +80,9 @@ class VideoRequest:
     first: Image.Image | None = None
     last: Image.Image | None = None
     references: tuple[Reference, ...] = ()
+    # Видео → видео: исходный ролик, который правится (``<Video 1>``).
+    # Видеореференсов, кроме него, в этом режиме нет.
+    source_video: str | None = None
     loras: tuple[tuple[str, float], ...] = ()
     # Продолжить готовый ролик (его хвост — контекст новой части).
     continue_from: str | None = None
@@ -117,10 +120,46 @@ def resolve_seed(seed: int) -> int:
     return random.randrange(2**31) if seed is None or int(seed) < 0 else int(seed)
 
 
-def frame_size(request: VideoRequest) -> tuple[int, int]:
-    """Холст запроса; «как у кадра» смотрит на первый, иначе на последний кадр."""
+def frame_size(request: VideoRequest, source_size: tuple[int, int] | None = None) -> tuple[int, int]:
+    """Холст запроса; «как у кадра» смотрит на первый, иначе на последний кадр.
+
+    Правка ролика всегда держит пропорцию исходника (``source_size``):
+    движок вписывает референс в площадь холста со своей пропорцией, и холст
+    другой формы сменил бы кадрирование, которое правка обещает сохранить.
+    """
+    if request.mode == prompt_h3.MODE_V2V and source_size:
+        return geometry.canvas(request.resolution, geometry.FOLLOW_IMAGE, source_size)
     anchor = request.first or request.last
     return geometry.canvas(request.resolution, request.aspect, anchor.size if anchor else None)
+
+
+def edit_references(request: VideoRequest) -> tuple[Reference, ...]:
+    """Референсы правки ролика: исходник — единственное видео, затем картинки и звук."""
+    if not request.source_video:
+        raise ValueError("Video to video needs a source video")
+    others = tuple(item for item in request.references if item.kind != "video")
+    return (Reference("video", str(request.source_video)), *others)
+
+
+def edit_seconds(requested: float, source_seconds: float | None) -> float:
+    """Длительность правки: не длиннее исходника и одной части (15 с).
+
+    Движок берёт из видеореференса столько, сколько длится генерация
+    (``media_encoding.reference_frames``), и не больше 15 с. Правка длиннее
+    исходника дорисовывала бы то, чего в нём нет, а продолжение частями
+    правкой уже не было бы.
+
+    Сетка кадров — вниз, а не вверх, как у ``geometry.duration``: движок сам
+    срезает исходник до 17·n + 5 кадров, и 4 с исходника — это 90 кадров, а
+    не 107, которые дало бы округление вверх. Лишние 17 кадров модель
+    дорисовала бы без исходника.
+    """
+    limit = min(float(requested), geometry.SINGLE_MAX_SECONDS)
+    if source_seconds:
+        limit = min(limit, float(source_seconds))
+    frames = int(limit * geometry.FPS + 1e-6)
+    frames -= (frames - geometry.FRAME_OFFSET) % geometry.FRAME_UNIT
+    return max(frames / geometry.FPS, geometry.MIN_SECONDS)
 
 
 def fit_frame(image: Image.Image, size: tuple[int, int]) -> Image.Image:
@@ -165,19 +204,30 @@ def build_job(
     run_dir: Path,
     runs_root: Path,
     video_has_audio=None,
+    probe_video=None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Задание драйвера и параметры для метаданных.
 
     ``run_dir`` — каталог входов этого задания; ``runs_root`` — каталог
     заданий FreeVideo (там же его кэш результатов и черновики).
     ``video_has_audio(path) -> bool`` — есть ли звук у видеореференса: от
-    этого зависит нумерация меток ``<Audio j>``.
+    этого зависит нумерация меток ``<Audio j>``. ``probe_video(path)`` —
+    размер и длительность исходника правки (``assemble.probe``): по нему
+    холст и длительность режима «видео → видео».
     """
     if request.mode not in MODES:
         raise ValueError(f"Unknown video mode: {request.mode}")
     quality = QUALITY.get(request.quality, QUALITY[DEFAULT_QUALITY])
-    duration = geometry.duration(request.seconds)
-    width, height = frame_size(request)
+    seconds = request.seconds
+    source_size = None
+    if request.mode == prompt_h3.MODE_V2V:
+        if not request.source_video or not Path(request.source_video).is_file():
+            raise ValueError("Video to video needs a source video")
+        info = probe_video(request.source_video) if probe_video else None
+        seconds = edit_seconds(seconds, info.seconds if info else None)
+        source_size = (info.width, info.height) if info else None
+    duration = geometry.duration(seconds)
+    width, height = frame_size(request, source_size)
     seed = resolve_seed(request.seed)
     inputs = run_dir / "inputs"
     inputs.mkdir(parents=True, exist_ok=True)
@@ -197,9 +247,10 @@ def build_job(
         raise ValueError("Image to video needs a first frame")
     if request.mode == prompt_h3.MODE_FLF2V and not (has_first or has_last):
         raise ValueError("First and last frame mode needs at least one frame")
-    if request.mode == prompt_h3.MODE_REF:
-        check_references(request.references)
-        references = engine_references(request.references)
+    if request.mode in prompt_h3.REF_MODES:
+        given = edit_references(request) if request.mode == prompt_h3.MODE_V2V else request.references
+        check_references(given)
+        references = engine_references(given)
         if not references:
             raise ValueError("Reference mode needs at least one reference")
         rows = []
@@ -269,6 +320,7 @@ def build_job(
         "seed": seed,
         "quality": request.quality if request.quality in QUALITY else DEFAULT_QUALITY,
         "references": [{"kind": item.kind, "name": Path(item.path).name} for item in references],
+        "source_video": Path(request.source_video).name if request.source_video else None,
         "labels": labels,
         "loras": [{"name": Path(path).name, "strength": float(strength)} for path, strength in request.loras],
         "continue_from": request.continue_from,

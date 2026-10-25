@@ -127,6 +127,10 @@ VIDEO_BOARD = "qs-videoboard"
 VIDEO_INPUTS = "qs-videoinputs"
 # Мелкая подпись: холст и кадры под ползунком, метки референсов.
 VIDEO_NOTE = "qs-videonote"
+# Плитки референсов вкладки Video и исходный ролик режима «видео → видео».
+VIDEO_REFS = "qs-videorefs"
+VIDEO_TILE = "qs-videotile"
+VIDEO_SOURCE = "qs-videosource"
 
 # --- вкладки -------------------------------------------------------------
 # Имена, по которым действия переключают вкладку сами: «Повторить

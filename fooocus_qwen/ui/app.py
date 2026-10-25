@@ -188,7 +188,7 @@ def build(cfg: config.AppConfig, return_studio: bool = False):
                     ],
                     [
                         video_components["mode"], video_components["first"], video_components["last"],
-                        video_components["references"], video_components["status"],
+                        *video_components["reference_tiles"], video_components["status"],
                     ],
                     show_progress="hidden",
                 )

@@ -1911,7 +1911,20 @@ def scenario_video(browser, url, report: Report, fake: FakeGenerator, video: Fak
                  or any(item.is_visible() for item in first.all()), "First frame → video: the frame input appears")
     video_mode(page, "From references (characters, style, voice)")
     report.check(page.get_by_text("Up to 9 images").first.is_visible(), "References: the label hint is shown")
+
+    def shown_tiles():
+        return page.evaluate("""() => [...document.querySelectorAll('.qs-videorefs .qs-videotile')]
+            .filter(e => e.offsetParent).map(e => (e.querySelector('[data-testid=block-label]') || {}).innerText)""")
+
+    report.check(shown_tiles() == ["Image", "Video", "Audio"], f"References: one empty tile per kind: {shown_tiles()}")
+    video_mode(page, "Video → video (edit a video)")
+    page.wait_for_timeout(800)
+    source_shown = any(item.is_visible() for item in page.locator(".qs-videosource").all())
+    report.check(source_shown and shown_tiles() == ["Image", "Audio"],
+                 f"Video → video: the source video and no video tiles: {shown_tiles()}")
     video_mode(page, "Text → video")
+    page.wait_for_timeout(500)
+    report.check(not shown_tiles(), "Text → video: no reference tiles")
 
     # Картинка с генерации — «В видео»: первый кадр, режим «первый кадр».
     open_tab(page, TAB_GENERATE)
@@ -1932,6 +1945,15 @@ def scenario_video(browser, url, report: Report, fake: FakeGenerator, video: Fak
     report.check(loaded, "the generated image is the first frame")
     checked = page.get_by_label("First frame → video", exact=True).first.is_checked()
     report.check(checked, "the mode switched to First frame → video")
+
+    # В режиме референсов «В видео» кладёт картинку в первую свободную плитку.
+    video_mode(page, "From references (characters, style, voice)")
+    open_tab(page, TAB_GENERATE)
+    click_text(page, "To video")
+    page.wait_for_timeout(2500)
+    report.check(shown_tiles()[:2] == ["<Picture 1>", "Image"],
+                 f"“To video” in references mode fills the first image tile: {shown_tiles()}")
+    video_mode(page, "First frame → video")
 
     # Upscale: галочка открывает параметры, подпись называет выходной кадр,
     # режим меняет поля, задание несёт размер для движка.

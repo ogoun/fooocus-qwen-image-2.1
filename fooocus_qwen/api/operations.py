@@ -399,13 +399,14 @@ class _Uploads:
             self.directory = None
 
 
-def _video_references(items: list[schemas.VideoReference], uploads: _Uploads) -> tuple:
+def _video_references(items: list[schemas.VideoReference], uploads: _Uploads, field: str = "references",
+                      prefix: str = "ref") -> tuple:
     """Референсы клиента — файлами на диске, с видом; пределы набора — до очереди."""
     from ..video.request import Reference, check_references, kind_of
 
     found = []
     for index, item in enumerate(items):
-        what = f"references[{index}]"
+        what = f"{field}[{index}]" if field == "references" else field
         if item.gallery:
             try:
                 path = images.output_path(item.gallery)
@@ -420,12 +421,12 @@ def _video_references(items: list[schemas.VideoReference], uploads: _Uploads) ->
                 raise RequestError(f"{what}: give kind (image, video or audio) or a file name with an extension")
             try:
                 if kind == "image":
-                    path = uploads.path(f"ref{index:02d}.png")
+                    path = uploads.path(f"{prefix}{index:02d}.png")
                     images.decode_base64(item.base64).save(path)
                 else:
                     suffix = Path(item.name).suffix.lower() if item.name and kind_of(item.name) == kind \
                         else _DEFAULT_SUFFIX[kind]
-                    path = uploads.path(f"ref{index:02d}{suffix}")
+                    path = uploads.path(f"{prefix}{index:02d}{suffix}")
                     path.write_bytes(images.decode_bytes(item.base64, what))
             except images.ImageError as error:
                 raise RequestError(f"{what}: {error}") from error
@@ -436,6 +437,28 @@ def _video_references(items: list[schemas.VideoReference], uploads: _Uploads) ->
     except ValueError as error:
         raise RequestError(str(error)) from error
     return references
+
+
+def _video_source(item: schemas.VideoReference, uploads: _Uploads) -> str:
+    """Исходный ролик режима ``v2v`` — файлом на диске; не видео — отказ до очереди."""
+    (reference,) = _video_references([item], uploads, field="source", prefix="source")
+    if reference.kind != "video":
+        raise RequestError(f"source: a video is needed, got {reference.kind}")
+    return reference.path
+
+
+def _boost_video_inputs(request) -> tuple:
+    """Референсы и длительность для буста: правка ролика видит свой исходник ``<Video 1>``."""
+    from ..video import assemble, geometry, prompt_h3
+    from ..video.request import edit_references, edit_seconds
+
+    if request.mode != prompt_h3.MODE_V2V:
+        return request.references, geometry.duration(request.seconds)
+    try:
+        length = assemble.probe(request.source_video).seconds
+    except Exception:  # noqa: BLE001 — нечитаемый ролик: длительность по запросу
+        length = None
+    return edit_references(request), geometry.duration(edit_seconds(request.seconds, length))
 
 
 def _video_progress(job: Job):
@@ -497,7 +520,7 @@ def _framed(mode: str, first, last) -> tuple:
 
 def prepare_video(studio, body: schemas.VideoGenerateRequest) -> Work:
     from ..ui.i18n import say
-    from ..video import board, geometry, prompt_h3
+    from ..video import board, prompt_h3
     from ..video.request import VideoRequest
 
     _video_ready(studio)
@@ -525,7 +548,7 @@ def prepare_video(studio, body: schemas.VideoGenerateRequest) -> Work:
                 notes.append("refine_from finishes the draft as it is; prompt and loras are ignored.")
             # Размер выхода продления и доводки — как у самого ролика: части
             # разного размера не склеить, а черновик обещал свой апскейл.
-            ignored = [name for name in ("mode", "first", "last", "references", "upscale")
+            ignored = [name for name in ("mode", "first", "last", "references", "source", "upscale")
                        if name in body.model_fields_set]
             if ignored:
                 notes.append(f"Ignored with {'continue_from' if body.continue_from else 'refine_from'}: "
@@ -547,16 +570,25 @@ def prepare_video(studio, body: schemas.VideoGenerateRequest) -> Work:
             if body.mode == prompt_h3.MODE_FLF2V and used_first is None and used_last is None:
                 raise RequestError("mode 'flf2v' needs a first or a last frame")
             references: tuple = ()
-            if body.mode == prompt_h3.MODE_REF:
+            source_video = None
+            if body.mode in prompt_h3.REF_MODES:
                 references = _video_references(body.references, uploads)
-                if not references:
+                if body.mode == prompt_h3.MODE_V2V:
+                    if body.source is None:
+                        raise RequestError("mode 'v2v' needs a source video")
+                    source_video = _video_source(body.source, uploads)
+                    if any(item.kind == "video" for item in references):
+                        notes.append("Video references are ignored in mode 'v2v': the source is <Video 1>.")
+                elif not references:
                     raise RequestError("mode 'ref' needs at least one reference")
             elif body.references:
                 notes.append(f"References are ignored in mode '{body.mode}'.")
+            if body.source is not None and body.mode != prompt_h3.MODE_V2V:
+                notes.append(f"The source video is ignored in mode '{body.mode}'.")
             request = VideoRequest(
                 prompt=body.prompt, prompt_original=body.prompt, mode=body.mode, resolution=body.resolution,
                 aspect=body.aspect, seconds=body.seconds, seed=body.seed, quality=body.quality,
-                first=used_first, last=used_last, references=references, loras=loras,
+                first=used_first, last=used_last, references=references, source_video=source_video, loras=loras,
                 upscale=body.upscale.settings() if body.upscale else None,
             )
             _check_upscale(request)
@@ -572,8 +604,9 @@ def prepare_video(studio, body: schemas.VideoGenerateRequest) -> Work:
             if body.boost and own_prompt:
                 job.stage("boosting the prompt")
                 frame_first, frame_last = _framed(chosen.mode, chosen.first, chosen.last)
+                boost_references, boost_duration = _boost_video_inputs(chosen)
                 text, said = studio.boost_video(
-                    body.prompt, chosen.mode, geometry.duration(chosen.seconds), chosen.references,
+                    body.prompt, chosen.mode, boost_duration, boost_references,
                     frame_first, frame_last, chosen.aspect, LANG,
                 )
                 messages.append(said)
@@ -598,16 +631,27 @@ def prepare_video(studio, body: schemas.VideoGenerateRequest) -> Work:
 
 def video_boost(studio, body: schemas.VideoBoostRequest) -> dict[str, Any]:
     """Промт H3 языковой моделью — как кнопка «AI буст» вкладки Video."""
-    from ..video import geometry, prompt_h3
+    from ..video import prompt_h3
 
     first = _load(body.first, "first") if body.first is not None else None
     last = _load(body.last, "last") if body.last is not None else None
     first, last = _framed(body.mode, first, last)
     uploads = _Uploads()
     try:
-        references = _video_references(body.references, uploads) if body.mode == prompt_h3.MODE_REF else ()
+        references = _video_references(body.references, uploads) if body.mode in prompt_h3.REF_MODES else ()
+        source_video = None
+        if body.mode == prompt_h3.MODE_V2V:
+            if body.source is None:
+                raise RequestError("mode 'v2v' needs a source video")
+            source_video = _video_source(body.source, uploads)
+        from ..video.request import VideoRequest
+
+        references, duration = _boost_video_inputs(VideoRequest(
+            prompt=body.prompt, mode=body.mode, seconds=body.seconds, references=references,
+            source_video=source_video,
+        ))
         text, message = studio.boost_video(
-            body.prompt, body.mode, geometry.duration(body.seconds), references, first, last, body.aspect, LANG,
+            body.prompt, body.mode, duration, references, first, last, body.aspect, LANG,
         )
     finally:
         uploads.close()
