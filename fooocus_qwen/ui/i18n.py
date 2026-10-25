@@ -733,6 +733,14 @@ MESSAGES: dict[str, tuple[str, str]] = {
         "Up to 9 images, 3 videos and 3 audio files. Refer to them in the script by the labels on the tiles: "
         "`<Picture 1>`, `<Video 1>`, `<Audio 1>`.",
     ),
+    "video_refs_t2v": (
+        "Сюда — референсы: персонажи, стиль, голос. С первым файлом режим станет «По референсам».",
+        "References go here: characters, style, voice. The first file switches the mode to references.",
+    ),
+    "video_switched_to_ref": (
+        "Режим — «По референсам»: зовите файлы в сценарии метками с плиток.",
+        "Mode: references. Refer to the files in the script by the labels on the tiles.",
+    ),
     "video_refs_full": (
         "Все 9 плиток картинок заняты — освободите одну.",
         "All 9 image tiles are taken — clear one first.",

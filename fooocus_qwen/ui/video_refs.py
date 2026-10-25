@@ -27,6 +27,13 @@ from .i18n import pick, say
 
 KINDS = (("image", MAX_IMAGES), ("video", MAX_VIDEOS), ("audio", MAX_AUDIOS))
 SLOT_COUNT = sum(count for _, count in KINDS)
+# Где плитки на виду. «Текст → видео» — тоже: колонка слева от плеера там
+# иначе пустовала, и человек не находил, куда класть референсы («область, где
+# они на вкладках изображений, пустая»). Первый файл переключает режим на
+# референсы (``promote``): текст плюс референсы — это и есть Ref2VA. В
+# режимах с кадрами колонку занимают кадры, а чекпойнт FL2VA референсов не
+# принимает.
+TILE_MODES = (prompt_h3.MODE_T2V, *prompt_h3.REF_MODES)
 # Подписи пустых плиток — ключами таблицы: проверка мёртвых переводов ищет
 # ключ литералом в коде.
 EMPTY_LABELS = {"image": "video_tile_image", "video": "video_tile_video", "audio": "video_tile_audio"}
@@ -156,7 +163,8 @@ def view(mode: str, source, values, lang: str, has_audio=_has_audio) -> list:
     # Подпись — метки, как у плиток: «Исходный ролик · <Audio 1> + <Video 1>»
     # не помещалась рядом с кнопками плеера.
     updates.append(gr.update(visible=editing, label=source_label or title))
-    updates.append(say("video_refs_empty", lang))
+    hint = "video_refs_t2v" if mode == prompt_h3.MODE_T2V else "video_refs_empty"
+    updates.append(say(hint, lang))
     return updates
 
 
@@ -195,20 +203,32 @@ def build(lang: str) -> Tiles:
 
 
 def frame(mode: str):
-    """Рамка плиток видна в режимах с референсами."""
-    return gr.update(visible=mode in prompt_h3.REF_MODES)
+    """Рамка плиток видна в «текст → видео» и в режимах с референсами."""
+    return gr.update(visible=mode in TILE_MODES)
 
 
-def wire(tiles: Tiles, mode, language) -> None:
+def promote(mode: str, lang: str, values) -> tuple:
+    """Файл в плитке при «текст → видео» — режим «по референсам»: ``(режим, сообщение)``."""
+    keep = gr.update()
+    if mode == prompt_h3.MODE_T2V and any(_path(value) for value in values):
+        return prompt_h3.MODE_REF, say("video_switched_to_ref", lang)
+    return keep, keep
+
+
+def wire(tiles: Tiles, mode, language, status) -> None:
     """Любая перемена плитки, исходника, режима или языка — метки и видимость заново."""
 
     def refresh(mode_value, source_value, lang, *values):
         return view(mode_value, source_value, list(values), lang)
 
+    def switch(mode_value, lang, *values):
+        return promote(mode_value, lang, values)
+
     inputs = [mode, tiles.source, language, *tiles.slots]
     outputs = [tiles.state, *tiles.slots, *tiles.cells, tiles.source, tiles.note]
     for slot in tiles.slots:
         slot.change(refresh, inputs, outputs, queue=False, show_progress="hidden")
+        slot.change(switch, [mode, language, *tiles.slots], [mode, status], queue=False, show_progress="hidden")
     for trigger in (tiles.source.change, language.change):
         trigger(refresh, inputs, outputs, queue=False, show_progress="hidden")
     # Рамка — первой, плитки — после неё. В Gradio 6.5 обновление

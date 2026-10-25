@@ -1922,9 +1922,22 @@ def scenario_video(browser, url, report: Report, fake: FakeGenerator, video: Fak
     source_shown = any(item.is_visible() for item in page.locator(".qs-videosource").all())
     report.check(source_shown and shown_tiles() == ["Image", "Audio"],
                  f"Video → video: the source video and no video tiles: {shown_tiles()}")
+    video_mode(page, "First frame → video")
+    page.wait_for_timeout(500)
+    report.check(not shown_tiles(), "First frame → video: no reference tiles")
     video_mode(page, "Text → video")
     page.wait_for_timeout(500)
-    report.check(not shown_tiles(), "Text → video: no reference tiles")
+    report.check(shown_tiles() == ["Image", "Video", "Audio"], f"Text → video: the tiles are offered: {shown_tiles()}")
+    sample = samples / "video-ref.png"
+    Image.new("RGB", (64, 48), (200, 40, 40)).save(sample)
+    page.locator(".qs-videorefs input[type=file][accept*=image]").first.set_input_files(str(sample))
+    page.wait_for_timeout(2500)
+    switched = page.get_by_label("From references (characters, style, voice)", exact=True).first.is_checked()
+    report.check(switched and shown_tiles()[:2] == ["<Picture 1>", "Image"],
+                 f"Text → video: a file switches to references: {shown_tiles()}")
+    # Плитку не чистим: «В видео» ниже ляжет во вторую.
+    video_mode(page, "Text → video")
+    page.wait_for_timeout(500)
 
     # Картинка с генерации — «В видео»: первый кадр, режим «первый кадр».
     open_tab(page, TAB_GENERATE)
@@ -1951,8 +1964,8 @@ def scenario_video(browser, url, report: Report, fake: FakeGenerator, video: Fak
     open_tab(page, TAB_GENERATE)
     click_text(page, "To video")
     page.wait_for_timeout(2500)
-    report.check(shown_tiles()[:2] == ["<Picture 1>", "Image"],
-                 f"“To video” in references mode fills the first image tile: {shown_tiles()}")
+    report.check(shown_tiles()[:3] == ["<Picture 1>", "<Picture 2>", "Image"],
+                 f"“To video” in references mode fills the first free image tile: {shown_tiles()}")
     video_mode(page, "First frame → video")
 
     # Upscale: галочка открывает параметры, подпись называет выходной кадр,

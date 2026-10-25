@@ -218,9 +218,19 @@ def test_video_to_video_hides_the_video_tiles_and_shows_the_source():
     assert video_refs.frame(prompt_h3.MODE_V2V)["visible"] is True
 
 
-def test_text_mode_hides_the_tiles():
-    *_rest, source, _note = video_refs.view(prompt_h3.MODE_T2V, None, _tiles(), "en")
-    assert video_refs.frame(prompt_h3.MODE_T2V)["visible"] is False and source["visible"] is False
+def test_text_mode_offers_the_tiles_and_frame_modes_do_not():
+    *_rest, source, note = video_refs.view(prompt_h3.MODE_T2V, None, _tiles(), "en")
+    assert video_refs.frame(prompt_h3.MODE_T2V)["visible"] is True and source["visible"] is False
+    assert "switches the mode" in note
+    for mode in (prompt_h3.MODE_I2V, prompt_h3.MODE_FLF2V):
+        assert video_refs.frame(mode)["visible"] is False
+
+
+def test_a_file_in_text_mode_switches_to_references():
+    mode, message = video_refs.promote(prompt_h3.MODE_T2V, "en", _tiles(["a.png"]))
+    assert mode == prompt_h3.MODE_REF and "references" in message
+    assert video_refs.promote(prompt_h3.MODE_T2V, "en", _tiles()) == (gr.update(), gr.update())
+    assert video_refs.promote(prompt_h3.MODE_V2V, "en", _tiles(["a.png"])) == (gr.update(), gr.update())
 
 
 def test_an_unreadable_video_gets_no_audio_label(tmp_path):

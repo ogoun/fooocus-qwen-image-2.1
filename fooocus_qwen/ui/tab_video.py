@@ -688,7 +688,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 [upscale_box, upscale_factor_box, upscale_dims, upscale_mp_box], queue=False,
                 show_progress="hidden")
     mode.change(change_mode, mode, [first, last], queue=False, show_progress="hidden")
-    video_refs.wire(tiles, mode, language)
+    video_refs.wire(tiles, mode, language, status)
 
     def show_rewritten(enabled, text):
         return gr.update(visible=bool(enabled) or bool((text or "").strip()))
