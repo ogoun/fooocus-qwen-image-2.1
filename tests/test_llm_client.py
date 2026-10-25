@@ -76,9 +76,11 @@ def test_images_are_sent_as_data_urls(server):
 
     content = RECEIVED[0]["body"]["messages"][1]["content"]
     assert isinstance(content, list)
-    assert content[0]["type"] == "text"
-    assert content[1]["type"] == "image_url"
-    assert content[1]["image_url"]["url"].startswith("data:image/png;base64,")
+    # Изображения перед текстом, как в официальном коде переписывателя:
+    # после текста модель нумеровала их подряд мимо тегов сообщения.
+    assert content[0]["type"] == "image_url"
+    assert content[0]["image_url"]["url"].startswith("data:image/png;base64,")
+    assert content[1] == {"type": "text", "text": "опиши"}
 
 
 def test_thinking_is_disabled():
@@ -310,3 +312,21 @@ def test_studio_remembers_a_text_model_and_says_so(blind_server, tmp_path, monke
     text, _, message = studio.boost_prompt("make it blue", boost.MODE_EDIT, "en", picture)
     assert text == "done" and "text alone" in message
     assert _posts() == [False], "известная текстовая модель — без заведомо неудачного запроса"
+
+
+def _sent_size(url):
+    import base64
+    import io
+
+    return Image.open(io.BytesIO(base64.b64decode(url.split(",", 1)[1]))).size
+
+
+def test_large_images_are_capped_at_a_megapixel():
+    """Предел площади — как при обучении переписывателя (pe_core.image_max_pixels)."""
+    from fooocus_qwen.llm import client as client_module
+
+    client = LlmClient(LlmEndpoint(base_url="http://127.0.0.1:1"))
+    body = client._build_body("s", "u", [Image.new("RGB", (2048, 1024)), Image.new("RGB", (640, 480))], 0.3, 100)
+    big, small = (_sent_size(item["image_url"]["url"]) for item in body["messages"][1]["content"][:2])
+    assert big[0] * big[1] <= client_module.MAX_IMAGE_PIXELS and abs(big[0] / big[1] - 2) < 0.01
+    assert small == (640, 480)

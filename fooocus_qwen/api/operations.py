@@ -246,13 +246,7 @@ def prepare_edit(studio, body: schemas.EditRequest) -> Work:
         prompt = body.prompt
         if body.boost:
             job.stage("boosting the prompt")
-            # Переписчику — исходник и референсы (маску он не видит) с теми
-            # тегами, под которыми их увидит модель.
-            shown = [slot for slot in slots if slot.role != "mask"]
-            text, _, said = studio.boost_prompt(
-                body.prompt, boost_module.MODE_EDIT, LANG,
-                [slot.image for slot in shown], [slot.tag for slot in shown if slot.tag],
-            )
+            text, _, said = studio.boost_edit(body.prompt, slots, mode, LANG)
             messages.append(said)
             prompt = text or body.prompt
         request = GenerationRequest(

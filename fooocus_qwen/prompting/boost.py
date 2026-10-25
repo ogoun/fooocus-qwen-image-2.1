@@ -70,6 +70,42 @@ BLIND_NOTE = (
     "in English unless the instruction is in Chinese."
 )
 
+# Дополнения к официальным промтам. Файлы промтов — поставка QwenLM байт в
+# байт (tools/fetch_system_prompts.py), поэтому то, чего в них нет, живёт
+# здесь. Обе пометки — из сравнения с промтом, который предложила сторонняя
+# модель: tools/experiments/boost_prompt_variants.py (qwen3.8-27b, 2026-10-25,
+# по 4 ответа на вариант), docs/research/2026-10-25-boost-prompt.md.
+#
+# Прозрачность. README Qwen-Image-2.1 даёт для RGBA готовый формат промта, а
+# официальный промт T2I о нём молчит: на «прозрачный фон» переписыватель
+# писал «a completely transparent background», однажды — «checkerboard
+# pattern», и формата не выдал ни разу из 4. С пометкой — 4 из 4, ложных
+# срабатываний на обычных запросах 0 из 8. Только для генерации: в промте
+# правки слово «прозрачность» включает альфу даже с отрицанием
+# (docs/research/2026-09-22-maska-kak-alfa.md).
+RGBA_OPEN = "This is an RGBA image with transparency."
+RGBA_CLOSE = "The image has alpha channel and the background is transparent."
+T2I_NOTE = (
+    "\n\n## Transparent images\n\n"
+    "If the user asks for a transparent background, a cut-out, or an isolated asset with "
+    f"no background, the description begins with exactly \"{RGBA_OPEN}\" and ends with "
+    f"exactly \"{RGBA_CLOSE}\" — this is the prompt format Qwen-Image-2.1 is trained on "
+    "for transparent output. Between them describe only the subject: no backdrop, floor, "
+    "surface or background colour, and no white or checkerboard background. Never use "
+    "these two sentences when transparency was not asked for."
+)
+
+# Режим «Аннотация»: цветные пометки нарисованы прямо на исходнике, а
+# официальный промт правки о них ничего не знает. Без пометки 2 из 4 ответов
+# вышли с изъянами (один по-русски, в одном рассуждения вместо JSON), в
+# среднем 30 с; с пометкой 4 из 4 называют цвет и убирают метку, 8 с.
+ANNOTATION_NOTE = (
+    "\n\nNote: the coloured strokes, circles and arrows drawn over the input image are the "
+    "user's annotation marks. They only show where each edit applies. Refer to each marked "
+    "area by its colour and by the object under it, and state that the marks themselves "
+    "are gone from the result."
+)
+
 
 @dataclass(frozen=True)
 class BoostResult:
@@ -180,6 +216,7 @@ def boost(
     references: list[Image.Image] | None = None,
     send_images: bool = True,
     tags: list[str] | None = None,
+    annotation: bool = False,
 ) -> BoostResult:
     """Переписывает промт; изображения — подспорье, а не условие.
 
@@ -194,9 +231,16 @@ def boost(
     Теги ``<imageN>`` в сообщении остаются и без картинок: это адреса
     изображений для самой Qwen-Image, и переписанный промт обязан их
     сохранить. К сообщению добавляется только ``BLIND_NOTE``.
+
+    ``annotation`` — правка в режиме «Аннотация»: пометки на исходнике
+    объясняются переписывателю (``ANNOTATION_NOTE``).
     """
     system = _read_system_prompt(prompt_dir, _PROMPT_FILES[mode])
+    if mode == MODE_T2I:
+        system += T2I_NOTE
     user = build_user_message(prompt, len(references or []), tags)
+    if annotation and mode == MODE_EDIT:
+        user += ANNOTATION_NOTE
     # Референсы уходят в модель только в режиме редактирования: переписывателю
     # T2I смотреть не на что, а лишние изображения удлиняют запрос.
     images = references if mode == MODE_EDIT else None

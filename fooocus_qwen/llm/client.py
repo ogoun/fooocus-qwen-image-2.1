@@ -39,9 +39,25 @@ class LlmImagesRejected(LlmError):
     """
 
 
+# Предел площади изображения для языковой модели — как в официальном коде
+# переписывателя (QwenLM/Qwen-Image-2.1, prompt_rewrite/pe_core.py:
+# «Cap on each source image's pixel count, matching training»). Кадр правки
+# 2048² — четыре мегапикселя и вчетверо больше визуальных токенов, а видит
+# переписыватель по ним не лучше (tools/experiments/boost_prompt_variants.py).
+MAX_IMAGE_PIXELS = 1024 * 1024
+
+
+def _fit(image: Image.Image) -> Image.Image:
+    width, height = image.size
+    if width * height <= MAX_IMAGE_PIXELS:
+        return image
+    scale = (MAX_IMAGE_PIXELS / (width * height)) ** 0.5
+    return image.resize((max(1, int(width * scale)), max(1, int(height * scale))), Image.LANCZOS)
+
+
 def _image_to_data_url(image: Image.Image) -> str:
     buffer = io.BytesIO()
-    image.convert("RGB").save(buffer, format="PNG")
+    _fit(image).convert("RGB").save(buffer, format="PNG")
     encoded = base64.b64encode(buffer.getvalue()).decode("ascii")
     return f"data:image/png;base64,{encoded}"
 
@@ -145,8 +161,13 @@ class LlmClient:
         max_tokens: int,
     ) -> dict[str, Any]:
         if images:
-            content: Any = [{"type": "text", "text": user}]
-            content.extend({"type": "image_url", "image_url": {"url": _image_to_data_url(i)}} for i in images)
+            # Изображения перед текстом, как в официальном коде переписывателя
+            # (pe_core.build_messages). После текста модель нумеровала их
+            # подряд, не глядя на теги в сообщении: при правке по маске
+            # референс <image3> в 2 ответах из 4 становился <image2> — номером
+            # маски. С изображениями впереди — 0 из 8.
+            content: Any = [{"type": "image_url", "image_url": {"url": _image_to_data_url(i)}} for i in images]
+            content.append({"type": "text", "text": user})
         else:
             content = user
 

@@ -135,7 +135,7 @@ def test_the_rewriter_sees_source_and_references_under_the_model_tags(painter_va
     studio._generator = recorder
     asked = {}
 
-    def boost_prompt(prompt, mode, lang, images=None, tags=None):
+    def boost_prompt(prompt, mode, lang, images=None, tags=None, annotation=False):
         asked.update(images=images, tags=tags)
         return "rewritten", None, ""
 
@@ -157,8 +157,8 @@ def _boosting_studio(monkeypatch, answer="rewritten"):
     studio._generator = recorder
     calls = []
 
-    def boost_prompt(prompt, mode, lang, images=None, tags=None):
-        calls.append(dict(prompt=prompt, mode=mode, images=images, tags=tags))
+    def boost_prompt(prompt, mode, lang, images=None, tags=None, annotation=False):
+        calls.append(dict(prompt=prompt, mode=mode, images=images, tags=tags, annotation=annotation))
         return answer, None, "boost done"
 
     monkeypatch.setattr(studio, "boost_prompt", boost_prompt)
@@ -174,6 +174,14 @@ def test_rewrite_now_fills_the_field_and_ticks_the_box(painter_value, monkeypatc
     assert (text, enabled["value"], source, status) == ("rewritten", True, "вставь кота", "boost done")
     # Те же теги, что у запуска: маска занимает <image2>, референс — <image3>.
     assert calls[0]["tags"] == ["<image1>", "<image3>"] and calls[0]["mode"] == boost.MODE_EDIT
+
+
+@pytest.mark.parametrize(("mode", "annotation"), [(gen.MASK_ANNOTATION, True), (gen.MASK_MASK, False)])
+def test_annotation_marks_are_explained_only_in_annotation_mode(painter_value, monkeypatch, mode, annotation):
+    studio, _recorder, calls = _boosting_studio(monkeypatch)
+    _studio, _components, handlers = _build(studio)
+    handlers["rewrite"](painter_value(*_images()), "убери дерево в красном круге", mode, [], "ru")
+    assert calls[0]["annotation"] is annotation
 
 
 def test_a_failed_rewrite_leaves_the_field_alone(painter_value, monkeypatch):

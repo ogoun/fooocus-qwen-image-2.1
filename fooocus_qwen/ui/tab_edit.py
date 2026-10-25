@@ -29,7 +29,6 @@ from ..engine.generator import (
 )
 from ..imaging import aspect as aspect_module
 from ..imaging import masking, metadata, outpaint
-from ..prompting import boost as boost_module
 from ..prompting import library
 from ..storage import gallery
 from . import layout, lora_slots, painter, prompt_library, reference_tools
@@ -526,19 +525,6 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         text, message = studio.describe_image(source, lang)
         return (text or gr.update()), message
 
-    def boost_edit(prompt_text, slots, lang):
-        """Переписанная инструкция правки: ``(текст, соотношение, сообщение)``.
-
-        Переписывателю — исходник и референсы (маску он не видит) с теми
-        тегами, под которыми их увидит модель: при маске первый референс —
-        <image3>, а не <image2>.
-        """
-        shown = [slot for slot in slots if slot.role != "mask"]
-        return studio.boost_prompt(
-            prompt_text, boost_module.MODE_EDIT, lang,
-            [slot.image for slot in shown], [slot.tag for slot in shown if slot.tag],
-        )
-
     def edit_slots(source, mask, mode_value, images):
         """Условные изображения в том порядке и с теми тегами, что уйдут в модель.
 
@@ -564,8 +550,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             return gr.update(), gr.update(), gr.update(), say("upload_first", lang)
         if not (prompt_text or "").strip():
             return gr.update(), gr.update(), gr.update(), say("edit_needs_prompt", lang)
-        _, slots = edit_slots(source, mask, mode_value, references_module.filled(current_references))
-        text, _, message = boost_edit(prompt_text, slots, lang)
+        effective_mode, slots = edit_slots(source, mask, mode_value, references_module.filled(current_references))
+        text, _, message = studio.boost_edit(prompt_text, slots, effective_mode, lang)
         # Отказ языковой модели возвращает исходный текст: он не «переписан»,
         # и ни поле, ни галочка, ни источник от него меняться не должны.
         if not text or text == prompt_text:
@@ -620,7 +606,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
         elif effective and (boost_source_text or "") != (prompt_text or ""):
             message = say("boost_stale", lang)
         if use_boost and not effective:
-            effective, _, message = boost_edit(prompt_text, slots, lang)
+            effective, _, message = studio.boost_edit(prompt_text, slots, effective_mode, lang)
 
         # Подписи ячеек считаются по выбранному режиму, а маска бывает пустой:
         # тогда её места в очереди нет, и теги референсов сдвигаются на один.

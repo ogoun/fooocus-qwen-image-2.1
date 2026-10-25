@@ -637,6 +637,7 @@ class Studio:
         lang: str,
         references: list[Image.Image] | None = None,
         tags: list[str] | None = None,
+        annotation: bool = False,
     ) -> tuple[str, str | None, str]:
         """Возвращает переписанный промт, соотношение сторон и сообщение о результате.
 
@@ -644,7 +645,7 @@ class Studio:
         ``boost.build_user_message``).
         """
         try:
-            result = self.boost_result(prompt, mode, references, tags)
+            result = self.boost_result(prompt, mode, references, tags, annotation=annotation)
         except (LlmError, FileNotFoundError, ValueError, OSError) as error:
             LOGGER.warning("AI boost failed: %s", error)
             return prompt, None, say("boost_failed", lang, error=error)
@@ -652,12 +653,28 @@ class Studio:
             return result.prompt, result.wh_ratio, say("boost_done_text_only", lang)
         return result.prompt, result.wh_ratio, say("boost_done", lang)
 
+    def boost_edit(self, prompt: str, slots: list, mask_mode: str, lang: str) -> tuple[str, str | None, str]:
+        """Буст инструкции правки по условным изображениям, как их увидит модель.
+
+        Переписывателю уходят исходник и референсы с тегами модели: маску он
+        не видит, но её номер занят (``boost.build_user_message``). Один для
+        вкладки и API, чтобы правила не разошлись.
+        """
+        from ..engine.generator import MASK_ANNOTATION
+
+        shown = [slot for slot in slots if slot.role != "mask"]
+        return self.boost_prompt(
+            prompt, boost.MODE_EDIT, lang, [slot.image for slot in shown],
+            [slot.tag for slot in shown if slot.tag], annotation=mask_mode == MASK_ANNOTATION,
+        )
+
     def boost_result(
         self,
         prompt: str,
         mode: str,
         references: list[Image.Image] | None = None,
         tags: list[str] | None = None,
+        annotation: bool = False,
     ) -> boost.BoostResult:
         """Буст без строки состояния: ошибку языковой модели получает вызывающий (API отвечает 502).
 
@@ -668,6 +685,7 @@ class Studio:
         result = boost.boost(
             client, prompt, mode=mode, prompt_dir=config.SYSTEM_PROMPT_DIR,
             references=references, send_images=key not in self._text_only_models, tags=tags,
+            annotation=annotation,
         )
         if result.images_skipped:
             self._text_only_models.add(key)

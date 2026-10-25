@@ -119,7 +119,7 @@ def test_boost_rereads_system_prompt_from_disk(tmp_path):
 
     # Первый вызов
     boost.boost(client, "a cat", mode=boost.MODE_T2I, prompt_dir=tmp_path)
-    assert client.calls[0]["system"] == "first version"
+    assert client.calls[0]["system"] == "first version" + boost.T2I_NOTE
 
     # Перезаписываем файл
     prompt_file.write_text("second version", encoding="utf-8")
@@ -127,7 +127,7 @@ def test_boost_rereads_system_prompt_from_disk(tmp_path):
 
     # Второй вызов должен прочитать новый текст
     boost.boost(client, "a dog", mode=boost.MODE_T2I, prompt_dir=tmp_path)
-    assert client.calls[0]["system"] == "second version"
+    assert client.calls[0]["system"] == "second version" + boost.T2I_NOTE
 
 
 def test_boost_raises_file_not_found_for_missing_prompt(tmp_path):
@@ -254,3 +254,38 @@ def test_reasoning_before_the_answer_is_ignored():
     assert result.prompt == "a ginger cat on a windowsill"
     assert result.wh_ratio == "3:2"
 
+
+def _prompts(tmp_path):
+    for name in ("t2i", "edit"):
+        (tmp_path / f"system_prompt_{name}.txt").write_text(f"system {name}", encoding="utf-8")
+    return tmp_path
+
+
+def test_t2i_system_prompt_carries_the_rgba_format(tmp_path):
+    """Официальный промт T2I молчит о формате прозрачности из README модели."""
+    client = RecordingClient()
+    boost.boost(client, "кот, прозрачный фон", mode=boost.MODE_T2I, prompt_dir=_prompts(tmp_path))
+    system = client.calls[0]["system"]
+    assert system.startswith("system t2i") and boost.RGBA_OPEN in system and boost.RGBA_CLOSE in system
+
+
+def test_edit_never_hears_about_transparency(tmp_path):
+    # В промте правки слово о прозрачности включает альфу даже с отрицанием.
+    client = RecordingClient()
+    boost.boost(client, "убери дерево", mode=boost.MODE_EDIT, prompt_dir=_prompts(tmp_path),
+                references=[Image.new("RGB", (1, 1))], annotation=True)
+    call = client.calls[0]
+    assert call["system"] == "system edit"
+    assert "transparen" not in (call["system"] + call["user"]).lower()
+
+
+@pytest.mark.parametrize(("mode", "annotation", "expected"), [
+    (boost.MODE_EDIT, True, True),
+    (boost.MODE_EDIT, False, False),
+    (boost.MODE_T2I, True, False),
+])
+def test_annotation_note_goes_only_to_annotated_edits(tmp_path, mode, annotation, expected):
+    client = RecordingClient()
+    boost.boost(client, "убери дерево в красном круге", mode=mode, prompt_dir=_prompts(tmp_path),
+                references=[Image.new("RGB", (1, 1))], annotation=annotation)
+    assert (boost.ANNOTATION_NOTE in client.calls[0]["user"]) is expected
