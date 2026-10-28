@@ -41,7 +41,9 @@ def follow_up_request(video: str | Path, kind: str, quality: str, **changes: Any
     if not engine_output:
         raise NoEngineOutput("this video has no engine files left; make it again")
     if kind == FINISH:
-        follow = dict(refine_from=engine_output, quality=FINISH_QUALITY)
+        # Звук исходника правки — и у доведённого ролика; продление длиннее
+        # исходника, ему звук модели.
+        follow = dict(refine_from=engine_output, quality=FINISH_QUALITY, audio_from=parameters.get("audio_from"))
     elif kind == EXTEND:
         # Продолжается последняя часть: у склейки нет записи латентов.
         last = parameters.get("engine_continue")

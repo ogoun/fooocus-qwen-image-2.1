@@ -213,3 +213,11 @@ def test_env_override(monkeypatch, tmp_path):
     monkeypatch.setenv(assemble.FFMPEG_ENV, str(tmp_path / "nope.exe"))
     with pytest.raises(RuntimeError, match="no such file"):
         assemble.ffmpeg_exe()
+
+
+def test_replace_audio_puts_the_other_sound_in_place(tmp_path):
+    silent = make_clip(tmp_path / "edit.mp4", seconds=1.0, audio=False)
+    voiced = make_clip(tmp_path / "source.mp4", seconds=2.0, audio=True)
+    assemble.replace_audio(silent, voiced, silent)
+    info = assemble.probe(silent)
+    assert info.has_audio and info.seconds < 1.5, "звук длиннее видео обрезан"

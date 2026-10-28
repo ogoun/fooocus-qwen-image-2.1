@@ -589,6 +589,7 @@ def prepare_video(studio, body: schemas.VideoGenerateRequest) -> Work:
                 prompt=body.prompt, prompt_original=body.prompt, mode=body.mode, resolution=body.resolution,
                 aspect=body.aspect, seconds=body.seconds, seed=body.seed, quality=body.quality,
                 first=used_first, last=used_last, references=references, source_video=source_video, loras=loras,
+                audio_from=source_video if body.keep_source_audio else None,
                 upscale=body.upscale.settings() if body.upscale else None,
             )
             _check_upscale(request)

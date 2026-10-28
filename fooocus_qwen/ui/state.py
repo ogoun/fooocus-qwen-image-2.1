@@ -11,6 +11,7 @@ import logging
 import threading
 import time
 import uuid
+from pathlib import Path
 from typing import Any
 
 from PIL import Image
@@ -498,6 +499,15 @@ class Studio:
             destination = video_request.save_result(
                 done["output"], config.OUTPUT_DIR, parameters, config.VIDEO_RUNS_DIR, last=done.get("last")
             )
+            # Звук — в копию галереи: файлы движка нужны «Довести» и
+            # «Продлить» как есть.
+            audio_from = parameters.get("audio_from")
+            if audio_from and Path(audio_from).is_file():
+                try:
+                    if assemble.probe(audio_from).has_audio:
+                        assemble.replace_audio(destination, audio_from, destination)
+                except Exception as error:  # noqa: BLE001 — ролик готов; звук модели лучше, чем ничего
+                    LOGGER.warning("Could not put the source sound into %s: %s", destination, error)
             return destination, parameters, None
         except engine.VideoCancelled:
             return None, {}, say("video_cancelled", lang)

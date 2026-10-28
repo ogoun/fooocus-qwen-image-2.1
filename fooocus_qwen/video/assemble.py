@@ -402,6 +402,21 @@ def trim(video: str | Path, out: str | Path, start: float, end: float | None = N
     return _finish(part, out)
 
 
+def replace_audio(video: str | Path, audio_from: str | Path, out: str | Path) -> Path:
+    """Видео ``video`` со звуком ``audio_from``; видеопоток не перекодируется.
+
+    ``out`` может совпадать с ``video``: пишется во временный файл рядом.
+    Звук длиннее видео обрезается (``-shortest``).
+    """
+    out = Path(out)
+    part = _part_path(out)
+    _run([
+        "-i", str(video), "-i", str(audio_from), "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy",
+        "-c:a", "aac", "-b:a", AUDIO_BITRATE, "-shortest", "-movflags", "+faststart", str(part),
+    ])
+    return _finish(part, out)
+
+
 def extract_audio(video: str | Path, dest_wav: str | Path) -> Path:
     """Звуковая дорожка в WAV (16 бит, частота и каналы — как в ролике)."""
     if not probe(video).has_audio:

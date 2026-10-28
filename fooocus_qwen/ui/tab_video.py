@@ -233,6 +233,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                     tiles = video_refs.build(lang)
                     references = tiles.state
                     source = tiles.source
+                    keep_audio = tiles.keep_audio
                 result = localizer.bind(
                     gr.Video(label=pick("video_result", lang), interactive=False, loop=True,
                              elem_classes=[layout.VIDEO_BOARD], scale=3),
@@ -456,7 +457,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
 
     def request_from(prompt_text, mode_value, resolution_value, aspect_value, seconds_value, seed_value,
                      quality_value, first_image, last_image, files, lora_names, strength, source_value=None,
-                     **changes):
+                     keep_audio_value=True, **changes):
         loras = lora_paths(lora_names, strength)
         values = dict(
             prompt=prompt_text or "",
@@ -471,6 +472,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
             last=last_image,
             references=references_from(files) if mode_value in prompt_h3.REF_MODES else (),
             source_video=video_refs._path(source_value) if mode_value == prompt_h3.MODE_V2V else None,
+            audio_from=(video_refs._path(source_value)
+                        if mode_value == prompt_h3.MODE_V2V and keep_audio_value else None),
             loras=loras,
         )
         values.update(changes)
@@ -536,7 +539,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     def run(prompt_text, boosted_text, use_boost, mode_value, resolution_value, aspect_value, seconds_value,
             seed_value, quality_value, first_image, last_image, files, lora_names, strength,
             use_upscale, upscale_mode_value, factor, width, height, megapixels, lang, source_value=None,
-            progress=gr.Progress()):
+            keep_audio_value=True, progress=gr.Progress()):
         try:
             stop_requested.clear()
             message = ""
@@ -547,6 +550,12 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 progress(0, desc=say("video_boosting", lang))
                 effective, message = boost_text(prompt_text, mode_value, seconds_value, aspect_value,
                                                 first_image, last_image, files, lang, source_value)
+            elif not use_boost and mode_value == prompt_h3.MODE_V2V:
+                # Без буста промт правки — одна фраза, и модель снимает сцену
+                # «по мотивам»: живой прогон 2026-10-28 — лиса шагом вместо бега,
+                # без панорамы; с бустом (видит кадры исходника) — бег, ведение
+                # камерой, тот же фон.
+                message = say("video_v2v_boost_hint", lang)
             elif not use_boost and prompt_text and prompt_h3.off_language(prompt_text):
                 # H3 учили на английских описаниях (реплики — на любом языке).
                 # Ролик всё равно снимется, но человек должен знать, почему
@@ -556,7 +565,8 @@ def build(studio, localizer: Localizer, language=None) -> dict:
                 return gr.update(), say("video_prompt_required", lang), gr.update(), gr.update(), gr.update()
             request = request_from(effective or prompt_text, mode_value, resolution_value, aspect_value,
                                    seconds_value, seed_value, quality_value, first_image, last_image, files,
-                                   lora_names, strength, source_value, prompt_original=prompt_text or "",
+                                   lora_names, strength, source_value, keep_audio_value,
+                                   prompt_original=prompt_text or "",
                                    upscale=upscale_from(use_upscale, upscale_mode_value, factor, width, height,
                                                         megapixels))
             progress(0, desc=say("video_starting", lang))
@@ -700,7 +710,7 @@ def build(studio, localizer: Localizer, language=None) -> dict:
     boost_now.click(rewrite, boost_inputs, [boosted, boost_enabled, status])
 
     run_inputs = [prompt, boosted, boost_enabled, mode, resolution, aspect, seconds, seed, quality,
-                  first, last, references, loras, lora_strength, *upscale_inputs, language, source]
+                  first, last, references, loras, lora_strength, *upscale_inputs, language, source, keep_audio]
     run_button.click(run, run_inputs, [result, status, last_result, finish, boosted],
                      concurrency_id=GPU_CONCURRENCY_ID)
     stop_button.click(stop, language, status, queue=False)

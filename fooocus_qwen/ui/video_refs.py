@@ -46,6 +46,8 @@ class Tiles:
     box: gr.Column
     source: gr.Video
     note: gr.Markdown
+    # «Сохранить звук исходника» — только в «видео → видео».
+    keep_audio: gr.Checkbox
     images: list = field(default_factory=list)
     videos: list = field(default_factory=list)
     audios: list = field(default_factory=list)
@@ -143,7 +145,7 @@ def _shown(paths: list[str | None]) -> list[bool]:
 
 
 def view(mode: str, source, values, lang: str, has_audio=_has_audio) -> list:
-    """Обновления: состояние, подписи плиток, видимость их колонок, исходник, подсказка.
+    """Обновления: состояние, подписи плиток, видимость их колонок, исходник, галочка звука, подсказка.
 
     Рамки плиток здесь нет — её показывает ``frame`` отдельным, более ранним
     событием (см. ``wire``).
@@ -163,6 +165,7 @@ def view(mode: str, source, values, lang: str, has_audio=_has_audio) -> list:
     # Подпись — метки, как у плиток: «Исходный ролик · <Audio 1> + <Video 1>»
     # не помещалась рядом с кнопками плеера.
     updates.append(gr.update(visible=editing, label=source_label or title))
+    updates.append(gr.update(visible=editing))
     hint = "video_refs_t2v" if mode == prompt_h3.MODE_T2V else "video_refs_empty"
     updates.append(say(hint, lang))
     return updates
@@ -172,6 +175,8 @@ def build(lang: str) -> Tiles:
     """Плитки — в текущий контейнер (колонку входов вкладки)."""
     source = gr.Video(label=pick("video_source", lang), sources=["upload"], visible=False,
                       elem_classes=[layout.VIDEO_SOURCE])
+    keep_audio = gr.Checkbox(value=True, label=pick("video_keep_audio", lang), info=pick("video_keep_audio_info", lang),
+                             visible=False)
     # По плитке в ряд: колонка входов узкая (--qs-refs-width), и в двух
     # столбцах подпись <Picture 1> не помещалась рядом с кнопками плитки.
     cells: list = []
@@ -197,7 +202,8 @@ def build(lang: str) -> Tiles:
             for index in range(MAX_AUDIOS)
         ]
         note = gr.Markdown(say("video_refs_empty", lang), elem_classes=[layout.VIDEO_NOTE])
-    tiles = Tiles(box=box, source=source, note=note, images=images, videos=videos, audios=audios, cells=cells)
+    tiles = Tiles(box=box, source=source, note=note, keep_audio=keep_audio, images=images, videos=videos,
+                  audios=audios, cells=cells)
     tiles.state = gr.State([None] * len(tiles.slots))
     return tiles
 
@@ -225,7 +231,7 @@ def wire(tiles: Tiles, mode, language, status) -> None:
         return promote(mode_value, lang, values)
 
     inputs = [mode, tiles.source, language, *tiles.slots]
-    outputs = [tiles.state, *tiles.slots, *tiles.cells, tiles.source, tiles.note]
+    outputs = [tiles.state, *tiles.slots, *tiles.cells, tiles.source, tiles.keep_audio, tiles.note]
     for slot in tiles.slots:
         slot.change(refresh, inputs, outputs, queue=False, show_progress="hidden")
         slot.change(switch, [mode, language, *tiles.slots], [mode, status], queue=False, show_progress="hidden")

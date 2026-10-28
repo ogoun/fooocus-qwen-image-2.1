@@ -198,28 +198,29 @@ def test_in_video_to_video_the_source_is_video_1():
 
 def test_one_empty_tile_per_kind_is_offered():
     updates = video_refs.view(prompt_h3.MODE_REF, None, _tiles(["a.png"]), "en", has_audio=lambda _path: False)
-    state, *rest, source, note = updates
+    state, *rest, source, keep_audio, note = updates
     tiles, cells = rest[:video_refs.SLOT_COUNT], rest[video_refs.SLOT_COUNT:]
     assert state[0] == "a.png"
     visible = [cell["visible"] is True for cell in cells]
     assert visible[:9] == [True, True] + [False] * 7
     assert visible[9:] == [True, False, False, True, False, False]
     assert tiles[0]["label"] == "<Picture 1>" and tiles[1]["label"] == "Image"
-    assert source["visible"] is False and video_refs.frame(prompt_h3.MODE_REF)["visible"] is True
+    assert source["visible"] is False and keep_audio["visible"] is False
+    assert video_refs.frame(prompt_h3.MODE_REF)["visible"] is True
     assert "Up to 9 images" in note
 
 
 def test_video_to_video_hides_the_video_tiles_and_shows_the_source():
     updates = video_refs.view(prompt_h3.MODE_V2V, "source.mp4", _tiles(), "en", has_audio=lambda _path: False)
-    _state, *rest, source, _note = updates
+    _state, *rest, source, keep_audio, _note = updates
     cells = rest[video_refs.SLOT_COUNT:]
     assert [cell["visible"] for cell in cells[9:12]] == [False] * 3
-    assert source["visible"] is True and source["label"] == "<Video 1>"
+    assert source["visible"] is True and source["label"] == "<Video 1>" and keep_audio["visible"] is True
     assert video_refs.frame(prompt_h3.MODE_V2V)["visible"] is True
 
 
 def test_text_mode_offers_the_tiles_and_frame_modes_do_not():
-    *_rest, source, note = video_refs.view(prompt_h3.MODE_T2V, None, _tiles(), "en")
+    *_rest, source, _keep, note = video_refs.view(prompt_h3.MODE_T2V, None, _tiles(), "en")
     assert video_refs.frame(prompt_h3.MODE_T2V)["visible"] is True and source["visible"] is False
     assert "switches the mode" in note
     for mode in (prompt_h3.MODE_I2V, prompt_h3.MODE_FLF2V):
@@ -352,6 +353,7 @@ def test_run_in_video_to_video_sends_the_source(built, monkeypatch, tmp_path):
     (request,) = asked
     assert request.mode == prompt_h3.MODE_V2V and request.source_video == str(source)
     assert Reference("image", "fox.png") in request.references
+    assert request.audio_from == str(source), "звук исходника — по умолчанию"
 
 
 def test_open_video_tab_switches_to_the_video_tab():

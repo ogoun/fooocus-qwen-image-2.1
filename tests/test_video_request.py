@@ -405,3 +405,22 @@ def test_the_edit_keeps_the_source_proportion(tmp_path):
 def test_video_to_video_needs_a_source(tmp_path):
     with pytest.raises(ValueError, match="source video"):
         _build(tmp_path, VideoRequest(prompt="x", mode=prompt_h3.MODE_V2V))
+
+
+def test_the_source_sound_comes_from_the_copied_source(tmp_path):
+    job, parameters = _edit(tmp_path, audio_from="ignored, the copy is used")
+    copied = [row["path"] for row in job["media"]["references"] if row["kind"] == "video"]
+    assert parameters["audio_from"] == copied[0]
+    _job, plain = _edit(tmp_path)
+    assert plain["audio_from"] is None, "без галочки — звук модели"
+
+
+def test_finishing_a_draft_keeps_the_source_sound(tmp_path):
+    from fooocus_qwen.video import board
+
+    video = tmp_path / "draft.mp4"
+    video.write_bytes(b"x")
+    video_request.sidecar(video).write_text(json.dumps({"engine_output": "drafts/a.mp4", "frames": 124,
+                                                       "audio_from": "C:/runs/source.mp4"}), encoding="utf-8")
+    assert board.follow_up_request(video, board.FINISH, "light").audio_from == "C:/runs/source.mp4"
+    assert board.follow_up_request(video, board.EXTEND, "light").audio_from is None

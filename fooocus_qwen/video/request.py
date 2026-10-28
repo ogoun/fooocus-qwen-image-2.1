@@ -83,6 +83,12 @@ class VideoRequest:
     # Видео → видео: исходный ролик, который правится (``<Video 1>``).
     # Видеореференсов, кроме него, в этом режиме нет.
     source_video: str | None = None
+    # Звук готового ролика — отсюда, а не от модели. Правке ролика: H3 при
+    # ``audio reuse`` сочиняет дорожку заново (живой прогон 2026-10-28:
+    # корреляция с исходником −0.003 и −0.1), хотя длительность и движение
+    # следуют исходнику. В «видео → видео» — сам исходник; доводка черновика
+    # берёт путь из его параметров.
+    audio_from: str | None = None
     loras: tuple[tuple[str, float], ...] = ()
     # Продолжить готовый ролик (его хвост — контекст новой части).
     continue_from: str | None = None
@@ -233,6 +239,7 @@ def build_job(
     inputs.mkdir(parents=True, exist_ok=True)
 
     media: dict[str, Any] = {"version": 1}
+    audio_from = request.audio_from if request.mode != prompt_h3.MODE_V2V else None
     has_first = has_last = False
     references: list[Reference] = []
     if request.mode in (prompt_h3.MODE_I2V, prompt_h3.MODE_FLF2V) and request.first is not None:
@@ -263,6 +270,10 @@ def build_job(
                 target = inputs / f"ref{index:02d}{source.suffix.lower()}"
                 shutil.copyfile(source, target)
             rows.append({"path": str(target), "kind": item.kind})
+            if request.mode == prompt_h3.MODE_V2V and item.kind == "video" and request.audio_from:
+                # Копия исходника в каталоге задания живёт дольше загрузки
+                # Gradio: её и подставит доводка черновика.
+                audio_from = str(target)
         media["references"] = rows
     if request.loras:
         media["loras"] = [{"path": str(path), "strength": float(strength)} for path, strength in request.loras]
@@ -321,6 +332,7 @@ def build_job(
         "quality": request.quality if request.quality in QUALITY else DEFAULT_QUALITY,
         "references": [{"kind": item.kind, "name": Path(item.path).name} for item in references],
         "source_video": Path(request.source_video).name if request.source_video else None,
+        "audio_from": audio_from,
         "labels": labels,
         "loras": [{"name": Path(path).name, "strength": float(strength)} for path, strength in request.loras],
         "continue_from": request.continue_from,

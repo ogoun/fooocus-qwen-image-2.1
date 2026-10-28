@@ -254,6 +254,8 @@ class VideoGenerateRequest(VideoSettings):
     source: VideoReference | None = Field(
         None, description="v2v: the video to edit (a gallery video or base64 with name); it becomes <Video 1>, "
                           "the edit keeps its proportion and lasts no longer than it (at most 15 s)")
+    keep_source_audio: bool = Field(True, description="v2v: the result gets the source video's sound (the model "
+                                                      "writes its own otherwise)")
     boost: bool = Field(False, description="rewrite the prompt into an H3 prompt with the language model first")
     continue_from: str | None = Field(None, description="a gallery video to extend; the result is the whole video, source and new part joined")
     refine_from: str | None = Field(None, description="a gallery draft to finish without generating anew")

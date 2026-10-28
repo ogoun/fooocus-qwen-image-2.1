@@ -215,6 +215,11 @@ T: dict[str, tuple[str, str]] = {
     "video_first": ("Первый кадр", "First frame"),
     "video_last": ("Последний кадр", "Last frame"),
     "video_source": ("Исходный ролик", "Source video"),
+    "video_keep_audio": ("Сохранить звук исходника", "Keep the source sound"),
+    "video_keep_audio_info": (
+        "Модель сочиняет звук заново; с галочкой у ролика будет звук исходника.",
+        "The model writes the sound anew; checked, the video gets the source's sound.",
+    ),
     "video_tile_image": ("Картинка", "Image"),
     "video_tile_video": ("Видео", "Video"),
     "video_tile_audio": ("Звук", "Audio"),
@@ -748,6 +753,12 @@ MESSAGES: dict[str, tuple[str, str]] = {
     "video_source_loaded": (
         "Исходный ролик: {seconds} с. Правка — {used} с: не длиннее исходника и 15 с.",
         "Source video: {seconds} s. The edit lasts {used} s: no longer than the source and 15 s.",
+    ),
+    "video_v2v_boost_hint": (
+        "Совет: для правки ролика включите AI буст — он видит кадры исходника и описывает движение и камеру, "
+        "без него модель снимает сцену лишь по мотивам.",
+        "Tip: turn on AI boost for video editing — it sees the source frames and describes the motion and camera; "
+        "without it the model only films a scene in the spirit of the source.",
     ),
     "video_source_required": (
         "Загрузите исходный ролик — его и будет править «видео → видео».",
