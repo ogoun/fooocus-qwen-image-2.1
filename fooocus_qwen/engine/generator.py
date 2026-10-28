@@ -23,7 +23,7 @@ import torch
 from PIL import Image
 
 from .. import __version__
-from ..imaging import aspect, masking
+from ..imaging import alpha, aspect, masking
 from ..prompting.styles import Style, apply_styles
 from . import presets as presets_module
 from . import turbo as turbo_module
@@ -399,6 +399,9 @@ class Generator:
         )
         slots = build_conditions(prepared)
         condition = [slot.image for slot in slots] or None
+        # Прозрачность — только просимая (``imaging.alpha``): шум альфы
+        # декодера иначе уходил в файл и дальше, в правку.
+        keep_alpha = alpha.keep_alpha(positive, (request.source, *request.references))
         width, height = resolve_size(prepared)
         base_seed = resolve_seed(prepared.seed)
         device = self._pipe._execution_device
@@ -442,6 +445,8 @@ class Generator:
                 break
 
             image, clipped = self._finish(request, prepared, output.images[0], region_box)
+            if not keep_alpha:
+                image = alpha.drop_stray_alpha(image)
             seconds = time.perf_counter() - started
             results.append(
                 GeneratedImage(

@@ -192,7 +192,7 @@ def test_mask_mode_with_keep_outside_composites_pixels():
     )
 
     assert len(results) == 1
-    pixels = np.asarray(results[0].image)
+    pixels = np.asarray(results[0].image.convert("RGBA"))
     # Вне маски — пиксель источника без изменений, ровно как и было до правки.
     assert tuple(pixels[0, 0]) == (255, 0, 0, 255)
     assert tuple(pixels[63, 63]) == (255, 0, 0, 255)
@@ -323,7 +323,7 @@ def test_region_mode_crops_and_stitches_outside_pixels_untouched():
     result_image = results[0].image
     assert result_image.size == source.size  # результат — в размере исходного кадра
 
-    pixels = np.asarray(result_image)
+    pixels = np.asarray(result_image.convert("RGBA"))
     # Далеко за пределами и маски, и вырезанного окна пиксели не тронуты.
     assert tuple(pixels[60, 60]) == (255, 0, 0, 255)
     assert tuple(pixels[0, 60]) == (255, 0, 0, 255)
@@ -385,7 +385,7 @@ def test_reusing_the_request_after_region_mode_does_not_leak_the_crop_box():
 
     results = engine.generate(shared_request)
 
-    pixels = np.asarray(results[0].image)
+    pixels = np.asarray(results[0].image.convert("RGBA"))
     # Пиксель внутри новой маски обязан измениться. Если бы region_box от
     # первого вызова просочился во второй, склейка использовала бы старую
     # (уже неактуальную) вырезку, новая маска не пересекалась бы с ней, и
@@ -422,7 +422,7 @@ def test_region_mode_without_compositing_returns_the_frame_not_the_crop():
     result_image = results[0].image
     assert result_image.size == source.size, "вернулась вырезка вместо кадра"
 
-    pixels = np.asarray(result_image)
+    pixels = np.asarray(result_image.convert("RGBA"))
     # Внутри вырезанного прямоугольника — целиком вывод модели, без смешивания
     # по маске: keep_outside выключен, и края области размывать нечем.
     assert tuple(pixels[16, 16]) == generated_colour
@@ -453,7 +453,7 @@ def test_region_mode_without_compositing_does_not_blend_inside_the_region():
                 keep_outside=keep_outside,
             )
         )
-        return np.asarray(produced[0].image), pipe.calls[0]["image"][0].size
+        return np.asarray(produced[0].image.convert("RGBA")), pipe.calls[0]["image"][0].size
 
     without_blend, crop_size = run(keep_outside=False)
     with_blend, _ = run(keep_outside=True)
@@ -597,3 +597,21 @@ def test_the_frame_follows_the_source_and_not_the_last_reference():
 
     width, height = gen.resolve_size(edited)
     assert height > width, f"кадр пошёл за референсом, а не за источником: {width}x{height}"
+
+
+def _noisy_alpha():
+    """Как отдаёт декодер Qwen-Image-2.1: непрозрачный кадр с горсткой пикселей альфы ~240."""
+    image = Image.new("RGBA", (64, 64), (0, 128, 0, 255))
+    for x in range(40):
+        image.putpixel((x, 0), (0, 128, 0, 240))
+    return image
+
+
+def test_decoder_alpha_noise_does_not_reach_the_result():
+    results = make_generator(FakePipeline(_noisy_alpha)).generate(request(prompt="a green field"))
+    assert results[0].image.mode == "RGB"
+
+
+def test_asked_transparency_keeps_the_alpha():
+    results = make_generator(FakePipeline(_noisy_alpha)).generate(request(prompt="a sticker, transparent background"))
+    assert results[0].image.mode == "RGBA"
