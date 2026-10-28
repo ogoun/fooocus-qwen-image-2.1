@@ -615,3 +615,20 @@ def test_decoder_alpha_noise_does_not_reach_the_result():
 def test_asked_transparency_keeps_the_alpha():
     results = make_generator(FakePipeline(_noisy_alpha)).generate(request(prompt="a sticker, transparent background"))
     assert results[0].image.mode == "RGBA"
+
+
+def test_conditioned_noise_never_equals_the_seed():
+    for seed in (0, 1, 7, 12345, 2**31 - 1, 987654321):
+        mixed = gen.noise_seed(seed, True)
+        assert mixed != seed and 0 <= mixed < 2**31
+        assert gen.noise_seed(seed, True) == mixed, "повтор правки тем же сидом — тот же шум"
+        assert gen.noise_seed(seed, False) == seed, "генерация без условий — как прежде"
+
+
+def test_an_edit_does_not_start_from_the_noise_of_its_seed():
+    pipe = FakePipeline()
+    engine = make_generator(pipe)
+    engine.generate(request(seed=7))
+    edited = engine.generate(request(seed=7, source=image(), mask_mode=gen.MASK_NONE))
+    assert [call["generator"].initial_seed() for call in pipe.calls] == [7, gen.noise_seed(7, True)]
+    assert edited[0].parameters["seed"] == 7, "в метаданных — сид, который видит человек"

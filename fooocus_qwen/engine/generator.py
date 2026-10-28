@@ -102,6 +102,34 @@ def resolve_seed(seed: int) -> int:
     return random.randrange(2**31) if seed < 0 else seed
 
 
+# Соль шума для запросов с условными изображениями. Нечётная: при нечётном
+# множителе ``noise_seed(s, True) == s`` невозможно ни для какого ``s``.
+_CONDITION_SALT = 0x5F3759DF
+_CONDITION_FACTOR = 2654435761
+
+
+def noise_seed(seed: int, conditioned: bool) -> int:
+    """Сид шума: у правки и у генерации по референсам — не тот, что у кадра с тем же сидом.
+
+    Правка стартует с чистого шума, а исходник получает условием. Если шум тот
+    же, из которого исходник родился (тот же сид и размер), денойзинг
+    возвращается к исходнику и промт почти не действует. Опыт
+    ``tools/experiments/edit_same_seed.py`` (QwenTurbo, 1024, 2026-10-28):
+    «чёрно-белая» правка тем же сидом оставила насыщенность 92 из 165, а
+    другими сидами — 14–16; «ночь» — яркость 115 из 124 против 59–61; кадр к
+    тому же пересвечен (лапласиан ×1.4–1.75 против ×0.2–0.75). Так же у Kokon
+    на stable-diffusion.cpp (docs/engineering-notes.md, ``avoid_reference_seeds``).
+
+    Сид исходника знать не нужно (в редакторе метаданные теряются): шум любого
+    запроса с условными изображениями берётся из детерминированной смеси сида.
+    Повтор правки с тем же сидом даёт тот же кадр; в метаданных — сид, который
+    видит человек.
+    """
+    if not conditioned:
+        return seed
+    return (seed * _CONDITION_FACTOR + _CONDITION_SALT) % 2**31
+
+
 def condition_slots(
     source: Image.Image | None = None,
     mask: Image.Image | None = None,
@@ -413,7 +441,7 @@ class Generator:
 
             seed = base_seed + index
             started = time.perf_counter()
-            generator = torch.Generator(device=device).manual_seed(seed)
+            generator = torch.Generator(device=device).manual_seed(noise_seed(seed, bool(slots)))
 
             def step_callback(_pipe, step: int, _timestep, kwargs, _index=index):
                 if progress is not None:

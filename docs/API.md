@@ -128,6 +128,9 @@ with `--api`, and the log says so.
   They are the same notes the interface shows in its status line.
 - **Seeds.** `-1` means random. The seed actually used is in each image's
   `seed`; several images get consecutive seeds.
+  Edits and generations with references draw their noise from a fixed mix
+  of the seed, so editing a picture with the seed that made it no longer
+  starts from that picture's noise (which made the edit ignore its prompt).
 
 ## Generate
 
@@ -228,6 +231,7 @@ loads again with the next image job.
 | `seed` | `-1` | `-1` is random |
 | `quality` | `light` | `draft` (half-size first pass, finish it later with `refine_from`), `light`, `medium`, `high`, `max`; slower to the right |
 | `first`, `last` | `null` | frames, in any image form from [Conventions](#conventions). `first` is used by `i2v` and `flf2v`, `last` by `flf2v`; frames are cropped to the canvas, not stretched. A gallery video gives its last frame |
+| `keep_source_audio` | `true` | `v2v` only: the result gets the source video's sound. H3 writes its own track even when told to reuse the source's; finishing the draft keeps it, extending does not |
 | `source` | `null` | `v2v` only: the video to edit, `{"gallery": "2026-10-19/12-00-00.mp4"}` or `{"base64": "…", "name": "clip.mp4"}`. It becomes `<Video 1>` (with its sound as an `<Audio N>` before it); the edit keeps its proportion — `aspect` is ignored — and lasts no longer than it, at most 15 s. Without it `v2v` is a `400` |
 | `references` | `[]` | `ref` and `v2v` (images and sounds only; other videos are ignored with a note): up to 9 images, 3 videos and 3 audio files. Each is `{"kind": "image"\|"video"\|"audio", "base64": "…"}` or `{"gallery": "2026-10-19/12-00-00.png"}`; `"name": "voice.mp3"` gives the file type when `kind` is left out. A sound needs at least one image or video |
 | `loras` | `[]` | `[{"name": "my-motion", "strength": 0.8}]`, files from `GET /video/loras` (the `loras/video` folder), strength −2…2 |
